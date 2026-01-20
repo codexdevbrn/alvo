@@ -1,72 +1,56 @@
-import { DollarSign, TrendingUp, TrendingDown, Users } from 'lucide-react';
+import { DollarSign, TrendingUp, TrendingDown } from 'lucide-react';
 import { StatCard } from './StatCard';
-import { formatCurrency, formatNumber } from '../utils/formatters';
+import { formatCurrency } from '../utils/formatters';
 
 interface MetricsGridProps {
     stats: any;
+    onRevenueClick?: () => void;
+    onClientsClick?: () => void;
 }
 
-export function MetricsGrid({ stats }: MetricsGridProps) {
+export function MetricsGrid({ stats, onRevenueClick }: MetricsGridProps) {
     if (!stats) return null;
 
-    const { statsA, statsB, singleYearMode, labelA, labelB } = stats;
-
-    let titleCurrent = `Receita (${labelB})`;
-    let titlePrev = `vs ${labelA}`;
+    const { statsA, statsB, singleYearMode, labelA, labelB, yearLabel } = stats;
     let showTrend = !!labelA;
 
-    const revA = statsA.rev || 0;
-    const revB = statsB.rev || 0;
+    const revA = statsA.rawRev || 0;
+    const revB = statsB.rawRev || 0;
+    const revTotal = stats.statsTotal?.rawRev || 0;
+    const revAvg = stats.statsTotal?.rev || 0;
 
-    // If we have selected multiple months, we might want to show the average monthly revenue
-    // to make periods of different lengths comparable.
-    let valToShow = revB;
-    let trendVal = revB - revA;
     let trendPct = revA > 0 ? ((revB - revA) / revA) * 100 : 0;
+    let trendValYoy = revB - revA;
 
     if (singleYearMode) {
-        titleCurrent = `Média Mensal (${labelB})`;
-        titlePrev = `vs Média ${labelA}`;
-    } else if (labelA === "") {
-        showTrend = false;
+        const avgA = statsA.rev || 0;
+        const avgB = statsB.rev || 0;
+        trendPct = avgA > 0 ? ((avgB - avgA) / avgA) * 100 : 0;
     }
-
-    const avgTicketA = (statsA.rev || 0) / (statsA.cnt || 1);
-    const avgTicketB = (statsB.rev || 0) / (statsB.cnt || 1);
-    const ticketTrendVal = avgTicketB - avgTicketA;
-    const ticketTrendUp = ticketTrendVal >= 0;
 
     return (
         <div className="stat-grid">
             <StatCard
-                title={titleCurrent}
-                value={formatCurrency(valToShow)}
+                title={singleYearMode ? `Receita Total (${yearLabel})` : "Desempenho em Receita"}
+                value={formatCurrency(singleYearMode ? revTotal : trendValYoy)}
                 icon={DollarSign}
-                trend={showTrend ? formatCurrency(Math.abs(trendVal)) : undefined}
-                trendUp={trendVal >= 0}
+                trendUp={singleYearMode ? true : trendValYoy >= 0}
+                onClick={onRevenueClick}
             />
+
             <StatCard
-                title="Performance (Geral)"
+                title={singleYearMode ? `Média de Receita (${yearLabel})` : `Receita Total (${labelB})`}
+                value={formatCurrency(singleYearMode ? revAvg : revB)}
+                icon={singleYearMode ? TrendingUp : DollarSign}
+                onClick={onRevenueClick}
+            />
+
+            <StatCard
+                title={singleYearMode ? "Tendência" : "Performance (Geral)"}
                 value={!showTrend ? '-' : (trendPct > 1000 ? '1000%+' : `${trendPct >= 0 ? '+' : ''}${isFinite(trendPct) ? trendPct.toFixed(1) : '0.0'}%`)}
                 icon={!showTrend ? TrendingUp : (trendPct >= 0 ? TrendingUp : TrendingDown)}
-                trend={showTrend ? titlePrev : undefined}
                 trendUp={trendPct >= 0}
                 useTrendColor={showTrend}
-            />
-            <StatCard
-                title="Média por Venda"
-                value={formatCurrency(avgTicketB)}
-                icon={!showTrend ? TrendingUp : (ticketTrendUp ? TrendingUp : TrendingDown)}
-                trend={showTrend ? formatCurrency(Math.abs(ticketTrendVal)) : undefined}
-                trendUp={ticketTrendUp}
-                useTrendColor={showTrend}
-            />
-            <StatCard
-                title="Transações (Total)"
-                value={formatNumber(statsB.cnt || 0)}
-                icon={Users}
-                trend={showTrend ? formatNumber(Math.abs((statsB.cnt || 0) - (statsA.cnt || 0))) : undefined}
-                trendUp={(statsB.cnt || 0) >= (statsA.cnt || 0)}
             />
         </div>
     );

@@ -7,13 +7,21 @@ interface StatCardProps {
     trend?: string;
     trendUp?: boolean;
     useTrendColor?: boolean;
+    onClick?: () => void;
 }
 
-export const StatCard = ({ title, value, icon: Icon, trend, trendUp, useTrendColor }: StatCardProps) => {
+export const StatCard = ({ title, value, icon: Icon, trend, trendUp, useTrendColor, onClick }: StatCardProps) => {
     return (
         <div
-            className="glass-card"
-            style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: '1rem' }}
+            className={`glass-card ${onClick ? 'interactive-card' : ''}`}
+            onClick={onClick}
+            style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                gap: '1rem',
+                cursor: onClick ? 'pointer' : 'default'
+            }}
         >
             <div style={{ flex: 1, minWidth: 0 }}>
                 <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', marginBottom: '0.4rem', textTransform: 'uppercase', letterSpacing: '0.02em' }}>{title}</p>

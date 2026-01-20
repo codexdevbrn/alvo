@@ -1,23 +1,38 @@
 import { useState, useMemo, useEffect } from 'react';
-import { RefreshCw, AlertTriangle } from 'lucide-react';
+import { RefreshCw, AlertTriangle, X, TrendingUp, DollarSign, ShoppingCart, Users } from 'lucide-react';
+import { PeriodSelector } from './components/PeriodSelector';
 import { FilterBar } from './components/FilterBar';
 import { MetricsGrid } from './components/MetricsGrid';
 import { HistoryChart } from './components/HistoryChart';
 import { BreakdownSection } from './components/BreakdownSection';
+import { formatCurrency, formatNumber } from './utils/formatters';
 import type { DashboardData, ProductStats, AggregatedStats, TrendItem } from './types/dashboard';
 import './index.css';
 
 export default function App() {
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [historyType, setHistoryType] = useState<null | 'revenue' | 'mfr' | 'desc'>(null);
 
-  // Filter States
-  const [client, setClient] = useState<number>(-1);
-  const [mfr, setMfr] = useState<number>(-1);
-  const [desc, setDesc] = useState<number>(-1);
-  const [store, setStore] = useState<number>(-1);
-  const [severity, setSeverity] = useState<number>(-1);
-  const [period, setPeriod] = useState<number[]>([]);
+  // Filter States with Persistence
+  const [client, setClient] = useState<number>(() => { const v = localStorage.getItem('alvo_client'); return v !== null ? Number(v) : -1; });
+  const [mfr, setMfr] = useState<number>(() => { const v = localStorage.getItem('alvo_mfr'); return v !== null ? Number(v) : -1; });
+  const [desc, setDesc] = useState<number>(() => { const v = localStorage.getItem('alvo_desc'); return v !== null ? Number(v) : -1; });
+  const [store, setStore] = useState<number>(() => { const v = localStorage.getItem('alvo_store'); return v !== null ? Number(v) : -1; });
+  const [severity, setSeverity] = useState<number>(() => { const v = localStorage.getItem('alvo_severity'); return v !== null ? Number(v) : -1; });
+  const [period, setPeriod] = useState<number[]>(() => JSON.parse(localStorage.getItem('alvo_period') || '[]'));
+  const [modalPeriod, setModalPeriod] = useState<number[]>(() => JSON.parse(localStorage.getItem('alvo_period_modal') || '[]'));
+
+  // Sync to LocalStorage
+  useEffect(() => {
+    localStorage.setItem('alvo_client', client.toString());
+    localStorage.setItem('alvo_mfr', mfr.toString());
+    localStorage.setItem('alvo_desc', desc.toString());
+    localStorage.setItem('alvo_store', store.toString());
+    localStorage.setItem('alvo_severity', severity.toString());
+    localStorage.setItem('alvo_period', JSON.stringify(period));
+    localStorage.setItem('alvo_period_modal', JSON.stringify(modalPeriod));
+  }, [client, mfr, desc, store, severity, period, modalPeriod]);
 
   useEffect(() => {
     fetch('/src/data/summary.json')
@@ -43,7 +58,7 @@ export default function App() {
     const availableYears = Array.from(new Set(data.monthly.map(m => m.year))).sort((a, b) => b - a);
     let pA: number[] = [];
     let pB: number[] = [];
-    const yearsInSelection = Array.from(new Set(period.map(idx => data.monthly[idx].year)));
+    const yearsInSelection = Array.from(new Set(period.map(idx => data.monthly[idx]?.year).filter(y => y !== undefined)));
     const isTrendMode = period.length > 0 && yearsInSelection.length === 1;
 
     if (!isTrendMode) {
@@ -63,33 +78,42 @@ export default function App() {
       const sortedPeriod = [...period].sort((a, b) => a - b);
       const totalSelected = sortedPeriod.length;
 
-      // Proportional split: ~25% for "Current" (cap at 3), rest for "Baseline"
-      // If 12Selected -> 3 vs 9. If 2Selected -> 1 vs 1.
-      const currentCount = Math.max(1, Math.min(3, Math.floor(totalSelected / 4) || 1));
-
-      pB = sortedPeriod.slice(-currentCount);
-      pA = sortedPeriod.slice(0, -currentCount);
+      if (totalSelected === 12) {
+        // Specific formula for full year: Last 3 Months (B) / Last 9 Months (A)
+        pB = sortedPeriod.slice(-3);
+        pA = sortedPeriod.slice(-9);
+      } else {
+        // Proportional split: ~25% for "Current" (cap at 3), rest for "Baseline"
+        // If 12Selected -> 3 vs 9. If 2Selected -> 1 vs 1.
+        const currentCount = Math.max(1, Math.min(3, Math.floor(totalSelected / 4) || 1));
+        pB = sortedPeriod.slice(-currentCount);
+        pA = sortedPeriod.slice(0, -currentCount);
+      }
     }
 
     // 2. Population Filtering (Direct Filters)
-    let populationRows = data.rows;
+    const consumerFinalId = data.maps.c.indexOf("Consumidor Final");
+    const baseRows = consumerFinalId !== -1
+      ? data.rows.filter(r => r[2] !== consumerFinalId)
+      : data.rows;
+
+    let populationRows = baseRows;
     if (client !== -1) populationRows = populationRows.filter(r => r[2] === client);
     if (mfr !== -1) populationRows = populationRows.filter(r => r[3] === mfr);
     if (desc !== -1) populationRows = populationRows.filter(r => r[4] === desc);
     if (store !== -1) populationRows = populationRows.filter(r => r[1] === store);
 
-    // 3. Severity Filter (Requires 2-pass on the population)
     if (severity !== -1) {
       const perf: Record<number, { vA: number, vB: number }> = {};
       populationRows.forEach(r => {
-        const cId = r[2], pId = r[0], rev = r[6];
+        const pId = r[0], cId = r[2], revVal = r[6];
         if (!perf[cId]) perf[cId] = { vA: 0, vB: 0 };
-        // For severity, we always use the dashboard's comparison mode (YoY or Trend)
-        if (pA.includes(pId)) perf[cId].vA += rev;
-        if (pB.includes(pId)) perf[cId].vB += rev;
+        if (pA.includes(pId)) perf[cId].vA += revVal;
+        if (pB.includes(pId)) perf[cId].vB += revVal;
       });
+
       const validClients = new Set();
-      Object.entries(perf).forEach(([cId, s]) => {
+      Object.entries(perf).forEach(([cId, s]: [string, any]) => {
         if (s.vA <= 0) return;
         const diff = ((s.vB / (isTrendMode ? (pB.length || 1) : 1)) / (s.vA / (isTrendMode ? (pA.length || 1) : 1)) - 1) * 100;
         let cSev = -1;
@@ -102,49 +126,161 @@ export default function App() {
       populationRows = populationRows.filter(r => validClients.has(r[2]));
     }
 
-    // 4. stats aggregation
-    const aggregate = (targetRows: any[], targetPeriod: number[]): AggregatedStats => {
-      let rev = 0, qty = 0, cnt = 0;
-      const monthly: any = {}, mfrs: any = {}, descs: any = {}, products: any = {};
+    // 5. Aggregation Logic
+    const aggregate = (targetRows: any[], targetPeriod: number[], forceAverage?: boolean): any => {
+      let rev = 0, cnt = 0;
+      const monthlyNodes: Record<number, { rev: number, mfrs: Set<number>, descs: Set<number>, products: Record<number, number>, clients: Set<number>, cnt: number }> = {};
+      const mfrs_all = new Set<number>();
+      const descs_all = new Set<number>();
+      const products_all: Record<number, number> = {};
+
       const periodSet = new Set(targetPeriod);
       for (const r of targetRows) {
         if (!periodSet.has(r[0])) continue;
-        const revVal = r[6], qtyVal = r[7], pId = r[0], mId = r[3], dId = r[4], rId = r[5];
-        rev += revVal; qty += qtyVal;
-        monthly[pId] = (monthly[pId] || 0) + revVal;
-        mfrs[mId] = (mfrs[mId] || 0) + revVal;
-        descs[dId] = (descs[dId] || 0) + revVal;
-        products[rId] = (products[rId] || 0) + revVal;
+        const pId = r[0], mId = r[3], dId = r[4], rId = r[5], revVal = r[6];
+        rev += revVal;
         cnt++;
+        mfrs_all.add(mId);
+        descs_all.add(dId);
+        products_all[rId] = (products_all[rId] || 0) + revVal;
+
+        if (!monthlyNodes[pId]) monthlyNodes[pId] = { rev: 0, mfrs: new Set(), descs: new Set(), products: {}, clients: new Set(), cnt: 0 };
+        monthlyNodes[pId].rev += revVal;
+        monthlyNodes[pId].cnt++;
+        monthlyNodes[pId].mfrs.add(mId);
+        monthlyNodes[pId].descs.add(dId);
+        monthlyNodes[pId].products[rId] = (monthlyNodes[pId].products[rId] || 0) + revVal;
+        monthlyNodes[pId].clients.add(r[2]);
       }
-      return { rev, qty, cnt, monthly, mfrs, descs, products };
+
+      const clients_all = new Set();
+      for (const r of targetRows) {
+        if (periodSet.has(r[0])) clients_all.add(r[2]);
+      }
+
+      const len = targetPeriod.length || 1;
+      const useAvg = forceAverage ?? (targetPeriod.length > 0 && Array.from(new Set(targetPeriod.map(idx => data.monthly[idx]?.year).filter(y => y !== undefined))).length === 1);
+
+      return {
+        rawRev: rev,
+        rawCnt: cnt,
+        rawClientCount: clients_all.size,
+        rev: useAvg ? rev / len : rev,
+        cnt: useAvg ? cnt / len : cnt,
+        mfrCount: useAvg ? (Object.values(monthlyNodes).reduce((acc, m) => acc + m.mfrs.size, 0) / len) : mfrs_all.size,
+        descCount: useAvg ? (Object.values(monthlyNodes).reduce((acc, m) => acc + m.descs.size, 0) / len) : descs_all.size,
+        clientCount: useAvg ? (Object.values(monthlyNodes).reduce((acc, m) => acc + m.clients.size, 0) / len) : clients_all.size,
+        products: products_all,
+        monthlyNodes,
+        len
+      };
     };
 
-    const statsA_raw = aggregate(populationRows, pA);
-    const statsB_raw = aggregate(populationRows, pB);
-    const statsA = isTrendMode ? { ...statsA_raw, rev: statsA_raw.rev / (pA.length || 1), qty: statsA_raw.qty / (pA.length || 1) } : statsA_raw;
-    const statsB = isTrendMode ? { ...statsB_raw, rev: statsB_raw.rev / (pB.length || 1), qty: statsB_raw.qty / (pB.length || 1) } : statsB_raw;
+    const statsA = aggregate(populationRows, pA, isTrendMode);
+    const statsB = aggregate(populationRows, pB, isTrendMode);
+    const statsTotal = aggregate(populationRows, period.length === 0 ? data.monthly.map((_, i) => (data.monthly[i].year === availableYears[0]) ? i : -1).filter(x => x !== -1) : period, isTrendMode);
 
-    // 5. Display Rows (Strictly respect the User Filter for charts/lists)
-    const selection = isTrendMode ? period : [...pA, ...pB];
-    const selectionSet = new Set(selection);
-    const rowsDisplay = populationRows.filter(r => selectionSet.has(r[0]));
+    const isComparisonMode = !isTrendMode;
+    let chartData: any[] = [];
+
+    if (isComparisonMode) {
+      const monthMap: any = {};
+      const pASet = new Set(pA);
+      const pBSet = new Set(pB);
+
+      [...pA, ...pB].forEach(idx => {
+        const m = data.monthly[idx];
+        if (!m) return;
+        const mName = m.name.split('/')[0];
+        if (!monthMap[mName]) monthMap[mName] = { revenueA: 0, revenueB: 0, mfrsA: 0, mfrsB: 0, descsA: 0, descsB: 0, cntA: 0, cntB: 0, clientsA: 0, clientsB: 0 };
+
+        const node = statsA.monthlyNodes[idx] || statsB.monthlyNodes[idx];
+        if (node) {
+          if (pASet.has(idx)) {
+            monthMap[mName].revenueA += node.rev;
+            monthMap[mName].mfrsA += node.mfrs.size;
+            monthMap[mName].descsA += node.descs.size;
+            // For clients/count, we use the raw numbers for comparison
+            let kCount = 0;
+            populationRows.forEach(r => { if (r[0] === idx) { kCount++; } });
+            monthMap[mName].cntA = kCount;
+            monthMap[mName].clientsA = node.clients.size;
+          }
+          if (pBSet.has(idx)) {
+            monthMap[mName].revenueB += node.rev;
+            monthMap[mName].mfrsB += node.mfrs.size;
+            monthMap[mName].descsB += node.descs.size;
+            let kCount = 0;
+            populationRows.forEach(r => { if (r[0] === idx) { kCount++; } });
+            monthMap[mName].cntB = kCount;
+            monthMap[mName].clientsB = node.clients.size;
+          }
+        }
+      });
+
+      const uniqueOrder = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+      chartData = uniqueOrder
+        .filter(m => monthMap[m])
+        .map(m => ({ name: m, ...monthMap[m] }));
+    } else {
+      // Trend Mode: Continuous line with split colors if possible, but for now single series
+      const pASet = new Set(pA); // Added pASet for trend mode
+      chartData = [...period].sort((a, b) => a - b).map(idx => {
+        let cNodes = statsTotal.monthlyNodes[idx];
+        const isA = pASet.has(idx);
+        const m = data.monthly[idx];
+        return {
+          name: m?.name || '?',
+          revenueA: isA ? (cNodes?.rev || 0) : null,
+          revenueB: (cNodes?.rev || 0),
+          cntA: isA ? (cNodes?.cnt || 0) : null,
+          cntB: (cNodes?.cnt || 0),
+          clientsA: isA ? (cNodes?.clients.size || 0) : null,
+          clientsB: (cNodes?.clients.size || 0)
+        };
+      });
+    }
 
     const labelA = isTrendMode
-      ? (pA.length > 0 ? (pA.length === 1 ? "Mês Anterior" : `Média ${pA.length} Meses Ant.`) : "")
+      ? (pA.length > 0 ? (pA.length === 1 ? "Mês Ant." : `Média ${pA.length} Meses Ant.`) : "")
       : (availableYears[1]?.toString() || "Anterior");
     const labelB = isTrendMode
       ? (pB.length === 1 ? "Mês Atual" : `Média últ. ${pB.length} Meses`)
       : (availableYears[0]?.toString() || "Atual");
     const chartLabelA = labelA;
     const chartLabelB = isTrendMode ? "Receita Mensal" : labelB;
+    const yearLabel = isTrendMode ? (yearsInSelection[0]?.toString() || "") : (availableYears[0]?.toString() || "");
 
-    // 6. Filter Options (population context)
+    // 6. Filter Options (population context - Independent per dimension)
     const clientOpts = new Set<number>(), mfrOpts = new Set<number>(), descOpts = new Set<number>(), storeOpts = new Set<number>();
-    populationRows.forEach(r => {
-      const rs = r[1], rc = r[2], rm = r[3], rd = r[4];
-      clientOpts.add(rc); mfrOpts.add(rm); descOpts.add(rd); storeOpts.add(rs);
-    });
+
+    // For clients: ignore current client filter
+    let rowsC = baseRows;
+    if (mfr !== -1) rowsC = rowsC.filter(r => r[3] === mfr);
+    if (desc !== -1) rowsC = rowsC.filter(r => r[4] === desc);
+    if (store !== -1) rowsC = rowsC.filter(r => r[1] === store);
+    rowsC.forEach(r => clientOpts.add(r[2]));
+
+    // For manufacturers: ignore current mfr filter
+    let rowsM = baseRows;
+    if (client !== -1) rowsM = rowsM.filter(r => r[2] === client);
+    if (desc !== -1) rowsM = rowsM.filter(r => r[4] === desc);
+    if (store !== -1) rowsM = rowsM.filter(r => r[1] === store);
+    rowsM.forEach(r => mfrOpts.add(r[3]));
+
+    // For descriptions: ignore current desc filter
+    let rowsD = baseRows;
+    if (client !== -1) rowsD = rowsD.filter(r => r[2] === client);
+    if (mfr !== -1) rowsD = rowsD.filter(r => r[3] === mfr);
+    if (store !== -1) rowsD = rowsD.filter(r => r[1] === store);
+    rowsD.forEach(r => descOpts.add(r[4]));
+
+    // For stores: ignore current store filter
+    let rowsS = baseRows;
+    if (client !== -1) rowsS = rowsS.filter(r => r[2] === client);
+    if (mfr !== -1) rowsS = rowsS.filter(r => r[3] === mfr);
+    if (desc !== -1) rowsS = rowsS.filter(r => r[4] === desc);
+    rowsS.forEach(r => storeOpts.add(r[1]));
 
     // 7. Rankings and Charts based on rowsDisplay
     const getTrend = (mapType: 'm' | 'd'): TrendItem[] => {
@@ -190,51 +326,88 @@ export default function App() {
       })).sort((a, b) => b.total - a.total).slice(0, 50);
     }
 
-    // 8. Chart Data
-    let chartData: any[] = [];
-    if (!isTrendMode) {
-      // Comparison: Map by month name to allow overlapping lines
-      const monthMap: Record<string, { revenueA: number, revenueB: number }> = {};
-      const pASet = new Set(pA);
-      const pBSet = new Set(pB);
-
-      [...pA, ...pB].forEach(idx => {
-        const mName = data.monthly[idx].name.split('/')[0];
-        if (!monthMap[mName]) monthMap[mName] = { revenueA: 0, revenueB: 0 };
-
-        let rev = 0;
-        populationRows.forEach(r => { if (r[0] === idx) rev += r[6]; });
-
-        if (pASet.has(idx)) monthMap[mName].revenueA += rev;
-        if (pBSet.has(idx)) monthMap[mName].revenueB += rev;
-      });
-
-      // Preserve chronological month order from data.monthly
-      const uniqueOrder = Array.from(new Set(data.monthly.map(m => m.name.split('/')[0])));
-      chartData = uniqueOrder
-        .filter(m => monthMap[m])
-        .map(m => ({
-          name: m,
-          revenueA: monthMap[m].revenueA || 0,
-          revenueB: monthMap[m].revenueB || 0
-        }));
-    } else {
-      // Chronological: Single line for the selected trend period
-      chartData = [...selection].sort((a, b) => a - b).map(idx => {
-        let rev = 0;
-        populationRows.forEach(r => { if (r[0] === idx) rev += r[6]; });
-        return {
-          name: data.monthly[idx].name.split('/')[0],
-          revenueB: rev
-        };
-      });
-    }
-
     return {
       stats: {
-        statsA, statsB, topMfrs: getTrend('m'), topDescs: getTrend('d'), topProducts, chartData,
-        labelA, labelB, chartLabelA, chartLabelB, singleYearMode: isTrendMode,
-        lenA: pA.length, lenB: pB.length
+        statsA, statsB, statsTotal, topMfrs: getTrend('m'), topDescs: getTrend('d'), topProducts, chartData,
+        labelA, labelB, chartLabelA, chartLabelB, yearLabel, singleYearMode: isTrendMode,
+        lenA: pA.length, lenB: pB.length,
+        // Helper to get stats for any period (used by modal)
+        getStatsForPeriod: (targetPeriod: number[]) => {
+          let sA: number[] = [];
+          let sB: number[] = [];
+          const years = Array.from(new Set(targetPeriod.map(idx => data.monthly[idx].year)));
+          const isTrend = targetPeriod.length > 0 && years.length === 1;
+          let sorted: number[] = [];
+
+          if (!isTrend) {
+            const lastYear = availableYears[0];
+            const prevYear = availableYears[1] || lastYear;
+            const tIdx = targetPeriod.length === 0 ? data.monthly.map((_, i) => i) : targetPeriod;
+            tIdx.forEach(idx => {
+              const m = data.monthly[idx];
+              if (m.year === prevYear && lastYear !== prevYear) sA.push(idx);
+              if (m.year === lastYear) sB.push(idx);
+            });
+          } else {
+            sorted = [...targetPeriod].sort((a, b) => a - b);
+            const total = sorted.length;
+            const currentCount = Math.max(1, Math.min(3, Math.floor(total / 4) || 1));
+            sB = sorted.slice(-currentCount);
+            sA = sorted.slice(0, -currentCount);
+          }
+
+          const stA = aggregate(populationRows, sA);
+          const stB = aggregate(populationRows, sB);
+
+          let cData: any[] = [];
+          if (!isTrend) {
+            const mMap: any = {};
+            const sASet = new Set(sA);
+            const sBSet = new Set(sB);
+            [...sA, ...sB].forEach(idx => {
+              const mName = data.monthly[idx].name.split('/')[0];
+              if (!mMap[mName]) mMap[mName] = { revenueA: 0, revenueB: 0, cntA: 0, cntB: 0, clientsA: 0, clientsB: 0 };
+              const node = stA.monthlyNodes[idx] || stB.monthlyNodes[idx];
+              if (node) {
+                if (sASet.has(idx)) {
+                  mMap[mName].revenueA += node.rev;
+                  mMap[mName].cntA = node.cnt;
+                  mMap[mName].clientsA = node.clients.size;
+                }
+                if (sBSet.has(idx)) {
+                  mMap[mName].revenueB += node.rev;
+                  mMap[mName].cntB = node.cnt;
+                  mMap[mName].clientsB = node.clients.size;
+                }
+              }
+            });
+            const uniqueOrder = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+            cData = uniqueOrder.filter(m => mMap[m]).map(m => ({ name: m, ...mMap[m] }));
+          } else {
+            const sASet = new Set(sA);
+            cData = sorted.map((idx: number) => {
+              const node = stA.monthlyNodes[idx] || stB.monthlyNodes[idx];
+              const isA = sASet.has(idx);
+              return {
+                name: data.monthly[idx].name,
+                revenueA: isA ? (node?.rev || 0) : null,
+                revenueB: (node?.rev || 0),
+                cntA: isA ? (node?.cnt || 0) : null,
+                cntB: (node?.cnt || 0),
+                clientsA: isA ? (node?.clients.size || 0) : null,
+                clientsB: (node?.clients.size || 0)
+              };
+            });
+          }
+
+          const yearB = isTrend ? (years[0] || '') : (availableYears[0] || '');
+          const lA = isTrend ? "Baseline" : (availableYears[1]?.toString() || "Anterior");
+          const lB = isTrend
+            ? (historyType === 'revenue' ? `Receita ${yearB}` : (historyType === 'mfr' ? `Volume ${yearB}` : `Clientes ${yearB}`))
+            : yearB.toString();
+
+          return { chartData: cData, labelA: lA, labelB: lB, isTrend };
+        }
       },
       filterOptions: { clientOpts, mfrOpts, descOpts, storeOpts },
       noDataMessage: populationRows.length === 0 ? "Nenhum dado encontrado para os filtros selecionados." : null
@@ -273,15 +446,19 @@ export default function App() {
         </div>
       ) : (
         <>
-          <MetricsGrid stats={processed.stats} />
+          <MetricsGrid
+            stats={processed.stats}
+            onRevenueClick={() => { setHistoryType('revenue'); setModalPeriod(period); }}
+            onClientsClick={() => { setHistoryType('desc'); setModalPeriod(period); }}
+          />
 
           <div className="chart-grid">
             <HistoryChart
               chartData={processed.stats?.chartData || []}
               labelA={processed.stats?.chartLabelA || ""}
               labelB={processed.stats?.chartLabelB || ""}
-              showA={!!processed.stats?.statsA.rev && !processed.stats?.singleYearMode}
-              showB={!!processed.stats?.statsB.rev}
+              showA={!!processed.stats?.statsA?.rev && !processed.stats?.singleYearMode}
+              showB={!!processed.stats?.statsB?.rev}
             />
 
             <BreakdownSection
@@ -300,6 +477,254 @@ export default function App() {
       <footer style={{ marginTop: '2rem', textAlign: 'center', color: 'var(--text-secondary)', paddingBottom: '2rem' }}>
         <p> 2026</p>
       </footer>
+
+      {historyType && processed.stats && (
+        <div style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 10000,
+          background: 'rgba(0,0,0,0.85)',
+          backdropFilter: 'blur(10px)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: '1.5rem'
+        }}>
+          <div className="glass-card custom-scrollbar" style={{
+            width: '100%',
+            maxWidth: '1000px',
+            maxHeight: '90vh',
+            display: 'flex',
+            flexDirection: 'column',
+            overflowY: 'auto',
+            position: 'relative',
+            padding: '2rem'
+          }}>
+            <button
+              onClick={() => {
+                setHistoryType(null);
+                setModalPeriod([]);
+              }}
+              style={{
+                position: 'absolute',
+                top: '1.5rem',
+                right: '1.5rem',
+                background: 'rgba(255,255,255,0.05)',
+                border: 'none',
+                borderRadius: '50%',
+                width: '36px',
+                height: '36px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: 'white',
+                cursor: 'pointer',
+                zIndex: 10
+              }}
+            >
+              <X size={20} />
+            </button>
+
+            {(() => {
+              const mData = processed.stats?.getStatsForPeriod(modalPeriod);
+              if (!mData) return null;
+
+              return (
+                <>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', gap: '2rem', flexShrink: 0, paddingRight: '40px' }}>
+                    <h2 style={{ color: 'white', margin: 0, display: 'flex', alignItems: 'center', gap: '12px', fontSize: '1.5rem', flexWrap: 'wrap' }}>
+                      {historyType === 'revenue' && <><DollarSign color="var(--accent)" /> Receita Detalhada</>}
+                      {historyType === 'mfr' && <><ShoppingCart color="var(--accent)" /> Volume de Vendas</>}
+                      {historyType === 'desc' && <><Users color="var(--accent)" /> Clientes Ativos</>}
+                      {client !== -1 && <span style={{ color: 'var(--text-secondary)', fontSize: '1.1rem', fontWeight: 400, marginLeft: '4px' }}>— {data?.maps.c[client]}</span>}
+                    </h2>
+                    <div style={{ width: '250px' }}>
+                      <PeriodSelector
+                        label=""
+                        value={modalPeriod}
+                        data={data!}
+                        onChange={setModalPeriod}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Summary Cards Row */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1.5rem', flexShrink: 0 }}>
+                    {(() => {
+                      const periodIndices = modalPeriod.length > 0 ? modalPeriod : (period.length > 0 ? period : data!.monthly.map((_, i) => i));
+                      const availableYears = Array.from(new Set(data!.monthly.map(m => m.year))).sort((a, b) => b - a);
+
+                      let sA: number[] = [];
+                      let sB: number[] = [];
+                      const years = Array.from(new Set(periodIndices.map(idx => data!.monthly[idx].year)));
+                      const isTrend = periodIndices.length > 0 && years.length === 1;
+
+                      if (!isTrend) {
+                        const lastYear = availableYears[0];
+                        const prevYear = availableYears[1] || lastYear;
+                        periodIndices.forEach(idx => {
+                          const m = data!.monthly[idx];
+                          if (m.year === prevYear && lastYear !== prevYear) sA.push(idx);
+                          if (m.year === lastYear) sB.push(idx);
+                        });
+                      } else {
+                        const sorted = [...periodIndices].sort((a, b) => a - b);
+                        const total = sorted.length;
+                        const currentCount = Math.max(1, Math.min(3, Math.floor(total / 4) || 1));
+                        sB = sorted.slice(-currentCount);
+                        sA = sorted.slice(0, -currentCount);
+                      }
+
+                      const getVal = (indices: number[]) => {
+                        let rev = 0, vol = 0, cli = new Set();
+                        const rows = data!.rows;
+                        const clientMap = data!.maps.c;
+                        const consumerFinalId = clientMap.indexOf("Consumidor Final");
+                        const indicesSet = new Set(indices);
+
+                        rows.forEach(r => {
+                          if (!indicesSet.has(r[0])) return;
+                          if (r[2] === consumerFinalId) return;
+                          if (client !== -1 && r[2] !== client) return;
+                          if (mfr !== -1 && r[3] !== mfr) return;
+                          if (desc !== -1 && r[4] !== desc) return;
+                          if (store !== -1 && r[1] !== store) return;
+                          rev += r[6];
+                          vol += 1;
+                          cli.add(r[2]);
+                        });
+
+                        const len = indices.length || 1;
+                        return {
+                          rawRev: rev,
+                          rawVol: vol,
+                          rawCli: cli.size,
+                          rev: isTrend ? rev / len : rev,
+                          vol: isTrend ? vol / len : vol,
+                          cli: isTrend ? cli.size / len : cli.size
+                        };
+                      };
+
+                      const totalsA = getVal(sA);
+                      const totalsB = getVal(sB);
+                      const totalsTotal = getVal(periodIndices);
+
+                      const revA = totalsA.rawRev || 0;
+                      const revB = totalsB.rawRev || 0;
+                      const revTotal = totalsTotal.rawRev || 0;
+                      const revAvg = totalsTotal.rev || 0;
+
+                      const avgA = totalsA.rev || 0;
+                      const avgB = totalsB.rev || 0;
+
+                      let displayVal1, displayTitle1, displayVal2, displayTitle2, displayTitle3;
+                      let trendPct;
+                      let trendValYoy = revB - revA;
+
+                      if (isTrend) {
+                        displayTitle1 = `Receita Total (${years[0]})`;
+                        displayVal1 = revTotal;
+                        displayTitle2 = `Média de Receita (${years[0]})`;
+                        displayVal2 = revAvg;
+                        displayTitle3 = "Tendência";
+                        trendPct = avgA > 0 ? ((avgB - avgA) / avgA) * 100 : 0;
+                      } else {
+                        displayTitle1 = "Desempenho em Receita";
+                        displayVal1 = trendValYoy;
+                        displayTitle2 = `Receita Total (${availableYears[0]})`;
+                        displayVal2 = revB;
+                        displayTitle3 = "Performance (Geral)";
+                        trendPct = revA > 0 ? ((revB - revA) / revA) * 100 : 0;
+                      }
+
+                      const format = (v: number) => historyType === 'revenue' ? formatCurrency(v) : formatNumber(Math.round(v));
+
+                      return (
+                        <>
+                          <div className="glass-card" style={{ padding: '1rem', border: '1px solid var(--accent)' }}>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
+                              {displayTitle1}
+                            </p>
+                            <h3 style={{ fontSize: '1.25rem', color: 'white', margin: 0 }}>{format(displayVal1)}</h3>
+                          </div>
+                          <div className="glass-card" style={{ padding: '1rem' }}>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
+                              {displayTitle2}
+                            </p>
+                            <h3 style={{ fontSize: '1.1rem', color: 'white', opacity: 0.8, margin: 0 }}>{format(displayVal2)}</h3>
+                          </div>
+                          <div className="glass-card" style={{ padding: '1rem' }}>
+                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>{displayTitle3}</p>
+                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                              <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: trendPct >= 0 ? '#10b981' : '#f43f5e' }}>
+                                {trendPct >= 0 ? '↑' : '↓'} {isFinite(trendPct) ? Math.abs(trendPct).toFixed(1) : '0.0'}%
+                              </span>
+                            </div>
+                          </div>
+                        </>
+                      );
+                    })()}
+                  </div>
+
+                  {/* Main Content Area (Full Width) */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                    {/* Fixed Chart */}
+                    <div style={{ flexShrink: 0 }}>
+                      <div className="glass-card" style={{ padding: '1.5rem' }}>
+                        <HistoryChart
+                          chartData={mData.chartData.map((d: any) => ({
+                            name: d.name,
+                            revenueA: historyType === 'revenue' ? d.revenueA : (historyType === 'mfr' ? d.cntA : d.clientsA),
+                            revenueB: historyType === 'revenue' ? d.revenueB : (historyType === 'mfr' ? d.cntB : d.clientsB),
+                          }))}
+                          labelA={mData.labelA}
+                          labelB={mData.labelB}
+                          showA={!mData.isTrend}
+                          showB={true}
+                          isCurrency={historyType === 'revenue'}
+                          style={{ height: '280px', minHeight: '280px' }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Scrollable Table Area (Expanded to space) */}
+                    <div className="custom-scrollbar" style={{
+                      background: 'rgba(255,255,255,0.02)',
+                      borderRadius: '0.75rem',
+                      border: '1px solid var(--border)',
+                      overflowX: 'auto'
+                    }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', color: 'white' }}>
+                        <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: '#1a1a1e' }}>
+                          <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
+                            <th style={{ padding: '1rem' }}>Mês / Ano</th>
+                            {mData.labelA && !mData.isTrend && <th style={{ padding: '1rem' }}>{mData.labelA}</th>}
+                            <th style={{ padding: '1rem' }}>{mData.labelB}</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {mData.chartData.map((row: any, i: number) => {
+                            const valA = historyType === 'revenue' ? row.revenueA : (historyType === 'mfr' ? row.cntA : row.clientsA);
+                            const valB = historyType === 'revenue' ? row.revenueB : (historyType === 'mfr' ? row.cntB : row.clientsB);
+                            const format = (v: number) => historyType === 'revenue' ? formatCurrency(v) : formatNumber(Math.round(v));
+                            return (
+                              <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                <td style={{ padding: '1rem', fontWeight: 600 }}>{row.name}</td>
+                                {mData.labelA && !mData.isTrend && <td style={{ padding: '1rem' }}>{format(valA)}</td>}
+                                <td style={{ padding: '1rem' }}>{format(valB)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

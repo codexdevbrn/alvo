@@ -177,7 +177,10 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
                 label="Cliente"
                 icon={Users}
                 value={client}
-                options={data.maps.c.map((name, id) => ({ id, name })).filter(o => client === o.id || (filterOptions?.clientOpts.has(o.id)))}
+                options={data.maps.c
+                    .map((name, id) => ({ id, name }))
+                    .filter(o => o.name !== "Consumidor Final")
+                    .filter(o => client === o.id || (filterOptions?.clientOpts.has(o.id)))}
                 onChange={setClient}
                 onClear={() => setClient(-1)}
                 placeholder="Todos os Clientes"
