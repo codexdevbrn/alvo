@@ -5,6 +5,10 @@ import {
 import { PeriodSelector } from './PeriodSelector';
 import type { DashboardData } from '../types/dashboard';
 
+// ==========================================
+// Types & Interfaces
+// ==========================================
+
 interface FilterContentProps {
     data: DashboardData;
     filters: {
@@ -42,6 +46,37 @@ interface CustomDropdownProps {
     placeholder: string;
 }
 
+interface FilterBarProps {
+    data: DashboardData;
+    filters: {
+        client: number;
+        mfr: number;
+        desc: number;
+        store: number;
+        severity: number;
+        period: number[];
+    };
+    filterOptions: {
+        clientOpts: Set<number>;
+        mfrOpts: Set<number>;
+        descOpts: Set<number>;
+        storeOpts: Set<number>;
+    } | null;
+    setters: {
+        setClient: (v: number) => void;
+        setMfr: (v: number) => void;
+        setDesc: (v: number) => void;
+        setStore: (v: number) => void;
+        setSeverity: (v: number) => void;
+        setPeriod: (v: number[]) => void;
+    };
+    onClear: () => void;
+}
+
+// ==========================================
+// Helper Components
+// ==========================================
+
 function CustomDropdown({ label, icon: Icon, value, options, onChange, onClear, placeholder }: CustomDropdownProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
@@ -51,10 +86,13 @@ function CustomDropdown({ label, icon: Icon, value, options, onChange, onClear, 
 
     return (
         <div className="filter-group" style={{ position: 'relative' }}>
+            {/* Label & Clear Button */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
                 <label style={{ marginBottom: 0 }}><Icon size={12} style={{ marginRight: 4 }} /> {label}</label>
                 {value !== -1 && <button onClick={(e) => { e.stopPropagation(); onClear(); }} className="mini-clear-btn"><X size={10} /></button>}
             </div>
+
+            {/* Selected Value Display */}
             <div
                 className="custom-select"
                 onClick={() => setIsOpen(!isOpen)}
@@ -63,6 +101,7 @@ function CustomDropdown({ label, icon: Icon, value, options, onChange, onClear, 
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedName}</span>
             </div>
 
+            {/* Dropdown Menu */}
             {isOpen && (
                 <>
                     <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={() => setIsOpen(false)} />
@@ -126,10 +165,10 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
     const { setClient, setMfr, setDesc, setStore, setSeverity, setPeriod } = setters;
 
     const severityOpts = [
-        { id: 0, name: "🟡 Amena (-8% a -15%)" },
-        { id: 1, name: "🟠 Grave (-15% a -35%)" },
-        { id: 2, name: "🔴 Gravíssima (-35% a -60%)" },
-        { id: 3, name: "💀 Desconstrução (< -60%)" }
+        { id: 0, name: "Amena (-8% a -15%)" },
+        { id: 1, name: "Grave (-15% a -35%)" },
+        { id: 2, name: "Gravíssima (-35% a -60%)" },
+        { id: 3, name: "Desconstrução (< -60%)" }
     ];
 
     const hasFilters = client !== -1 || mfr !== -1 || desc !== -1 || store !== -1 || severity !== -1 || period.length > 0;
@@ -226,37 +265,15 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
     );
 }
 
-interface FilterBarProps {
-    data: DashboardData;
-    filters: {
-        client: number;
-        mfr: number;
-        desc: number;
-        store: number;
-        severity: number;
-        period: number[];
-    };
-    filterOptions: {
-        clientOpts: Set<number>;
-        mfrOpts: Set<number>;
-        descOpts: Set<number>;
-        storeOpts: Set<number>;
-    } | null;
-    setters: {
-        setClient: (v: number) => void;
-        setMfr: (v: number) => void;
-        setDesc: (v: number) => void;
-        setStore: (v: number) => void;
-        setSeverity: (v: number) => void;
-        setPeriod: (v: number[]) => void;
-    };
-    onClear: () => void;
-}
+// ==========================================
+// Main Component
+// ==========================================
 
 export function FilterBar({ data, filters, filterOptions, setters, onClear }: FilterBarProps) {
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [isMobile, setIsMobile] = useState(window.innerWidth <= 1280);
 
+    // Effect: Handle Screen Resize
     useEffect(() => {
         const handleResize = () => setIsMobile(window.innerWidth <= 1280);
         window.addEventListener('resize', handleResize);
@@ -264,7 +281,9 @@ export function FilterBar({ data, filters, filterOptions, setters, onClear }: Fi
     }, []);
 
     const { client, mfr, desc, store, severity, period } = filters;
+    const hasActiveFilters = client !== -1 || mfr !== -1 || desc !== -1 || store !== -1 || severity !== -1 || period.length > 0;
 
+    // Mobile View
     if (isMobile) {
         return (
             <div style={{ marginBottom: '1.5rem' }}>
@@ -285,7 +304,7 @@ export function FilterBar({ data, filters, filterOptions, setters, onClear }: Fi
                 >
                     <Filter size={18} color="var(--accent)" />
                     <span style={{ fontWeight: 600 }}>Filtros e Períodos</span>
-                    {(client !== -1 || mfr !== -1 || desc !== -1 || store !== -1 || severity !== -1 || period.length > 0) && (
+                    {hasActiveFilters && (
                         <span style={{
                             background: 'var(--accent)',
                             borderRadius: '50%',
@@ -362,6 +381,7 @@ export function FilterBar({ data, filters, filterOptions, setters, onClear }: Fi
         );
     }
 
+    // Desktop View
     return (
         <div className="filters-header">
             <FilterContent data={data} filters={filters} filterOptions={filterOptions} setters={setters} onClear={onClear} />

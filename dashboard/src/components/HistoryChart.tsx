@@ -3,6 +3,10 @@ import { TrendingUp } from 'lucide-react';
 import { AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList } from 'recharts';
 import { formatCurrency, formatNumber } from '../utils/formatters';
 
+// ==========================================
+// Types & Interfaces
+// ==========================================
+
 interface HistoryChartProps {
     chartData: any[];
     labelA: string;
@@ -12,6 +16,10 @@ interface HistoryChartProps {
     isCurrency?: boolean;
     style?: React.CSSProperties;
 }
+
+// ==========================================
+// Helper Components/Functions
+// ==========================================
 
 const renderCustomizedLabel = (props: any, isMobile: boolean, isCurrency: boolean) => {
     const { x, y, value, index } = props;
@@ -33,8 +41,16 @@ const renderCustomizedLabel = (props: any, isMobile: boolean, isCurrency: boolea
     );
 };
 
+// ==========================================
+// Main Component
+// ==========================================
+
 export function HistoryChart({ chartData, labelA, labelB, showA, showB, isCurrency = true, style }: HistoryChartProps) {
     const [isMobile, setIsMobile] = useState(window.innerWidth <= 1280);
+
+    // ==========================================
+    // Effects
+    // ==========================================
 
     useEffect(() => {
         const handleResize = () => setIsMobile(window.innerWidth <= 1280);
@@ -42,7 +58,6 @@ export function HistoryChart({ chartData, labelA, labelB, showA, showB, isCurren
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
-    // If style is provided, we might be inside a modal, so we disable some card styles
     const containerStyle: React.CSSProperties = {
         gridColumn: 'span 2',
         minHeight: isMobile ? '300px' : '380px',
@@ -52,6 +67,10 @@ export function HistoryChart({ chartData, labelA, labelB, showA, showB, isCurren
         padding: style ? '0' : undefined,
         ...style
     };
+
+    // ==========================================
+    // Render
+    // ==========================================
 
     return (
         <div className="glass-card chart-full" style={containerStyle}>

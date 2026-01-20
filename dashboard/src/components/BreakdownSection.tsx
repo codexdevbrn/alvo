@@ -2,6 +2,10 @@ import { useState, useEffect } from 'react';
 import { formatCurrency } from '../utils/formatters';
 import type { TrendItem, ProductStats } from '../types/dashboard';
 
+// ==========================================
+// Types & Interfaces
+// ==========================================
+
 interface BreakdownSectionProps {
     topMfrs: TrendItem[];
     topDescs: TrendItem[];
@@ -11,6 +15,10 @@ interface BreakdownSectionProps {
     labelA: string;
     labelB: string;
 }
+
+// ==========================================
+// Main Component
+// ==========================================
 
 export function BreakdownSection({
     topMfrs,
@@ -23,6 +31,10 @@ export function BreakdownSection({
 }: BreakdownSectionProps) {
     const [isMobile, setIsMobile] = useState(window.innerWidth <= 1280);
 
+    // ==========================================
+    // Effects
+    // ==========================================
+
     useEffect(() => {
         const handleResize = () => setIsMobile(window.innerWidth <= 1280);
         window.addEventListener('resize', handleResize);
@@ -30,6 +42,10 @@ export function BreakdownSection({
     }, []);
 
     const padding = isMobile ? '0.75rem 0.5rem' : '1rem';
+
+    // ==========================================
+    // Sub-renders (Conditionals)
+    // ==========================================
 
     if (isDescFiltered) {
         return (
@@ -74,6 +90,10 @@ export function BreakdownSection({
             </div>
         );
     }
+
+    // ==========================================
+    // Render (Default)
+    // ==========================================
 
     return (
         <>

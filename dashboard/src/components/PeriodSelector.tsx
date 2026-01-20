@@ -2,6 +2,10 @@ import { useState, useRef, useEffect } from 'react';
 import { X, TrendingUp, Check } from 'lucide-react';
 import type { DashboardData } from '../types/dashboard';
 
+// ==========================================
+// Types & Interfaces
+// ==========================================
+
 interface PeriodSelectorProps {
     label: string;
     value: number[];
@@ -9,7 +13,15 @@ interface PeriodSelectorProps {
     onChange: (value: number[]) => void;
 }
 
+// ==========================================
+// Main Component
+// ==========================================
+
 export function PeriodSelector({ label, value, data, onChange }: PeriodSelectorProps) {
+    // ==========================================
+    // State & Refs
+    // ==========================================
+
     const [isOpen, setIsOpen] = useState(false);
     const [expandedYear, setExpandedYear] = useState<number | null>(null);
     const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -18,12 +30,20 @@ export function PeriodSelector({ label, value, data, onChange }: PeriodSelectorP
     const allIndices = data.monthly.map((_: any, i: number) => i);
     const isAllSelected = value.length === 0;
 
+    // ==========================================
+    // Effects
+    // ==========================================
+
     // Clear timeout on unmount or when manual toggle happens
     useEffect(() => {
         return () => {
             if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
         };
     }, []);
+
+    // ==========================================
+    // Helper Functions (Handlers)
+    // ==========================================
 
     const startCloseTimer = () => {
         if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
@@ -82,6 +102,10 @@ export function PeriodSelector({ label, value, data, onChange }: PeriodSelectorP
         if (c24 && c25) return `${c24}m ('24) vs ${c25}m ('25)`;
         return `${value.length} meses selecionados`;
     };
+
+    // ==========================================
+    // Render
+    // ==========================================
 
     return (
         <div className="filter-group" style={{ position: 'relative' }}>

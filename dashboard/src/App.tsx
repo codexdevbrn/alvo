@@ -1,15 +1,25 @@
 import { useState, useMemo, useEffect } from 'react';
-import { RefreshCw, AlertTriangle, X, TrendingUp, DollarSign, ShoppingCart, Users } from 'lucide-react';
-import { PeriodSelector } from './components/PeriodSelector';
+import { AlertTriangle } from 'lucide-react';
 import { FilterBar } from './components/FilterBar';
 import { MetricsGrid } from './components/MetricsGrid';
 import { HistoryChart } from './components/HistoryChart';
 import { BreakdownSection } from './components/BreakdownSection';
+import { RevenueDetailModal } from './components/RevenueDetailModal';
+import { LoadingScreen } from './components/LoadingScreen';
+import { DashboardHeader } from './components/DashboardHeader';
 import { formatCurrency, formatNumber } from './utils/formatters';
-import type { DashboardData, ProductStats, AggregatedStats, TrendItem } from './types/dashboard';
+import type { DashboardData, ProductStats, TrendItem } from './types/dashboard';
 import './index.css';
 
+// ==========================================
+// Main Component
+// ==========================================
+
 export default function App() {
+  // ==========================================
+  // State Definitions
+  // ==========================================
+
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [historyType, setHistoryType] = useState<null | 'revenue' | 'mfr' | 'desc'>(null);
@@ -22,6 +32,10 @@ export default function App() {
   const [severity, setSeverity] = useState<number>(() => { const v = localStorage.getItem('alvo_severity'); return v !== null ? Number(v) : -1; });
   const [period, setPeriod] = useState<number[]>(() => JSON.parse(localStorage.getItem('alvo_period') || '[]'));
   const [modalPeriod, setModalPeriod] = useState<number[]>(() => JSON.parse(localStorage.getItem('alvo_period_modal') || '[]'));
+
+  // ==========================================
+  // Effects (Persistence & Data Loading)
+  // ==========================================
 
   // Sync to LocalStorage
   useEffect(() => {
@@ -47,9 +61,17 @@ export default function App() {
       });
   }, []);
 
+  // ==========================================
+  // Helper Functions
+  // ==========================================
+
   const clearFilters = () => {
     setClient(-1); setMfr(-1); setDesc(-1); setStore(-1); setPeriod([]); setSeverity(-1);
   };
+
+  // ==========================================
+  // Data Processing & Business Logic
+  // ==========================================
 
   const processed = useMemo(() => {
     if (!data) return { stats: null, filterOptions: null, noDataMessage: null };
@@ -81,7 +103,7 @@ export default function App() {
       if (totalSelected === 12) {
         // Specific formula for full year: Last 3 Months (B) / Last 9 Months (A)
         pB = sortedPeriod.slice(-3);
-        pA = sortedPeriod.slice(-9);
+        pA = sortedPeriod.slice(0, -3); // Corrected to take the first 9 months
       } else {
         // Proportional split: ~25% for "Current" (cap at 3), rest for "Baseline"
         // If 12Selected -> 3 vs 9. If 2Selected -> 1 vs 1.
@@ -97,33 +119,77 @@ export default function App() {
       ? data.rows.filter(r => r[2] !== consumerFinalId)
       : data.rows;
 
+    // Severity Calculation Setup (Needs to happen before client filter to populate client options correctly)
+    let validClients: Set<number> | null = null;
+
+    if (severity !== -1) {
+      // Calculate validity based on Context (Mfr, Desc, Store) but IGNORING Client filter
+      // This ensures the Client Filter Options list correctly reflects clients that match the severity
+      let rowsForSev = baseRows;
+      // Severity should be based on GLOBAL client performance (per store), 
+      // NOT restricted by the specific product/mfr being viewed.
+      // mfr/desc filters are removed here so "Critical" means "Critical Overall".
+      if (store !== -1) rowsForSev = rowsForSev.filter(r => r[1] === store);
+
+      // Fixed Reference Logic: Use Global Year vs Previous Year
+      // Find the two most recent years in the dataset (e.g. 2025 and 2024)
+      // This ensures the severity status ("Critical" etc) is a PROPERTY of the client based on Annual Performance
+      // and does not change just because the user zoomed into "Jan 2025".
+      const refYears = Array.from(new Set(data.monthly.map(m => m.year))).sort((a, b) => b - a);
+      if (refYears.length >= 2) {
+        const yNew = refYears[0];
+        const yOld = refYears[1];
+
+        // Get all month indices for these years (FULL YEAR comparison)
+        const refPA = data.monthly.map((m, i) => m.year === yOld ? i : -1).filter(i => i !== -1);
+        const refPB = data.monthly.map((m, i) => m.year === yNew ? i : -1).filter(i => i !== -1);
+
+        const perf: Record<number, { vA: number, vB: number }> = {};
+        rowsForSev.forEach(r => {
+          const pId = r[0], cId = r[2], revVal = r[6];
+          if (!perf[cId]) perf[cId] = { vA: 0, vB: 0 };
+          if (refPA.includes(pId)) perf[cId].vA += revVal;
+          if (refPB.includes(pId)) perf[cId].vB += revVal;
+        });
+
+        const vClients = new Set<number>();
+        const lenA = refPA.length || 1;
+        const lenB = refPB.length || 1;
+
+        Object.entries(perf).forEach(([cId, s]: [string, any]) => {
+          // Only clients with baseline sales (previous year) can have dropped
+          if (s.vA <= 0) return;
+
+          // Compare Average Monthly Revenue of New Year vs Old Year
+          const valA = s.vA / lenA;
+          const valB = s.vB / lenB;
+          const diff = ((valB / valA) - 1) * 100;
+
+          let cSev = -1;
+          if (diff <= -8 && diff > -15) cSev = 0;
+          else if (diff <= -15 && diff > -35) cSev = 1;
+          else if (diff <= -35 && diff > -60) cSev = 2;
+          else if (diff <= -60) cSev = 3;
+
+          if (cSev === severity) vClients.add(Number(cId));
+        });
+        validClients = vClients;
+      } else {
+        // Fallback: If not enough data for Global Comparison, show all
+        validClients = null;
+      }
+    }
+
     let populationRows = baseRows;
+    // Apply filters
     if (client !== -1) populationRows = populationRows.filter(r => r[2] === client);
     if (mfr !== -1) populationRows = populationRows.filter(r => r[3] === mfr);
     if (desc !== -1) populationRows = populationRows.filter(r => r[4] === desc);
     if (store !== -1) populationRows = populationRows.filter(r => r[1] === store);
 
-    if (severity !== -1) {
-      const perf: Record<number, { vA: number, vB: number }> = {};
-      populationRows.forEach(r => {
-        const pId = r[0], cId = r[2], revVal = r[6];
-        if (!perf[cId]) perf[cId] = { vA: 0, vB: 0 };
-        if (pA.includes(pId)) perf[cId].vA += revVal;
-        if (pB.includes(pId)) perf[cId].vB += revVal;
-      });
-
-      const validClients = new Set();
-      Object.entries(perf).forEach(([cId, s]: [string, any]) => {
-        if (s.vA <= 0) return;
-        const diff = ((s.vB / (isTrendMode ? (pB.length || 1) : 1)) / (s.vA / (isTrendMode ? (pA.length || 1) : 1)) - 1) * 100;
-        let cSev = -1;
-        if (diff <= -8 && diff > -15) cSev = 0;
-        else if (diff <= -15 && diff > -35) cSev = 1;
-        else if (diff <= -35 && diff > -60) cSev = 2;
-        else if (diff <= -60) cSev = 3;
-        if (cSev === severity) validClients.add(Number(cId));
-      });
-      populationRows = populationRows.filter(r => validClients.has(r[2]));
+    // Apply Severity Filter (Intersection)
+    if (validClients !== null) {
+      populationRows = populationRows.filter(r => validClients!.has(r[2]));
     }
 
     // 5. Aggregation Logic
@@ -259,6 +325,8 @@ export default function App() {
     if (mfr !== -1) rowsC = rowsC.filter(r => r[3] === mfr);
     if (desc !== -1) rowsC = rowsC.filter(r => r[4] === desc);
     if (store !== -1) rowsC = rowsC.filter(r => r[1] === store);
+    // Apply Severity Filter to Client Options
+    if (validClients !== null) rowsC = rowsC.filter(r => validClients!.has(r[2]));
     rowsC.forEach(r => clientOpts.add(r[2]));
 
     // For manufacturers: ignore current mfr filter
@@ -266,6 +334,8 @@ export default function App() {
     if (client !== -1) rowsM = rowsM.filter(r => r[2] === client);
     if (desc !== -1) rowsM = rowsM.filter(r => r[4] === desc);
     if (store !== -1) rowsM = rowsM.filter(r => r[1] === store);
+    // Apply Severity Filter to Mfr Options
+    if (validClients !== null) rowsM = rowsM.filter(r => validClients!.has(r[2]));
     rowsM.forEach(r => mfrOpts.add(r[3]));
 
     // For descriptions: ignore current desc filter
@@ -273,6 +343,8 @@ export default function App() {
     if (client !== -1) rowsD = rowsD.filter(r => r[2] === client);
     if (mfr !== -1) rowsD = rowsD.filter(r => r[3] === mfr);
     if (store !== -1) rowsD = rowsD.filter(r => r[1] === store);
+    // Apply Severity Filter to Desc Options
+    if (validClients !== null) rowsD = rowsD.filter(r => validClients!.has(r[2]));
     rowsD.forEach(r => descOpts.add(r[4]));
 
     // For stores: ignore current store filter
@@ -280,6 +352,8 @@ export default function App() {
     if (client !== -1) rowsS = rowsS.filter(r => r[2] === client);
     if (mfr !== -1) rowsS = rowsS.filter(r => r[3] === mfr);
     if (desc !== -1) rowsS = rowsS.filter(r => r[4] === desc);
+    // Apply Severity Filter to Store Options
+    if (validClients !== null) rowsS = rowsS.filter(r => validClients!.has(r[2]));
     rowsS.forEach(r => storeOpts.add(r[1]));
 
     // 7. Rankings and Charts based on rowsDisplay
@@ -414,27 +488,100 @@ export default function App() {
     };
   }, [data, client, mfr, desc, store, severity, period]);
 
-  if (loading) return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-main)' }}>
-      <RefreshCw className="animate-spin" size={48} color="var(--accent)" />
-      <p style={{ marginTop: '1.5rem', color: 'var(--text-secondary)' }}>Carregando dados...</p>
-    </div>
-  );
+  // ==========================================
+  // Render
+  // ==========================================
+
+  if (loading) return <LoadingScreen />;
 
   return (
     <div className="dashboard-container">
-      <header style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
-        <h1 style={{ color: '#fff', fontSize: '2.5rem', fontWeight: 'bold', margin: 0 }}>Alvo</h1>
-        <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', textAlign: 'right' }}>
-          Atualizado em: <span style={{ color: 'white', fontWeight: 500 }}>{data?.updated_at || 'Carregando...'}</span>
-        </div>
-      </header>
+      <DashboardHeader updatedAt={data?.updated_at} />
 
       <FilterBar
         data={data!}
         filters={{ client, mfr, desc, store, severity, period }}
         filterOptions={processed.filterOptions}
-        setters={{ setClient, setMfr, setDesc, setStore, setSeverity, setPeriod }}
+        setters={{
+          setClient, setMfr, setDesc, setStore, setSeverity,
+          setPeriod: (newPeriod: number[]) => {
+            // Enhanced Period Logic: Sync Months across Years
+            if (!data) {
+              setPeriod(newPeriod);
+              return;
+            }
+
+            const allIndices = data.monthly.map((_, i) => i);
+            const effectivePrev = period.length === 0 ? allIndices : period;
+            const effectiveNew = newPeriod.length === 0 ? allIndices : newPeriod;
+
+            const prevSet = new Set(effectivePrev);
+            const newSet = new Set(effectiveNew);
+
+            // Identify changes
+            const added = effectiveNew.filter(p => !prevSet.has(p));
+            const removed = effectivePrev.filter(p => !newSet.has(p));
+            const totalChanges = added.length + removed.length;
+
+            if (totalChanges === 1) {
+              const changedIdx = added.length ? added[0] : removed[0];
+              const isAdd = added.length > 0;
+              const changedMonth = data.monthly[changedIdx];
+
+              if (changedMonth) {
+                // Check involved years to see if we are in a multi-year context
+                // We consider 'effectivePrev' years as the context.
+                const involvedYears = Array.from(new Set(effectivePrev.map(idx => data.monthly[idx].year)));
+
+                // Only sync if we have multiple years involved (Comparison Mode)
+                if (involvedYears.length >= 2) {
+                  const mName = changedMonth.name.split('/')[0].toLowerCase();
+
+                  involvedYears.forEach(y => {
+                    if (y === changedMonth.year) return;
+
+                    // Find corresponding month in this other year
+                    const targetIdx = data.monthly.findIndex(m => m.year === y && m.name.split('/')[0].toLowerCase() === mName);
+
+                    if (targetIdx !== -1) {
+                      if (isAdd) {
+                        // If adding, ensure target is in newPeriod
+                        // If newPeriod is [], it implicitly has it, unless we change that?
+                        // Actually, if newPeriod is [], it means All, so it HAS it.
+                        // We only need to act if newPeriod is NOT empty.
+                        if (newPeriod.length > 0) {
+                          if (!newPeriod.includes(targetIdx)) {
+                            newPeriod.push(targetIdx);
+                          }
+                        }
+                      } else {
+                        // If removing, we MUST remove target from newPeriod.
+                        // If newPeriod was [] (All), we can't simply remove.
+                        // But wait, if we are part of a 'remove' action, newPeriod CANNOT be [] (All),
+                        // because we just removed something from effectivePrev. 
+                        // So newPeriod IS explicit list (allIndices minus removed).
+                        // So we can safely filter.
+                        if (newPeriod.length > 0) {
+                          newPeriod = newPeriod.filter(idx => idx !== targetIdx);
+                        }
+                      }
+                    }
+                  });
+                }
+              }
+            }
+
+            // Safety: if we reconstructed "All", revert to empty array
+            if (newPeriod.length === data.monthly.length) {
+              newPeriod = [];
+            } else {
+              // Ensure sorting or uniqueness if needed, but not strictly required by logic
+              // newPeriod = Array.from(new Set(newPeriod)).sort((a,b) => a-b);
+            }
+
+            setPeriod(newPeriod);
+          }
+        }}
         onClear={clearFilters}
       />
 
@@ -477,243 +624,25 @@ export default function App() {
         <p> 2026</p>
       </footer>
 
-      {historyType && processed.stats && (
-        <div style={{
-          position: 'fixed',
-          inset: 0,
-          zIndex: 10000,
-          background: 'rgba(0,0,0,0.85)',
-          backdropFilter: 'blur(10px)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          padding: '1.5rem'
-        }}>
-          <div className="glass-card custom-scrollbar" style={{
-            width: '100%',
-            maxWidth: '1000px',
-            maxHeight: '90vh',
-            display: 'flex',
-            flexDirection: 'column',
-            overflowY: 'auto',
-            position: 'relative',
-            padding: '2rem'
-          }}>
-            <button
-              onClick={() => {
-                setHistoryType(null);
-                setModalPeriod([]);
-              }}
-              style={{
-                position: 'absolute',
-                top: '1.5rem',
-                right: '1.5rem',
-                background: 'rgba(255,255,255,0.05)',
-                border: 'none',
-                borderRadius: '50%',
-                width: '36px',
-                height: '36px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'white',
-                cursor: 'pointer',
-                zIndex: 10
-              }}
-            >
-              <X size={20} />
-            </button>
-
-            {(() => {
-              const mData = processed.stats?.getStatsForPeriod(modalPeriod);
-              if (!mData) return null;
-
-              return (
-                <>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', gap: '2rem', flexShrink: 0, paddingRight: '40px' }}>
-                    <h2 style={{ color: 'white', margin: 0, display: 'flex', alignItems: 'center', gap: '12px', fontSize: '1.5rem', flexWrap: 'wrap' }}>
-                      {historyType === 'revenue' && <><DollarSign color="var(--accent)" /> Receita Detalhada</>}
-                      {historyType === 'mfr' && <><ShoppingCart color="var(--accent)" /> Volume de Vendas</>}
-                      {historyType === 'desc' && <><Users color="var(--accent)" /> Clientes Ativos</>}
-                      {client !== -1 && <span style={{ color: 'var(--text-secondary)', fontSize: '1.1rem', fontWeight: 400, marginLeft: '4px' }}>— {data?.maps.c[client]}</span>}
-                    </h2>
-                    <div style={{ width: '250px' }}>
-                      <PeriodSelector
-                        label=""
-                        value={modalPeriod}
-                        data={data!}
-                        onChange={setModalPeriod}
-                      />
-                    </div>
-                  </div>
-
-                  {/* Summary Cards Row */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', marginBottom: '1.5rem', flexShrink: 0 }}>
-                    {(() => {
-                      const periodIndices = modalPeriod.length > 0 ? modalPeriod : (period.length > 0 ? period : data!.monthly.map((_, i) => i));
-                      const selectedYears = Array.from(new Set(periodIndices.map(idx => data!.monthly[idx].year))).sort((a, b) => a - b);
-                      const isTrend = periodIndices.length > 0 && selectedYears.length === 1;
-
-                      const getVal = (indices: number[]) => {
-                        let rev = 0, vol = 0, cli = new Set();
-                        const rows = data!.rows;
-                        const clientMap = data!.maps.c;
-                        const consumerFinalId = clientMap.indexOf("Consumidor Final");
-                        const indicesSet = new Set(indices);
-
-                        rows.forEach(r => {
-                          if (!indicesSet.has(r[0])) return;
-                          if (r[2] === consumerFinalId) return;
-                          if (client !== -1 && r[2] !== client) return;
-                          if (mfr !== -1 && r[3] !== mfr) return;
-                          if (desc !== -1 && r[4] !== desc) return;
-                          if (store !== -1 && r[1] !== store) return;
-                          rev += r[6];
-                          vol += 1;
-                          cli.add(r[2]);
-                        });
-
-                        const len = indices.length || 1;
-                        return {
-                          rawRev: rev,
-                          rawVol: vol,
-                          rawCli: cli.size,
-                          rev: isTrend ? rev / len : rev,
-                          vol: isTrend ? vol / len : vol,
-                          cli: isTrend ? cli.size / len : cli.size
-                        };
-                      };
-
-                      const format = (v: number) => historyType === 'revenue' ? formatCurrency(v) : formatNumber(Math.round(v));
-
-                      if (isTrend) {
-                        const sorted = [...periodIndices].sort((a, b) => a - b);
-                        const total = sorted.length;
-                        const currentCount = Math.max(1, Math.min(3, Math.floor(total / 4) || 1));
-                        const sB = sorted.slice(-currentCount);
-                        const sA = sorted.slice(0, -currentCount);
-
-                        const tA = getVal(sA);
-                        const tB = getVal(sB);
-                        const tTotal = getVal(periodIndices);
-
-                        const trendPct = tA.rev > 0 ? ((tB.rev - tA.rev) / tA.rev) * 100 : 0;
-
-                        return (
-                          <>
-                            <div className="glass-card" style={{ padding: '1rem', border: '1px solid var(--accent)' }}>
-                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Receita Total ({selectedYears[0]})</p>
-                              <h3 style={{ fontSize: '1.25rem', color: 'white', margin: 0 }}>{format(tTotal.rawRev)}</h3>
-                            </div>
-                            <div className="glass-card" style={{ padding: '1rem' }}>
-                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Média de Receita ({selectedYears[0]})</p>
-                              <h3 style={{ fontSize: '1.1rem', color: 'white', opacity: 0.8, margin: 0 }}>{format(tTotal.rev)}</h3>
-                            </div>
-                            <div className="glass-card" style={{ padding: '1rem' }}>
-                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Tendência</p>
-                              <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: trendPct >= 0 ? '#10b981' : '#f43f5e' }}>
-                                {trendPct >= 0 ? '↑' : '↓'} {isFinite(trendPct) ? Math.abs(trendPct).toFixed(1) : '0.0'}%
-                              </span>
-                            </div>
-                          </>
-                        );
-                      } else {
-                        // Strict Comparison Mode: Exactly 3 cards
-                        const newestYear = selectedYears[0];
-                        const oldestYear = selectedYears[selectedYears.length - 1];
-
-                        const indicesOld = periodIndices.filter(idx => data!.monthly[idx].year === oldestYear);
-                        const indicesNew = periodIndices.filter(idx => data!.monthly[idx].year === newestYear);
-
-                        const valOld = getVal(indicesOld);
-                        const valNew = getVal(indicesNew);
-                        const trendPct = valOld.rawRev > 0 ? ((valNew.rawRev - valOld.rawRev) / valOld.rawRev) * 100 : 0;
-
-                        return (
-                          <>
-                            <div className="glass-card" style={{ padding: '1rem' }}>
-                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
-                                Receita Total ({oldestYear})
-                              </p>
-                              <h3 style={{ fontSize: '1.25rem', color: 'white', margin: 0 }}>{format(valOld.rawRev)}</h3>
-                            </div>
-                            <div className="glass-card" style={{ padding: '1rem' }}>
-                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
-                                Receita Total ({newestYear})
-                              </p>
-                              <h3 style={{ fontSize: '1.25rem', color: 'white', margin: 0 }}>{format(valNew.rawRev)}</h3>
-                            </div>
-                            <div className="glass-card" style={{ padding: '1rem' }}>
-                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Performance (Geral)</p>
-                              <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: trendPct >= 0 ? '#10b981' : '#f43f5e' }}>
-                                {trendPct >= 0 ? '↑' : '↓'} {isFinite(trendPct) ? Math.abs(trendPct).toFixed(1) : '0.0'}%
-                              </span>
-                            </div>
-                          </>
-                        );
-                      }
-                    })()}
-                  </div>
-
-                  {/* Main Content Area (Full Width) */}
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                    {/* Fixed Chart */}
-                    <div style={{ flexShrink: 0 }}>
-                      <div className="glass-card" style={{ padding: '1.5rem' }}>
-                        <HistoryChart
-                          chartData={mData.chartData.map((d: any) => ({
-                            name: d.name,
-                            revenueA: historyType === 'revenue' ? d.revenueA : (historyType === 'mfr' ? d.cntA : d.clientsA),
-                            revenueB: historyType === 'revenue' ? d.revenueB : (historyType === 'mfr' ? d.cntB : d.clientsB),
-                          }))}
-                          labelA={mData.labelA}
-                          labelB={mData.labelB}
-                          showA={!mData.isTrend}
-                          showB={true}
-                          isCurrency={historyType === 'revenue'}
-                          style={{ height: '280px', minHeight: '280px' }}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Scrollable Table Area (Expanded to space) */}
-                    <div className="custom-scrollbar" style={{
-                      background: 'rgba(255,255,255,0.02)',
-                      borderRadius: '0.75rem',
-                      border: '1px solid var(--border)',
-                      overflowX: 'auto'
-                    }}>
-                      <table style={{ width: '100%', borderCollapse: 'collapse', color: 'white' }}>
-                        <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: '#1a1a1e' }}>
-                          <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
-                            <th style={{ padding: '1rem' }}>Mês / Ano</th>
-                            {mData.labelA && !mData.isTrend && <th style={{ padding: '1rem' }}>{mData.labelA}</th>}
-                            <th style={{ padding: '1rem' }}>{mData.labelB}</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {mData.chartData.map((row: any, i: number) => {
-                            const valA = historyType === 'revenue' ? row.revenueA : (historyType === 'mfr' ? row.cntA : row.clientsA);
-                            const valB = historyType === 'revenue' ? row.revenueB : (historyType === 'mfr' ? row.cntB : row.clientsB);
-                            const format = (v: number) => historyType === 'revenue' ? formatCurrency(v) : formatNumber(Math.round(v));
-                            return (
-                              <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                                <td style={{ padding: '1rem', fontWeight: 600 }}>{row.name}</td>
-                                {mData.labelA && !mData.isTrend && <td style={{ padding: '1rem' }}>{format(valA)}</td>}
-                                <td style={{ padding: '1rem' }}>{format(valB)}</td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </>
-              );
-            })()}
-          </div>
-        </div>
-      )}
+      <RevenueDetailModal
+        isOpen={!!historyType && !!processed.stats}
+        onClose={() => {
+          setHistoryType(null);
+          setModalPeriod([]);
+        }}
+        historyType={historyType as 'revenue' | 'mfr' | 'desc'}
+        data={data!}
+        stats={processed.stats}
+        modalPeriod={modalPeriod}
+        setModalPeriod={setModalPeriod}
+        client={client}
+        mfr={mfr}
+        desc={desc}
+        store={store}
+        formatCurrency={formatCurrency}
+        formatNumber={formatNumber}
+        period={period}
+      />
     </div>
   );
 }

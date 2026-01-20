@@ -2,10 +2,18 @@ import { DollarSign, TrendingUp, TrendingDown } from 'lucide-react';
 import { StatCard } from './StatCard';
 import { formatCurrency } from '../utils/formatters';
 
+// ==========================================
+// Types & Interfaces
+// ==========================================
+
 interface MetricsGridProps {
     stats: any;
     onRevenueClick?: () => void;
 }
+
+// ==========================================
+// Main Component
+// ==========================================
 
 export function MetricsGrid({ stats, onRevenueClick }: MetricsGridProps) {
     if (!stats) return null;
@@ -27,11 +35,19 @@ export function MetricsGrid({ stats, onRevenueClick }: MetricsGridProps) {
         trendPct = avgA > 0 ? ((avgB - avgA) / avgA) * 100 : 0;
     }
 
+    // ==========================================
+    // Helper Functions
+    // ==========================================
+
     const formatPerformance = (val: number) => {
         const formatted = formatCurrency(val);
         if (val > 0) return `+ ${formatted}`;
         return formatted;
     };
+
+    // ==========================================
+    // Render
+    // ==========================================
 
     return (
         <div className="stat-grid">
