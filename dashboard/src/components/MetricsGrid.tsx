@@ -5,7 +5,6 @@ import { formatCurrency } from '../utils/formatters';
 interface MetricsGridProps {
     stats: any;
     onRevenueClick?: () => void;
-    onClientsClick?: () => void;
 }
 
 export function MetricsGrid({ stats, onRevenueClick }: MetricsGridProps) {
@@ -28,13 +27,20 @@ export function MetricsGrid({ stats, onRevenueClick }: MetricsGridProps) {
         trendPct = avgA > 0 ? ((avgB - avgA) / avgA) * 100 : 0;
     }
 
+    const formatPerformance = (val: number) => {
+        const formatted = formatCurrency(val);
+        if (val > 0) return `+ ${formatted}`;
+        return formatted;
+    };
+
     return (
         <div className="stat-grid">
             <StatCard
                 title={singleYearMode ? `Receita Total (${yearLabel})` : "Desempenho em Receita"}
-                value={formatCurrency(singleYearMode ? revTotal : trendValYoy)}
+                value={singleYearMode ? formatCurrency(revTotal) : formatPerformance(trendValYoy)}
                 icon={DollarSign}
                 trendUp={singleYearMode ? true : trendValYoy >= 0}
+                useTrendColor={!singleYearMode}
                 onClick={onRevenueClick}
             />
 
@@ -42,6 +48,7 @@ export function MetricsGrid({ stats, onRevenueClick }: MetricsGridProps) {
                 title={singleYearMode ? `Média de Receita (${yearLabel})` : `Receita Total (${labelB})`}
                 value={formatCurrency(singleYearMode ? revAvg : revB)}
                 icon={singleYearMode ? TrendingUp : DollarSign}
+                useTrendColor={false}
                 onClick={onRevenueClick}
             />
 

@@ -449,7 +449,6 @@ export default function App() {
           <MetricsGrid
             stats={processed.stats}
             onRevenueClick={() => { setHistoryType('revenue'); setModalPeriod(period); }}
-            onClientsClick={() => { setHistoryType('desc'); setModalPeriod(period); }}
           />
 
           <div className="chart-grid">
@@ -549,31 +548,11 @@ export default function App() {
                   </div>
 
                   {/* Summary Cards Row */}
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '1rem', marginBottom: '1.5rem', flexShrink: 0 }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', marginBottom: '1.5rem', flexShrink: 0 }}>
                     {(() => {
                       const periodIndices = modalPeriod.length > 0 ? modalPeriod : (period.length > 0 ? period : data!.monthly.map((_, i) => i));
-                      const availableYears = Array.from(new Set(data!.monthly.map(m => m.year))).sort((a, b) => b - a);
-
-                      let sA: number[] = [];
-                      let sB: number[] = [];
-                      const years = Array.from(new Set(periodIndices.map(idx => data!.monthly[idx].year)));
-                      const isTrend = periodIndices.length > 0 && years.length === 1;
-
-                      if (!isTrend) {
-                        const lastYear = availableYears[0];
-                        const prevYear = availableYears[1] || lastYear;
-                        periodIndices.forEach(idx => {
-                          const m = data!.monthly[idx];
-                          if (m.year === prevYear && lastYear !== prevYear) sA.push(idx);
-                          if (m.year === lastYear) sB.push(idx);
-                        });
-                      } else {
-                        const sorted = [...periodIndices].sort((a, b) => a - b);
-                        const total = sorted.length;
-                        const currentCount = Math.max(1, Math.min(3, Math.floor(total / 4) || 1));
-                        sB = sorted.slice(-currentCount);
-                        sA = sorted.slice(0, -currentCount);
-                      }
+                      const selectedYears = Array.from(new Set(periodIndices.map(idx => data!.monthly[idx].year))).sort((a, b) => a - b);
+                      const isTrend = periodIndices.length > 0 && selectedYears.length === 1;
 
                       const getVal = (indices: number[]) => {
                         let rev = 0, vol = 0, cli = new Set();
@@ -605,64 +584,74 @@ export default function App() {
                         };
                       };
 
-                      const totalsA = getVal(sA);
-                      const totalsB = getVal(sB);
-                      const totalsTotal = getVal(periodIndices);
-
-                      const revA = totalsA.rawRev || 0;
-                      const revB = totalsB.rawRev || 0;
-                      const revTotal = totalsTotal.rawRev || 0;
-                      const revAvg = totalsTotal.rev || 0;
-
-                      const avgA = totalsA.rev || 0;
-                      const avgB = totalsB.rev || 0;
-
-                      let displayVal1, displayTitle1, displayVal2, displayTitle2, displayTitle3;
-                      let trendPct;
-                      let trendValYoy = revB - revA;
-
-                      if (isTrend) {
-                        displayTitle1 = `Receita Total (${years[0]})`;
-                        displayVal1 = revTotal;
-                        displayTitle2 = `Média de Receita (${years[0]})`;
-                        displayVal2 = revAvg;
-                        displayTitle3 = "Tendência";
-                        trendPct = avgA > 0 ? ((avgB - avgA) / avgA) * 100 : 0;
-                      } else {
-                        displayTitle1 = "Desempenho em Receita";
-                        displayVal1 = trendValYoy;
-                        displayTitle2 = `Receita Total (${availableYears[0]})`;
-                        displayVal2 = revB;
-                        displayTitle3 = "Performance (Geral)";
-                        trendPct = revA > 0 ? ((revB - revA) / revA) * 100 : 0;
-                      }
-
                       const format = (v: number) => historyType === 'revenue' ? formatCurrency(v) : formatNumber(Math.round(v));
 
-                      return (
-                        <>
-                          <div className="glass-card" style={{ padding: '1rem', border: '1px solid var(--accent)' }}>
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
-                              {displayTitle1}
-                            </p>
-                            <h3 style={{ fontSize: '1.25rem', color: 'white', margin: 0 }}>{format(displayVal1)}</h3>
-                          </div>
-                          <div className="glass-card" style={{ padding: '1rem' }}>
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
-                              {displayTitle2}
-                            </p>
-                            <h3 style={{ fontSize: '1.1rem', color: 'white', opacity: 0.8, margin: 0 }}>{format(displayVal2)}</h3>
-                          </div>
-                          <div className="glass-card" style={{ padding: '1rem' }}>
-                            <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>{displayTitle3}</p>
-                            <div style={{ display: 'flex', flexDirection: 'column' }}>
+                      if (isTrend) {
+                        const sorted = [...periodIndices].sort((a, b) => a - b);
+                        const total = sorted.length;
+                        const currentCount = Math.max(1, Math.min(3, Math.floor(total / 4) || 1));
+                        const sB = sorted.slice(-currentCount);
+                        const sA = sorted.slice(0, -currentCount);
+
+                        const tA = getVal(sA);
+                        const tB = getVal(sB);
+                        const tTotal = getVal(periodIndices);
+
+                        const trendPct = tA.rev > 0 ? ((tB.rev - tA.rev) / tA.rev) * 100 : 0;
+
+                        return (
+                          <>
+                            <div className="glass-card" style={{ padding: '1rem', border: '1px solid var(--accent)' }}>
+                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Receita Total ({selectedYears[0]})</p>
+                              <h3 style={{ fontSize: '1.25rem', color: 'white', margin: 0 }}>{format(tTotal.rawRev)}</h3>
+                            </div>
+                            <div className="glass-card" style={{ padding: '1rem' }}>
+                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Média de Receita ({selectedYears[0]})</p>
+                              <h3 style={{ fontSize: '1.1rem', color: 'white', opacity: 0.8, margin: 0 }}>{format(tTotal.rev)}</h3>
+                            </div>
+                            <div className="glass-card" style={{ padding: '1rem' }}>
+                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Tendência</p>
                               <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: trendPct >= 0 ? '#10b981' : '#f43f5e' }}>
                                 {trendPct >= 0 ? '↑' : '↓'} {isFinite(trendPct) ? Math.abs(trendPct).toFixed(1) : '0.0'}%
                               </span>
                             </div>
-                          </div>
-                        </>
-                      );
+                          </>
+                        );
+                      } else {
+                        // Strict Comparison Mode: Exactly 3 cards
+                        const newestYear = selectedYears[0];
+                        const oldestYear = selectedYears[selectedYears.length - 1];
+
+                        const indicesOld = periodIndices.filter(idx => data!.monthly[idx].year === oldestYear);
+                        const indicesNew = periodIndices.filter(idx => data!.monthly[idx].year === newestYear);
+
+                        const valOld = getVal(indicesOld);
+                        const valNew = getVal(indicesNew);
+                        const trendPct = valOld.rawRev > 0 ? ((valNew.rawRev - valOld.rawRev) / valOld.rawRev) * 100 : 0;
+
+                        return (
+                          <>
+                            <div className="glass-card" style={{ padding: '1rem' }}>
+                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
+                                Receita Total ({oldestYear})
+                              </p>
+                              <h3 style={{ fontSize: '1.25rem', color: 'white', margin: 0 }}>{format(valOld.rawRev)}</h3>
+                            </div>
+                            <div className="glass-card" style={{ padding: '1rem' }}>
+                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>
+                                Receita Total ({newestYear})
+                              </p>
+                              <h3 style={{ fontSize: '1.25rem', color: 'white', margin: 0 }}>{format(valNew.rawRev)}</h3>
+                            </div>
+                            <div className="glass-card" style={{ padding: '1rem' }}>
+                              <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Performance (Geral)</p>
+                              <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: trendPct >= 0 ? '#10b981' : '#f43f5e' }}>
+                                {trendPct >= 0 ? '↑' : '↓'} {isFinite(trendPct) ? Math.abs(trendPct).toFixed(1) : '0.0'}%
+                              </span>
+                            </div>
+                          </>
+                        );
+                      }
                     })()}
                   </div>
 
