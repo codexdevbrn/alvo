@@ -319,58 +319,27 @@ export function FilterBar({ data, filters, filterOptions, setters, onClear }: Fi
                 </button>
 
                 {isModalOpen && (
-                    <div style={{
-                        position: 'fixed',
-                        inset: 0,
-                        zIndex: 10000,
-                        background: 'rgba(0,0,0,0.85)',
-                        backdropFilter: 'blur(10px)',
-                        display: 'flex',
-                        alignItems: 'flex-end',
-                        justifyContent: 'center'
-                    }}>
-                        <div
-                            style={{
-                                width: '100%',
-                                maxHeight: '90vh',
-                                background: '#121214',
-                                borderTopLeftRadius: '24px',
-                                borderTopRightRadius: '24px',
-                                padding: '24px',
-                                overflowY: 'auto',
-                                position: 'relative',
-                                boxShadow: '0 -10px 40px rgba(0,0,0,0.5)'
-                            }}
-                        >
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
-                                <h2 style={{ color: 'white', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                    <SlidersHorizontal size={20} color="var(--accent)" /> Filtros
+                    <div className="mobile-filter-modal-overlay">
+                        <div className="mobile-filter-modal-content">
+                            <div className="mobile-filter-modal-header">
+                                <h2 style={{ color: 'white', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+                                    <SlidersHorizontal size={20} color="var(--accent)" /> Filtros e Períodos
                                 </h2>
                                 <button
                                     onClick={() => setIsModalOpen(false)}
-                                    style={{ background: 'rgba(255,255,255,0.05)', border: 'none', borderRadius: '50%', width: '36px', height: '36px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white', cursor: 'pointer' }}
+                                    className="mobile-filter-close-btn"
                                 >
                                     <X size={20} />
                                 </button>
                             </div>
 
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                            <div className="mobile-filter-list">
                                 <FilterContent data={data} filters={filters} filterOptions={filterOptions} setters={setters} onClear={onClear} />
                             </div>
 
                             <button
                                 onClick={() => setIsModalOpen(false)}
-                                style={{
-                                    width: '100%',
-                                    padding: '16px',
-                                    background: 'white',
-                                    color: 'black',
-                                    border: 'none',
-                                    borderRadius: '12px',
-                                    marginTop: '24px',
-                                    fontWeight: 'bold',
-                                    fontSize: '1rem'
-                                }}
+                                className="mobile-filter-apply-btn"
                             >
                                 Visualizar Dashboard
                             </button>

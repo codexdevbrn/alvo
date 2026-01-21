@@ -70,7 +70,7 @@ export function MetricsGrid({ stats, onRevenueClick }: MetricsGridProps) {
 
             <StatCard
                 title={singleYearMode ? "Tendência" : "Performance (Geral)"}
-                value={!showTrend ? '-' : (trendPct > 1000 ? '1000%+' : `${trendPct >= 0 ? '+' : ''}${isFinite(trendPct) ? trendPct.toFixed(1) : '0.0'}%`)}
+                value={!showTrend ? '-' : (trendPct > 1000 ? '1000%+' : `${trendPct >= 0 ? '+' : ''}${isFinite(trendPct) ? trendPct.toFixed(2) : '0.00'}%`)}
                 icon={!showTrend ? TrendingUp : (trendPct >= 0 ? TrendingUp : TrendingDown)}
                 trendUp={trendPct >= 0}
                 useTrendColor={showTrend}

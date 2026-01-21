@@ -496,7 +496,10 @@ export default function App() {
 
   return (
     <div className="dashboard-container">
-      <DashboardHeader updatedAt={data?.updated_at} />
+      <DashboardHeader
+        updatedAt={data?.updated_at}
+        clientName={client !== -1 ? data?.maps.c[client] : undefined}
+      />
 
       <FilterBar
         data={data!}

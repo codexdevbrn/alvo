@@ -21,22 +21,38 @@ interface HistoryChartProps {
 // Helper Components/Functions
 // ==========================================
 
-const renderCustomizedLabel = (props: any, isMobile: boolean, isCurrency: boolean) => {
-    const { x, y, value, index } = props;
+const renderCustomizedLabel = (props: any, isCurrency: boolean) => {
+    const { x, y, value, index, total } = props;
 
-    if (!value || value <= 0 || index % 2 !== 0) return null;
+    if (!value || value <= 0) return null;
+
+    // denser skip on very small screens
+    const trueMobile = window.innerWidth <= 768;
+    const skip = trueMobile ? (total > 12 ? 3 : 2) : (total > 20 ? 3 : 2);
+    if (index % skip !== 0) return null;
+
+    let textAnchor: "inherit" | "end" | "start" | "middle" | undefined = "middle";
+    let dx = 0;
+    if (index === 0) {
+        textAnchor = "start";
+        dx = 4;
+    } else if (index === total - 1) {
+        textAnchor = "end";
+        dx = -4;
+    }
 
     return (
         <text
             x={x}
-            y={y - 12}
-            dx={index === 0 ? 5 : 0}
-            fill="var(--text-secondary)"
-            fontSize={isMobile ? 8 : 11}
-            fontWeight={600}
-            textAnchor={index === 0 ? "start" : "middle"}
+            y={y - 10}
+            dx={dx}
+            fill="#ffffff"
+            fontSize={trueMobile ? 8 : 10}
+            fontWeight={700}
+            textAnchor={textAnchor}
+            style={{ pointerEvents: 'none', opacity: 0.9 }}
         >
-            {isCurrency ? formatCurrency(value) : formatNumber(value)}
+            {isCurrency ? formatCurrency(value).replace(',00', '').replace('R$', '').trim() : formatNumber(value)}
         </text>
     );
 };
@@ -60,11 +76,16 @@ export function HistoryChart({ chartData, labelA, labelB, showA, showB, isCurren
 
     const containerStyle: React.CSSProperties = {
         gridColumn: 'span 2',
-        minHeight: isMobile ? '300px' : '380px',
+        width: '100%',
+        height: isMobile ? '380px' : '450px',
+        minHeight: isMobile ? '380px' : '450px',
         background: style ? 'transparent' : undefined,
         border: style ? 'none' : undefined,
         boxShadow: style ? 'none' : undefined,
-        padding: style ? '0' : undefined,
+        padding: style ? '0' : (isMobile ? '1.25rem 0.75rem' : '1.5rem'),
+        display: 'flex',
+        flexDirection: 'column',
+        boxSizing: 'border-box',
         ...style
     };
 
@@ -83,9 +104,9 @@ export function HistoryChart({ chartData, labelA, labelB, showA, showB, isCurren
                     {showB && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981' }} /> {labelB}</div>}
                 </div>
             </div>
-            <div style={{ width: '100%', height: style?.height ? `calc(${style.height} - 60px)` : (isMobile ? '200px' : '280px') }}>
+            <div style={{ flex: 1, width: '100%', minHeight: isMobile ? '250px' : '300px' }}>
                 <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={chartData} margin={{ top: 20, right: 30, left: 10, bottom: 20 }}>
+                    <AreaChart data={chartData} margin={{ top: 25, right: isMobile ? 10 : 20, left: -20, bottom: 10 }}>
                         <defs>
                             <linearGradient id="colorA" x1="0" y1="0" x2="0" y2="1">
                                 <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
@@ -102,21 +123,25 @@ export function HistoryChart({ chartData, labelA, labelB, showA, showB, isCurren
                             tick={{ fill: '#94a3b8', fontSize: 9 }}
                             axisLine={false}
                             tickLine={false}
-                            height={40}
-                            interval={chartData.length > 12 ? (chartData.length > 24 ? 3 : 1) : 0}
+                            height={isMobile ? 30 : 40}
+                            interval={chartData.length > 20 ? 3 : (chartData.length > 10 ? 1 : 0)}
                         />
                         <YAxis
-                            domain={['auto', 'auto']}
-                            tick={{ fill: '#94a3b8', fontSize: 9 }}
+                            domain={[0, (dataMax: number) => dataMax * 1.2]}
+                            tick={{ fill: '#94a3b8', fontSize: 10 }}
                             tickFormatter={(v) => {
-                                if (!isCurrency) return v.toLocaleString();
-                                if (v >= 1000000) return `${(v / 1000000).toFixed(1)}M`;
-                                if (v >= 1000) return `${(v / 1000).toFixed(0)}k`;
-                                return v.toString();
+                                if (v === 0) return '0';
+                                if (isCurrency) {
+                                    if (v >= 1000000) return `${(v / 1000000).toFixed(1)}M`;
+                                    if (v >= 1000) return `${(v / 1000).toFixed(0)}k`;
+                                    return v.toString();
+                                }
+                                return v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v.toString();
                             }}
                             axisLine={false}
                             tickLine={false}
-                            width={isMobile ? 35 : 50}
+                            width={window.innerWidth <= 768 ? 40 : 60}
+                            hide={false}
                         />
                         <Tooltip
                             contentStyle={{ backgroundColor: '#17171a', border: 'none', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.3)' }}
@@ -132,7 +157,7 @@ export function HistoryChart({ chartData, labelA, labelB, showA, showB, isCurren
                                 strokeWidth={2}
                                 animationDuration={1000}
                             >
-                                <LabelList content={(props) => renderCustomizedLabel(props, isMobile, isCurrency)} />
+                                <LabelList content={(props) => renderCustomizedLabel(props, isCurrency)} />
                             </Area>
                         )}
                         {showB && (
@@ -145,7 +170,7 @@ export function HistoryChart({ chartData, labelA, labelB, showA, showB, isCurren
                                 strokeWidth={2}
                                 animationDuration={1000}
                             >
-                                <LabelList content={(props) => renderCustomizedLabel(props, isMobile, isCurrency)} />
+                                <LabelList content={(props) => renderCustomizedLabel(props, isCurrency)} />
                             </Area>
                         )}
                     </AreaChart>

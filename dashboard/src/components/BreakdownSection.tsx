@@ -41,7 +41,7 @@ export function BreakdownSection({
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
-    const padding = isMobile ? '0.75rem 0.5rem' : '1rem';
+    const padding = isMobile ? '0.6rem 0.4rem' : '1rem';
 
     // ==========================================
     // Sub-renders (Conditionals)

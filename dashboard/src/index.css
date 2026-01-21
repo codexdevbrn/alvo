@@ -39,6 +39,13 @@ h3 {
   padding: 2rem;
 }
 
+@media (max-width: 768px) {
+  .dashboard-container {
+    padding: 1rem 0.75rem;
+    width: 100%;
+  }
+}
+
 .glass-card {
   background: var(--bg-card);
   backdrop-filter: blur(12px);
@@ -57,9 +64,61 @@ h3 {
 
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 1.5rem;
   margin-bottom: 2rem;
+}
+
+@media (max-width: 768px) {
+
+  .stat-grid,
+  .summary-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 0.5rem !important;
+    margin-bottom: 1.5rem;
+    width: 100%;
+  }
+
+  /* Last card occupies full width and is centered */
+  .stat-grid>*:last-child,
+  .summary-grid>*:last-child {
+    grid-column: 1 / span 2 !important;
+    width: 100% !important;
+  }
+
+  /* Target both internal containers and direct glass-cards */
+  .stat-grid>*:last-child .stat-card-container,
+  .summary-grid>*:last-child {
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+    width: 100% !important;
+    min-height: 80px;
+  }
+
+  .stat-grid>*:last-child .stat-card-content,
+  .summary-grid>*:last-child p,
+  .summary-grid>*:last-child h3,
+  .summary-grid>*:last-child span {
+    align-items: center !important;
+    text-align: center !important;
+    width: 100% !important;
+  }
+
+  .stat-grid>*:last-child .stat-card-title,
+  .stat-grid>*:last-child .stat-card-value {
+    text-align: center !important;
+    width: 100% !important;
+  }
+
+  .stat-grid>*:last-child .stat-card-icon-container {
+    display: none !important;
+  }
+
+  .glass-card {
+    border-radius: 1rem;
+  }
 }
 
 .interactive-card:hover {
@@ -77,6 +136,13 @@ h3 {
   display: grid;
   grid-template-columns: repeat(2, 1fr);
   gap: 1.5rem;
+  align-items: stretch;
+}
+
+.chart-full {
+  grid-column: span 2;
+  display: flex;
+  flex-direction: column;
 }
 
 .filters-header {
@@ -99,41 +165,30 @@ h3 {
     display: none;
   }
 
-  .stat-grid {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
   .chart-grid {
     grid-template-columns: 1fr;
   }
 
   .chart-full {
-    grid-column: span 1 !important;
+    grid-column: 1 / -1 !important;
+    min-height: 350px;
   }
 }
 
 @media (max-width: 640px) {
   .dashboard-container {
-    padding: 1rem;
-  }
-
-  .filters-header {
-    display: none;
+    padding: 1rem 0.75rem;
   }
 }
 
 @media (max-width: 480px) {
-  .stat-grid {
-    grid-template-columns: 1fr;
-    gap: 1rem;
-  }
-
   .glass-card {
-    padding: 1.25rem;
+    padding: 0.6rem;
+    border-radius: 0.75rem;
   }
 
   h1 {
-    font-size: 1.5rem !important;
+    font-size: 1.15rem !important;
   }
 }
 
@@ -169,11 +224,9 @@ h3 {
 
 .custom-select {
   background: rgba(255, 255, 255, 0.1);
-  /* Brighter background */
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 0.75rem;
   color: #ffffff;
-  /* Pure white */
   padding: 0.65rem 0.85rem;
   font-size: 0.85rem;
   font-weight: 500;
@@ -306,6 +359,193 @@ h3 {
   border-radius: 10px;
 }
 
-.custom-scrollbar::-webkit-scrollbar-thumb:hover {
-  background: var(--accent);
+/* Stat Card Global Structure */
+.stat-card-container {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+  text-align: left;
+  /* Ensure default left alignment */
+}
+
+.stat-card-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+/* Stat Card Specific Styles */
+.stat-card-title {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  margin-bottom: 0.4rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stat-card-value {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: white;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.stat-card-trend {
+  font-size: 0.75rem;
+  margin-top: 0.5rem;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-weight: 600;
+}
+
+.stat-card-icon-container {
+  padding: 0.65rem;
+  border-radius: 0.9rem;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.stat-icon {
+  width: 20px;
+  height: 20px;
+}
+
+/* Mobile Filter Modal Styles */
+.mobile-filter-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10000;
+  background: rgba(0, 0, 0, 0.85);
+  backdrop-filter: blur(10px);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.mobile-filter-modal-content {
+  width: 100%;
+  max-height: 90vh;
+  background: linear-gradient(180deg, #16161a 0%, #0a0a0c 100%);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-top-left-radius: 1.25rem;
+  border-top-right-radius: 1.25rem;
+  padding: 24px 20px;
+  overflow-y: auto;
+  position: relative;
+  box-shadow: 0 -15px 50px rgba(0, 0, 0, 0.6);
+  display: flex;
+  flex-direction: column;
+}
+
+.mobile-filter-modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 24px;
+}
+
+.mobile-filter-close-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: none;
+  border-radius: 50%;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  cursor: pointer;
+}
+
+.mobile-filter-list {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-top: 1rem;
+}
+
+.mobile-filter-apply-btn {
+  width: 100%;
+  padding: 16px;
+  background: white;
+  color: black;
+  border: none;
+  border-radius: 12px;
+  margin-top: 24px;
+  font-weight: bold;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: transform 0.2s ease;
+}
+
+.mobile-filter-apply-btn:active {
+  transform: scale(0.98);
+}
+
+@media (max-width: 1024px) {
+  .stat-card-value {
+    font-size: 1.25rem;
+  }
+
+  .stat-card-icon-container {
+    padding: 0.5rem;
+  }
+
+  .stat-icon {
+    width: 18px;
+    height: 18px;
+  }
+}
+
+@media (max-width: 850px) {
+  .stat-card-value {
+    font-size: 1.1rem;
+  }
+
+  .stat-card-title {
+    font-size: 0.65rem;
+  }
+
+  .glass-card {
+    padding: 0.6rem;
+    /* Further reduced padding for better fit on small screens */
+  }
+
+  .dashboard-container {
+    padding: 1rem 0.75rem !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .stat-card-icon-container {
+    display: none;
+    /* Hide icon on very small cards to save space */
+  }
+
+  .stat-card-value {
+    font-size: 1rem;
+  }
+}
+
+@media (max-width: 480px) {
+  .stat-card-value {
+    font-size: 0.85rem;
+  }
+
+  .stat-card-title {
+    font-size: 0.6rem;
+  }
 }
