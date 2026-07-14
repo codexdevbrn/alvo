@@ -455,9 +455,9 @@ export default function DashboardPage() {
     rowsS.forEach(r => storeOpts.add(r[1]));
 
     // 7. Rankings and Charts based on rowsDisplay
-    const getTrend = (mapType: 'm' | 'd'): TrendItem[] => {
+    const getTrend = (mapType: 'c' | 'm' | 'd'): TrendItem[] => {
       const trends: Record<number, { vA: number, vB: number }> = {};
-      const idx = mapType === 'm' ? 3 : 4;
+      const idx = mapType === 'c' ? 2 : mapType === 'm' ? 3 : 4;
       // In trend mode we use the trend windows, in YoY we split 2024/2025
       populationRows.forEach(r => {
         const pid = r[0], id = r[idx], rev = r[6];
@@ -506,7 +506,7 @@ export default function DashboardPage() {
 
     return {
       stats: {
-        statsA, statsB, statsTotal, topMfrs: getTrend('m'), topDescs: getTrend('d'), topProducts, chartData,
+        statsA, statsB, statsTotal, topClients: getTrend('c'), topMfrs: getTrend('m'), topDescs: getTrend('d'), topProducts, chartData,
         labelA, labelB, chartLabelA, chartLabelB, yearLabel, singleYearMode: isTrendMode, singleMonthMode,
         lenA: pA.length, lenB: pB.length,
         // Helper to get stats for any period (used by modal)
@@ -759,6 +759,7 @@ export default function DashboardPage() {
             />
 
             <BreakdownSection
+              topClients={processed.stats?.topClients || []}
               topMfrs={processed.stats?.topMfrs || []}
               topDescs={processed.stats?.topDescs || []}
               topProducts={processed.stats?.topProducts || []}

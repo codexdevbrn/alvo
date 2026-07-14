@@ -7,6 +7,7 @@ import type { TrendItem, ProductStats } from '../types/dashboard';
 // ==========================================
 
 interface BreakdownSectionProps {
+    topClients: TrendItem[];
     topMfrs: TrendItem[];
     topDescs: TrendItem[];
     topProducts: ProductStats[];
@@ -21,6 +22,7 @@ interface BreakdownSectionProps {
 // ==========================================
 
 export function BreakdownSection({
+    topClients,
     topMfrs,
     topDescs,
     topProducts,
@@ -96,7 +98,54 @@ export function BreakdownSection({
     // ==========================================
 
     return (
-        <>
+        <div className="breakdown-row">
+            <div className="glass-card">
+                <h3 style={{ color: 'white', marginBottom: '1.25rem', fontSize: isMobile ? '1rem' : '1.25rem' }}>Performance por Cliente</h3>
+                <div
+                    className="custom-scrollbar"
+                    style={{
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '1.25rem',
+                        maxHeight: '400px',
+                        overflowY: 'auto',
+                        paddingRight: '8px'
+                    }}
+                >
+                    {topClients.map((item, i) => {
+                        const totalRevenue = item.rev24 + item.rev25;
+                        const maxTotal = topClients[0] ? (topClients[0].rev24 + topClients[0].rev25) : 1;
+                        const percentChange = (item.rev24 && item.rev24 > 0) ? ((item.rev25 - item.rev24) / item.rev24) * 100 : 0;
+                        const isPositive = percentChange >= 0;
+                        return (
+                            <div key={i}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: isMobile ? '0.7rem' : '0.8rem' }}>
+                                    <span style={{ color: 'var(--text-secondary)', fontWeight: 500, maxWidth: isMobile ? '120px' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
+                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                        <span style={{ color: 'white', fontWeight: 600 }}>{formatCurrency(item.rev25)}</span>
+                                        <span style={{
+                                            color: isPositive ? '#10b981' : '#ff6f61',
+                                            fontSize: '0.65rem',
+                                            fontWeight: 'bold'
+                                        }}>
+                                            {isPositive ? '↑' : '↓'} {isFinite(percentChange) ? Math.abs(percentChange).toFixed(1) : '0.0'}%
+                                        </span>
+                                    </div>
+                                </div>
+                                <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px' }}>
+                                    <div style={{
+                                        width: `${Math.min(100, Math.max(0, (totalRevenue / (maxTotal || 1)) * 100))}%`,
+                                        height: '100%',
+                                        background: '#6366f1',
+                                        borderRadius: '2px',
+                                        boxShadow: '0 0 8px rgba(99, 102, 241, 0.2)'
+                                    }} />
+                                </div>
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
             <div className="glass-card">
                 <h3 style={{ color: 'white', marginBottom: '1.25rem', fontSize: isMobile ? '1rem' : '1.25rem' }}>Performance por Fabricante</h3>
                 <div
@@ -191,6 +240,6 @@ export function BreakdownSection({
                     })}
                 </div>
             </div>
-        </>
+        </div>
     );
 }

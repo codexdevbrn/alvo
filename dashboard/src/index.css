@@ -171,6 +171,13 @@ h3 {
   flex-direction: column;
 }
 
+.breakdown-row {
+  grid-column: span 2;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1.5rem;
+}
+
 .filters-header {
   position: relative;
   display: grid;
@@ -226,6 +233,11 @@ h3 {
   .chart-full {
     grid-column: 1 / -1 !important;
     min-height: 350px;
+  }
+
+  .breakdown-row {
+    grid-column: 1 / -1;
+    grid-template-columns: 1fr;
   }
 }
 
