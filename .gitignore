@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+
+# Exports brutos do ERP (muito grandes para o GitHub — limite de 100 MB por arquivo)
+*.dw_2d
+
+# Backup gerado pelo harmonizar_descricoes.py
+Base.antes-harm.csv
+
+# Configurações locais de ferramentas
+.claude/

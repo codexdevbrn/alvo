@@ -101,9 +101,9 @@ def process_data():
         }
     }
 
-    os.makedirs('dashboard/src/data', exist_ok=True)
+    os.makedirs('dashboard/public/data', exist_ok=True)
     print("Saving optimized JSON...")
-    with open('dashboard/src/data/summary.json', 'w', encoding='utf-8') as f:
+    with open('dashboard/public/data/summary.json', 'w', encoding='utf-8') as f:
         json.dump(result, f, ensure_ascii=False)
     
     print(f"Done! Raw rows: {len(rows)}")

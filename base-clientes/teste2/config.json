@@ -1,0 +1,23 @@
+{
+  "cortesClientes": [
+    30,
+    50,
+    60
+  ],
+  "corteProdutos": 80,
+  "periodosQueda": 2,
+  "desconsiderarBalcao": false,
+  "excluirPeriodoAtual": true,
+  "nomeEmpresa": "teste2",
+  "topNProdutos": "",
+  "reducaoMinimaErosao": 50,
+  "maxPorGrupo": 20,
+  "quedaMinimaAlertaRs": 3000,
+  "quedaMinimaErosaoRs": 3000,
+  "reducaoMinimaSemVenda": 90,
+  "topNPoderCompra": "",
+  "clientesExcluidos": [],
+  "produtosExcluidos": [],
+  "chavesSelecionadas": [],
+  "granularidade": "Mensal"
+}

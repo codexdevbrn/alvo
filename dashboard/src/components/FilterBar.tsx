@@ -87,7 +87,7 @@ function CustomDropdown({ label, icon: Icon, value, options, onChange, onClear, 
     return (
         <div className="filter-group" style={{ position: 'relative' }}>
             {/* Label & Clear Button */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <label style={{ marginBottom: 0 }}><Icon size={12} style={{ marginRight: 4 }} /> {label}</label>
                 {value !== -1 && <button onClick={(e) => { e.stopPropagation(); onClear(); }} className="mini-clear-btn"><X size={10} /></button>}
             </div>
@@ -175,30 +175,21 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
 
     return (
         <>
-            <div style={{ gridColumn: '1 / -1', marginBottom: '16px', display: 'flex', justifyContent: 'flex-end', width: '100%' }}>
+            <div className="filters-reset-row">
                 <button
                     onClick={onClear}
                     disabled={!hasFilters}
+                    className="filters-reset-btn"
                     style={{
-                        background: 'transparent',
-                        border: 'none',
                         color: hasFilters ? 'var(--accent)' : 'var(--text-secondary)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '6px',
-                        padding: '0',
                         cursor: hasFilters ? 'pointer' : 'not-allowed',
                         opacity: hasFilters ? 1 : 0.4,
-                        transition: 'all 0.2s ease',
-                        width: 'fit-content'
                     }}
                     onMouseOver={(e) => hasFilters && (e.currentTarget.style.filter = 'brightness(1.2)')}
                     onMouseOut={(e) => hasFilters && (e.currentTarget.style.filter = 'none')}
                 >
-                    <RefreshCw size={14} className={hasFilters ? "" : ""} />
-                    <span style={{ fontSize: '0.85rem', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        Resetar Filtros
-                    </span>
+                    <RefreshCw size={13} />
+                    <span>Resetar Filtros</span>
                 </button>
             </div>
 
