@@ -176,6 +176,11 @@ h3 {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 1.5rem;
+  min-width: 0;
+}
+
+.breakdown-row > .glass-card {
+  min-width: 0;
 }
 
 .filters-header {
