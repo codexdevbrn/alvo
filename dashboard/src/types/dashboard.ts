@@ -11,8 +11,11 @@ export interface MonthlyData {
     name: string;
 }
 
+/** Uma linha de `rows`: [período, loja, cliente, fabricante, descrição, referência, receita, qtd] — cada posição é um índice nos `maps` correspondentes, exceto receita/qtd que são valores diretos. */
+export type Row = [number, number, number, number, number, number, number, number];
+
 export interface DashboardData {
-    rows: any[][];
+    rows: Row[];
     monthly: MonthlyData[];
     maps: {
         c: string[];
@@ -41,4 +44,69 @@ export interface TrendItem {
     rev25: number;
     diff: number;
     up: boolean;
+}
+
+/** Ponto do gráfico de histórico (HistoryChart) — campos além de revenueA/B são
+ * usados só no modo comparação (YoY), o modo tendência preenche um subconjunto. */
+export interface ChartPoint {
+    name: string;
+    revenueA?: number | null;
+    revenueB?: number;
+    mfrsA?: number;
+    mfrsB?: number;
+    descsA?: number;
+    descsB?: number;
+    cntA?: number | null;
+    cntB?: number;
+    clientsA?: number | null;
+    clientsB?: number;
+}
+
+export interface AggregateResult {
+    rawRev: number;
+    rawCnt: number;
+    rawClientCount: number;
+    rev: number;
+    cnt: number;
+    mfrCount: number;
+    descCount: number;
+    clientCount: number;
+    products: Record<number, number>;
+    monthlyNodes: Record<number, {
+        rev: number;
+        mfrs: Set<number>;
+        descs: Set<number>;
+        products: Record<number, number>;
+        clients: Set<number>;
+        cnt: number;
+    }>;
+    len: number;
+}
+
+/** Shape de `processed.stats` em DashboardPage — consumido por MetricsGrid,
+ * BreakdownSection e RevenueDetailModal. */
+export interface DashboardStats {
+    statsA: AggregateResult;
+    statsB: AggregateResult;
+    statsTotal: AggregateResult;
+    topClients: TrendItem[];
+    topMfrs: TrendItem[];
+    topDescs: TrendItem[];
+    topProducts: ProductStats[];
+    chartData: ChartPoint[];
+    labelA: string;
+    labelB: string;
+    chartLabelA: string;
+    chartLabelB: string;
+    yearLabel: string;
+    singleYearMode: boolean;
+    singleMonthMode: boolean;
+    lenA: number;
+    lenB: number;
+    getStatsForPeriod: (targetPeriod: number[]) => {
+        chartData: ChartPoint[];
+        labelA: string;
+        labelB: string;
+        isTrend: boolean;
+    };
 }

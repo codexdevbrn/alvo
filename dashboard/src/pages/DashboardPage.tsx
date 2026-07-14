@@ -10,7 +10,7 @@ import { DashboardHeader } from '../components/DashboardHeader';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { obterSummaryEmpresa } from '../api/client';
 import { formatCurrency, formatNumber } from '../utils/formatters';
-import type { DashboardData, ProductStats, TrendItem } from '../types/dashboard';
+import type { AggregateResult, ChartPoint, DashboardData, ProductStats, Row, TrendItem } from '../types/dashboard';
 import '../index.css';
 
 // ==========================================
@@ -257,7 +257,7 @@ export default function DashboardPage() {
         const lenA = refPA.length || 1;
         const lenB = refPB.length || 1;
 
-        Object.entries(perf).forEach(([cId, s]: [string, any]) => {
+        Object.entries(perf).forEach(([cId, s]) => {
           // Only clients with baseline sales (previous year) can have dropped
           if (s.vA <= 0) return;
 
@@ -294,7 +294,7 @@ export default function DashboardPage() {
     }
 
     // 5. Aggregation Logic
-    const aggregate = (targetRows: any[], targetPeriod: number[], forceAverage?: boolean): any => {
+    const aggregate = (targetRows: Row[], targetPeriod: number[], forceAverage?: boolean): AggregateResult => {
       let rev = 0, cnt = 0;
       const monthlyNodes: Record<number, { rev: number, mfrs: Set<number>, descs: Set<number>, products: Record<number, number>, clients: Set<number>, cnt: number }> = {};
       const mfrs_all = new Set<number>();
@@ -348,10 +348,19 @@ export default function DashboardPage() {
     const statsTotal = aggregate(populationRows, period.length === 0 ? data.monthly.map((_, i) => (data.monthly[i].year === availableYears[0]) ? i : -1).filter(x => x !== -1) : period, isTrendMode);
 
     const isComparisonMode = !isTrendMode;
-    let chartData: any[] = [];
+    let chartData: ChartPoint[] = [];
 
     if (isComparisonMode) {
-      const monthMap: any = {};
+      // Acumulador com campos sempre numéricos (inicializados em 0) — mais
+      // estrito que ChartPoint (que permite null para os "buracos" do modo
+      // tendência), então += funciona sem checagem de nulidade a cada linha.
+      const monthMap: Record<string, {
+        revenueA: number; revenueB: number;
+        mfrsA: number; mfrsB: number;
+        descsA: number; descsB: number;
+        cntA: number; cntB: number;
+        clientsA: number; clientsB: number;
+      }> = {};
 
       [...pA, ...pB].forEach(idx => {
         const m = data.monthly[idx];
@@ -390,7 +399,7 @@ export default function DashboardPage() {
     } else {
       // Trend Mode: Continuous line with split colors if possible, but for now single series
       chartData = [...period].sort((a, b) => a - b).map(idx => {
-        let cNodes = statsTotal.monthlyNodes[idx];
+        const cNodes = statsTotal.monthlyNodes[idx];
         const isA = pASet.has(idx);
         const m = data.monthly[idx];
         return {
@@ -475,7 +484,7 @@ export default function DashboardPage() {
     });
 
     const buildTrend = (mapType: 'c' | 'm' | 'd'): TrendItem[] => {
-      return Object.entries(trendSums[mapType]).map(([id, v]) => {
+      return Object.entries(trendSums[mapType]).map(([id, v]): TrendItem | null => {
         const valA = isTrendMode ? (v.vA / (pA.length || 1)) : v.vA;
         const valB = isTrendMode ? (v.vB / (pB.length || 1)) : v.vB;
         if (valA === 0 && valB === 0) return null;
@@ -487,7 +496,7 @@ export default function DashboardPage() {
           diff: valB - valA,
           up: valB >= valA
         };
-      }).filter(x => x !== null).sort((a: any, b: any) => (b.rev24 + b.rev25) - (a.rev24 + a.rev25)) as TrendItem[];
+      }).filter((x): x is TrendItem => x !== null).sort((a, b) => (b.rev24 + b.rev25) - (a.rev24 + a.rev25));
     };
 
     // Clientes é uma dimensão bem maior que fabricante/categoria (~1300 vs
@@ -554,9 +563,13 @@ export default function DashboardPage() {
           const stA = aggregate(populationRows, sA);
           const stB = aggregate(populationRows, sB);
 
-          let cData: any[] = [];
+          let cData: ChartPoint[] = [];
           if (!isTrend) {
-            const mMap: any = {};
+            const mMap: Record<string, {
+              revenueA: number; revenueB: number;
+              cntA: number; cntB: number;
+              clientsA: number; clientsB: number;
+            }> = {};
             const sASet = new Set(sA);
             const sBSet = new Set(sB);
             [...sA, ...sB].forEach(idx => {
@@ -607,7 +620,7 @@ export default function DashboardPage() {
       filterOptions: { clientOpts, mfrOpts, descOpts, storeOpts },
       noDataMessage: populationRows.length === 0 ? "Nenhum dado encontrado para os filtros selecionados." : null
     };
-  }, [data, computeFilters]);
+  }, [data, computeFilters, historyType]);
 
   // ==========================================
   // Render

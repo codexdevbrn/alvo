@@ -20,7 +20,7 @@ function formatarPct(valor: number | null): string {
 export function PreviaClientesTable({ itens, excluidos, onToggle, carregando }: PreviaClientesTableProps) {
   const [busca, setBusca] = useState('');
   const [grupoFiltro, setGrupoFiltro] = useState('');
-  const lista = itens ?? [];
+  const lista = useMemo(() => itens ?? [], [itens]);
 
   const gruposDisponiveis = useMemo(() => {
     const nomes = new Set(lista.map((item) => item.grupo));

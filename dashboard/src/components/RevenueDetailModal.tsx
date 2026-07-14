@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { X, DollarSign, ShoppingCart, Users } from 'lucide-react';
 import { PeriodSelector } from './PeriodSelector';
 import { HistoryChart } from './HistoryChart';
-import type { DashboardData } from '../types/dashboard';
+import type { DashboardData, DashboardStats } from '../types/dashboard';
 
 // ==========================================
 // Types & Interfaces
@@ -13,7 +13,7 @@ interface RevenueDetailModalProps {
     onClose: () => void;
     historyType: 'revenue' | 'mfr' | 'desc';
     data: DashboardData;
-    stats: any; // specific type from processed.stats
+    stats: DashboardStats | null;
     modalPeriod: number[];
     setModalPeriod: (period: number[]) => void;
     client: number;
@@ -157,7 +157,8 @@ export function RevenueDetailModal({
                                     const isTrend = periodIndices.length > 0 && selectedYears.length === 1;
 
                                     const getVal = (indices: number[]) => {
-                                        let rev = 0, vol = 0, cli = new Set();
+                                        let rev = 0, vol = 0;
+                                        const cli = new Set<number>();
                                         const rows = data.rows;
                                         const clientMap = data.maps.c;
                                         const consumerFinalId = clientMap.indexOf("Consumidor Final");
@@ -261,7 +262,7 @@ export function RevenueDetailModal({
                                 {/* Fixed Chart Container (No redundant glass-card here as HistoryChart provides its own) */}
                                 <div style={{ flexShrink: 0 }}>
                                     <HistoryChart
-                                        chartData={mData.chartData.map((d: any) => ({
+                                        chartData={mData.chartData.map((d) => ({
                                             name: d.name,
                                             revenueA: historyType === 'revenue' ? d.revenueA : (historyType === 'mfr' ? d.cntA : d.clientsA),
                                             revenueB: historyType === 'revenue' ? d.revenueB : (historyType === 'mfr' ? d.cntB : d.clientsB),
@@ -292,15 +293,15 @@ export function RevenueDetailModal({
                                             </tr>
                                         </thead>
                                         <tbody>
-                                            {mData.chartData.map((row: any, i: number) => {
+                                            {mData.chartData.map((row, i: number) => {
                                                 const valA = historyType === 'revenue' ? row.revenueA : (historyType === 'mfr' ? row.cntA : row.clientsA);
                                                 const valB = historyType === 'revenue' ? row.revenueB : (historyType === 'mfr' ? row.cntB : row.clientsB);
                                                 const format = (v: number) => historyType === 'revenue' ? formatCurrency(v).replace(',00', '') : formatNumber(Math.round(v));
                                                 return (
                                                     <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
                                                         <td style={{ padding: isMobile ? '0.75rem' : '1rem', fontWeight: 600 }}>{row.name}</td>
-                                                        {mData.labelA && !mData.isTrend && <td style={{ padding: isMobile ? '0.75rem' : '1rem' }}>{format(valA)}</td>}
-                                                        <td style={{ padding: isMobile ? '0.75rem' : '1rem' }}>{format(valB)}</td>
+                                                        {mData.labelA && !mData.isTrend && <td style={{ padding: isMobile ? '0.75rem' : '1rem' }}>{format(valA ?? 0)}</td>}
+                                                        <td style={{ padding: isMobile ? '0.75rem' : '1rem' }}>{format(valB ?? 0)}</td>
                                                     </tr>
                                                 );
                                             })}
