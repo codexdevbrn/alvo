@@ -136,9 +136,9 @@ export function BreakdownSection({
                                     <div style={{
                                         width: `${Math.min(100, Math.max(0, (totalRevenue / (maxTotal || 1)) * 100))}%`,
                                         height: '100%',
-                                        background: '#6366f1',
+                                        background: '#f59e0b',
                                         borderRadius: '2px',
-                                        boxShadow: '0 0 8px rgba(99, 102, 241, 0.2)'
+                                        boxShadow: '0 0 8px rgba(245, 158, 11, 0.2)'
                                     }} />
                                 </div>
                             </div>
