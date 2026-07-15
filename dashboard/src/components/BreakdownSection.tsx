@@ -7,6 +7,7 @@ import type { TrendItem, ProductStats } from '../types/dashboard';
 // ==========================================
 
 interface BreakdownSectionProps {
+    topClients: TrendItem[];
     topMfrs: TrendItem[];
     topDescs: TrendItem[];
     topProducts: ProductStats[];
@@ -16,11 +17,76 @@ interface BreakdownSectionProps {
     labelB: string;
 }
 
+interface TrendCardProps {
+    title: string;
+    items: TrendItem[];
+    barColor: string;
+    barGlow: string;
+    isMobile: boolean;
+}
+
+// ==========================================
+// Sub-component: single ranked list card (used for cliente/fabricante/categoria)
+// ==========================================
+
+function TrendCard({ title, items, barColor, barGlow, isMobile }: TrendCardProps) {
+    return (
+        <div className="glass-card">
+            <h3 style={{ color: 'white', marginBottom: '1.25rem', fontSize: isMobile ? '1rem' : '1.25rem' }}>{title}</h3>
+            <div
+                className="custom-scrollbar"
+                style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '1.25rem',
+                    maxHeight: '400px',
+                    overflowY: 'auto',
+                    paddingRight: '8px'
+                }}
+            >
+                {items.map((item, i) => {
+                    const totalRevenue = item.rev24 + item.rev25;
+                    const maxTotal = items[0] ? (items[0].rev24 + items[0].rev25) : 1;
+                    const percentChange = (item.rev24 && item.rev24 > 0) ? ((item.rev25 - item.rev24) / item.rev24) * 100 : 0;
+                    const isPositive = percentChange >= 0;
+                    return (
+                        <div key={i}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: isMobile ? '0.7rem' : '0.8rem' }}>
+                                <span style={{ color: 'var(--text-secondary)', fontWeight: 500, maxWidth: isMobile ? '120px' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
+                                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                                    <span style={{ color: 'white', fontWeight: 600 }}>{formatCurrency(item.rev25)}</span>
+                                    <span style={{
+                                        color: isPositive ? '#10b981' : '#ff6f61',
+                                        fontSize: '0.65rem',
+                                        fontWeight: 'bold'
+                                    }}>
+                                        {isPositive ? '↑' : '↓'} {isFinite(percentChange) ? Math.abs(percentChange).toFixed(1) : '0.0'}%
+                                    </span>
+                                </div>
+                            </div>
+                            <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px' }}>
+                                <div style={{
+                                    width: `${Math.min(100, Math.max(0, (totalRevenue / (maxTotal || 1)) * 100))}%`,
+                                    height: '100%',
+                                    background: barColor,
+                                    borderRadius: '2px',
+                                    boxShadow: `0 0 8px ${barGlow}`
+                                }} />
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+}
+
 // ==========================================
 // Main Component
 // ==========================================
 
 export function BreakdownSection({
+    topClients,
     topMfrs,
     topDescs,
     topProducts,
@@ -96,101 +162,28 @@ export function BreakdownSection({
     // ==========================================
 
     return (
-        <>
-            <div className="glass-card">
-                <h3 style={{ color: 'white', marginBottom: '1.25rem', fontSize: isMobile ? '1rem' : '1.25rem' }}>Performance por Fabricante</h3>
-                <div
-                    className="custom-scrollbar"
-                    style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '1.25rem',
-                        maxHeight: '400px',
-                        overflowY: 'auto',
-                        paddingRight: '8px'
-                    }}
-                >
-                    {topMfrs.map((item, i) => {
-                        const totalRevenue = item.rev24 + item.rev25;
-                        const maxTotal = topMfrs[0] ? (topMfrs[0].rev24 + topMfrs[0].rev25) : 1;
-                        const percentChange = (item.rev24 && item.rev24 > 0) ? ((item.rev25 - item.rev24) / item.rev24) * 100 : 0;
-                        const isPositive = percentChange >= 0;
-                        return (
-                            <div key={i}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: isMobile ? '0.7rem' : '0.8rem' }}>
-                                    <span style={{ color: 'var(--text-secondary)', fontWeight: 500, maxWidth: isMobile ? '120px' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
-                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                        <span style={{ color: 'white', fontWeight: 600 }}>{formatCurrency(item.rev25)}</span>
-                                        <span style={{
-                                            color: isPositive ? '#10b981' : '#ff6f61',
-                                            fontSize: '0.65rem',
-                                            fontWeight: 'bold'
-                                        }}>
-                                            {isPositive ? '↑' : '↓'} {isFinite(percentChange) ? Math.abs(percentChange).toFixed(1) : '0.0'}%
-                                        </span>
-                                    </div>
-                                </div>
-                                <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px' }}>
-                                    <div style={{
-                                        width: `${Math.min(100, Math.max(0, (totalRevenue / (maxTotal || 1)) * 100))}%`,
-                                        height: '100%',
-                                        background: 'var(--accent)',
-                                        borderRadius: '2px',
-                                        boxShadow: '0 0 8px var(--accent-glow)'
-                                    }} />
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
-            <div className="glass-card">
-                <h3 style={{ color: 'white', marginBottom: '1.25rem', fontSize: isMobile ? '1rem' : '1.25rem' }}>Performance por Categoria</h3>
-                <div
-                    className="custom-scrollbar"
-                    style={{
-                        display: 'flex',
-                        flexDirection: 'column',
-                        gap: '1.25rem',
-                        maxHeight: '400px',
-                        overflowY: 'auto',
-                        paddingRight: '8px'
-                    }}
-                >
-                    {topDescs.map((item, i) => {
-                        const totalRevenue = item.rev24 + item.rev25;
-                        const maxTotal = topDescs[0] ? (topDescs[0].rev24 + topDescs[0].rev25) : 1;
-                        const percentChange = (item.rev24 && item.rev24 > 0) ? ((item.rev25 - item.rev24) / item.rev24) * 100 : 0;
-                        const isPositive = percentChange >= 0;
-                        return (
-                            <div key={i}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: isMobile ? '0.7rem' : '0.8rem' }}>
-                                    <span style={{ color: 'var(--text-secondary)', fontWeight: 500, maxWidth: isMobile ? '120px' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
-                                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                        <span style={{ color: 'white', fontWeight: 600 }}>{formatCurrency(item.rev25)}</span>
-                                        <span style={{
-                                            color: isPositive ? '#10b981' : '#ff6f61',
-                                            fontSize: '0.65rem',
-                                            fontWeight: 'bold'
-                                        }}>
-                                            {isPositive ? '↑' : '↓'} {isFinite(percentChange) ? Math.abs(percentChange).toFixed(1) : '0.0'}%
-                                        </span>
-                                    </div>
-                                </div>
-                                <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px' }}>
-                                    <div style={{
-                                        width: `${Math.min(100, Math.max(0, (totalRevenue / (maxTotal || 1)) * 100))}%`,
-                                        height: '100%',
-                                        background: '#ec4899',
-                                        borderRadius: '2px',
-                                        boxShadow: '0 0 8px rgba(236, 72, 153, 0.2)'
-                                    }} />
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
-        </>
+        <div className="breakdown-row">
+            <TrendCard
+                title="Performance por Cliente"
+                items={topClients}
+                barColor="#f59e0b"
+                barGlow="rgba(245, 158, 11, 0.2)"
+                isMobile={isMobile}
+            />
+            <TrendCard
+                title="Performance por Fabricante"
+                items={topMfrs}
+                barColor="var(--accent)"
+                barGlow="var(--accent-glow)"
+                isMobile={isMobile}
+            />
+            <TrendCard
+                title="Performance por Categoria"
+                items={topDescs}
+                barColor="#ec4899"
+                barGlow="rgba(236, 72, 153, 0.2)"
+                isMobile={isMobile}
+            />
+        </div>
     );
 }

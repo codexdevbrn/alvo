@@ -31,8 +31,9 @@ export function PeriodSelector({ label, value, data, onChange }: PeriodSelectorP
     const isAllSelected = value.length === 0;
 
     useEffect(() => {
+        const timeoutId = closeTimeoutRef.current;
         return () => {
-            if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
+            if (timeoutId) clearTimeout(timeoutId);
         };
     }, []);
 
@@ -80,6 +81,10 @@ export function PeriodSelector({ label, value, data, onChange }: PeriodSelectorP
     // clique cai no mesmo mês dentro da janela é que tratamos como duplo
     // clique e isolamos esse mês.
     const handleMonthClick = (idx: number) => {
+        // Date.now() aqui é seguro: handleMonthClick só roda a partir do
+        // onClick do botão de mês, nunca durante o render — a regra de
+        // pureza do eslint-plugin-react-hooks não distingue isso ainda.
+        // eslint-disable-next-line react-hooks/purity
         const agora = Date.now();
         const ehDuploClique =
             lastMonthClickRef.current.idx === idx && agora - lastMonthClickRef.current.time < 400;

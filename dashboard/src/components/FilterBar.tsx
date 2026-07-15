@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import {
     Users, Package, Store, LayoutDashboard, AlertTriangle, X, Filter, SlidersHorizontal, RefreshCw
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { PeriodSelector } from './PeriodSelector';
 import type { DashboardData } from '../types/dashboard';
 
@@ -38,7 +39,7 @@ interface FilterContentProps {
 
 interface CustomDropdownProps {
     label: string;
-    icon: any;
+    icon: LucideIcon;
     value: number;
     options: { id: number; name: string }[];
     onChange: (id: number) => void;

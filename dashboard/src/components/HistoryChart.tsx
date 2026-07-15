@@ -4,13 +4,14 @@ import {
     AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList,
 } from 'recharts';
 import { formatCurrency, formatNumber } from '../utils/formatters';
+import type { ChartPoint } from '../types/dashboard';
 
 // ==========================================
 // Types & Interfaces
 // ==========================================
 
 interface HistoryChartProps {
-    chartData: any[];
+    chartData: ChartPoint[];
     labelA: string;
     labelB: string;
     showA: boolean;
@@ -31,13 +32,28 @@ interface HistoryChartProps {
 // olhamos o valor da série "irmã" no mesmo índice (via chartData) e, se a
 // diferença for pequena relativo à escala, afastamos os dois rótulos: o de
 // maior valor sobe mais, o de menor valor desce para abaixo do ponto.
+/** Campos que o recharts efetivamente passa para `LabelList content` neste uso
+ * (posição calculada + valor do ponto); "total" não é declarado no tipo público
+ * do recharts mas é passado em runtime pela lib para labels de Area/Bar. */
+interface LabelRenderProps {
+    x?: number | string;
+    y?: number | string;
+    value?: number | string | Array<number | string> | boolean | null;
+    index?: number;
+    total?: number;
+}
+
 const renderCustomizedLabel = (
-    props: any,
+    props: LabelRenderProps,
     isCurrency: boolean,
-    chartData: any[],
+    chartData: ChartPoint[],
     otherKey: 'revenueA' | 'revenueB',
 ) => {
-    const { x, y, value, index, total } = props;
+    const x = Number(props.x) || 0;
+    const y = Number(props.y) || 0;
+    const value = Number(props.value) || 0;
+    const index = props.index ?? 0;
+    const total = props.total ?? 0;
 
     if (!value || value <= 0) return null;
 
@@ -165,7 +181,7 @@ export function HistoryChart({ chartData, labelA, labelB, showA, showB, isCurren
                             />
                             <Tooltip
                                 contentStyle={{ backgroundColor: '#17171a', border: 'none', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.3)' }}
-                                formatter={(v: any) => isCurrency ? formatCurrency(v) : formatNumber(v)}
+                                formatter={(v: unknown) => isCurrency ? formatCurrency(Number(v)) : formatNumber(Number(v))}
                                 cursor={{ fill: 'rgba(255,255,255,0.04)', radius: 8 }}
                             />
                             {showA && (
@@ -173,7 +189,7 @@ export function HistoryChart({ chartData, labelA, labelB, showA, showB, isCurren
                                     <LabelList
                                         dataKey="revenueA"
                                         position="top"
-                                        formatter={(v: any) => formatCompactValue(Number(v) || 0, isCurrency)}
+                                        formatter={(v: unknown) => formatCompactValue(Number(v) || 0, isCurrency)}
                                         fill="#ffffff"
                                         fontSize={11}
                                         fontWeight={700}
@@ -185,7 +201,7 @@ export function HistoryChart({ chartData, labelA, labelB, showA, showB, isCurren
                                     <LabelList
                                         dataKey="revenueB"
                                         position="top"
-                                        formatter={(v: any) => formatCompactValue(Number(v) || 0, isCurrency)}
+                                        formatter={(v: unknown) => formatCompactValue(Number(v) || 0, isCurrency)}
                                         fill="#ffffff"
                                         fontSize={11}
                                         fontWeight={700}
@@ -226,7 +242,7 @@ export function HistoryChart({ chartData, labelA, labelB, showA, showB, isCurren
                             />
                             <Tooltip
                                 contentStyle={{ backgroundColor: '#17171a', border: 'none', borderRadius: '12px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.3)' }}
-                                formatter={(v: any) => isCurrency ? formatCurrency(v) : formatNumber(v)}
+                                formatter={(v: unknown) => isCurrency ? formatCurrency(Number(v)) : formatNumber(Number(v))}
                             />
                             {showA && (
                                 <Area

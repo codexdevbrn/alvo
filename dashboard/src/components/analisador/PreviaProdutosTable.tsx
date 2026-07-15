@@ -19,7 +19,7 @@ function formatarPct(valor: number): string {
 export function PreviaProdutosTable({ itens, excluidos, onToggle, carregando }: PreviaProdutosTableProps) {
   const [busca, setBusca] = useState('');
   const [grupoFiltro, setGrupoFiltro] = useState('');
-  const lista = itens ?? [];
+  const lista = useMemo(() => itens ?? [], [itens]);
 
   const gruposDisponiveis = useMemo(() => {
     const nomes = new Set(lista.map((item) => item.grupo));
