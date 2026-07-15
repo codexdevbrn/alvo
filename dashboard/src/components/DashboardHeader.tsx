@@ -77,7 +77,17 @@ export function DashboardHeader({
             <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 <div className="prisma-brand">
                     <PrismaLogo />
-                    <h1 className="prisma-wordmark">Prisma</h1>
+                    <div className="prisma-brand-lockup">
+                        <h1 className="prisma-wordmark">
+                            Prisma
+                            {empresa && (
+                                <span className="prisma-empresa-group">
+                                    <span className="prisma-empresa-separator" aria-hidden="true">·</span>
+                                    <span className="prisma-empresa-name">{empresa}</span>
+                                </span>
+                            )}
+                        </h1>
+                    </div>
                 </div>
                 {clientName && (
                     <span style={{ fontSize: '0.9rem', fontWeight: 600, letterSpacing: '0.5px', textTransform: 'uppercase', color: 'rgba(255,255,255,0.9)', paddingLeft: '2.45rem' }}>

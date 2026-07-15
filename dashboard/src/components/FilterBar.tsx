@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
-    Users, Package, Store, LayoutDashboard, AlertTriangle, X, Filter, SlidersHorizontal, RefreshCw
+    Users, Package, Store, LayoutDashboard, AlertTriangle, X, Filter, SlidersHorizontal, RefreshCw, CalendarClock
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PeriodSelector } from './PeriodSelector';
+import { textoBannerMesesFechados } from '../utils/periodoFechado';
 import type { DashboardData } from '../types/dashboard';
 
 // ==========================================
@@ -19,6 +20,8 @@ interface FilterContentProps {
         store: number;
         severity: number;
         period: number[];
+        usarMesesFechados: boolean;
+        visaoDetalhada: boolean;
     };
     filterOptions: {
         clientOpts: Set<number>;
@@ -33,6 +36,8 @@ interface FilterContentProps {
         setStore: (v: number) => void;
         setSeverity: (v: number) => void;
         setPeriod: (v: number[]) => void;
+        setUsarMesesFechados: (v: boolean) => void;
+        setVisaoDetalhada: (v: boolean) => void;
     };
     onClear: () => void;
 }
@@ -56,6 +61,8 @@ interface FilterBarProps {
         store: number;
         severity: number;
         period: number[];
+        usarMesesFechados: boolean;
+        visaoDetalhada: boolean;
     };
     filterOptions: {
         clientOpts: Set<number>;
@@ -70,6 +77,8 @@ interface FilterBarProps {
         setStore: (v: number) => void;
         setSeverity: (v: number) => void;
         setPeriod: (v: number[]) => void;
+        setUsarMesesFechados: (v: boolean) => void;
+        setVisaoDetalhada: (v: boolean) => void;
     };
     onClear: () => void;
 }
@@ -161,9 +170,65 @@ function CustomDropdown({ label, icon: Icon, value, options, onChange, onClear, 
     );
 }
 
+const VISAO_TOGGLE_ANIM_MS = 220;
+
+function VisaoToggle({
+    value,
+    onChange,
+}: {
+    value: boolean;
+    onChange: (detalhada: boolean) => void;
+}) {
+    const [uiValue, setUiValue] = useState(value);
+    const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+    useEffect(() => {
+        setUiValue(value);
+    }, [value]);
+
+    useEffect(() => () => {
+        if (timerRef.current) clearTimeout(timerRef.current);
+    }, []);
+
+    const select = (detalhada: boolean) => {
+        if (detalhada === uiValue) return;
+        if (timerRef.current) clearTimeout(timerRef.current);
+        setUiValue(detalhada);
+        timerRef.current = setTimeout(() => {
+            onChange(detalhada);
+            timerRef.current = null;
+        }, VISAO_TOGGLE_ANIM_MS);
+    };
+
+    return (
+        <div className="visao-toggle filters-option-chip" role="group" aria-label="Modo de visualização">
+            <span className="visao-toggle-label">Visualização</span>
+            <div className={`visao-toggle-track${uiValue ? ' is-detalhada' : ''}`}>
+                <span className="visao-toggle-thumb" aria-hidden="true" />
+                <button
+                    type="button"
+                    className={`visao-toggle-btn${!uiValue ? ' is-active' : ''}`}
+                    onClick={() => select(false)}
+                    aria-pressed={!uiValue}
+                >
+                    Sintética
+                </button>
+                <button
+                    type="button"
+                    className={`visao-toggle-btn${uiValue ? ' is-active' : ''}`}
+                    onClick={() => select(true)}
+                    aria-pressed={uiValue}
+                >
+                    Detalhada
+                </button>
+            </div>
+        </div>
+    );
+}
+
 function FilterContent({ data, filters, filterOptions, setters, onClear }: FilterContentProps) {
-    const { client, mfr, desc, store, severity, period } = filters;
-    const { setClient, setMfr, setDesc, setStore, setSeverity, setPeriod } = setters;
+    const { client, mfr, desc, store, severity, period, usarMesesFechados, visaoDetalhada } = filters;
+    const { setClient, setMfr, setDesc, setStore, setSeverity, setPeriod, setUsarMesesFechados, setVisaoDetalhada } = setters;
 
     const severityOpts = [
         { id: 0, name: "Amena (-8% a -15%)" },
@@ -172,28 +237,11 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
         { id: 3, name: "Desconstrução (< -60%)" }
     ];
 
-    const hasFilters = client !== -1 || mfr !== -1 || desc !== -1 || store !== -1 || severity !== -1 || period.length > 0;
+    const hasFilters = client !== -1 || mfr !== -1 || desc !== -1 || store !== -1 || severity !== -1 || period.length > 0 || !usarMesesFechados || visaoDetalhada;
 
     return (
         <>
-            <div className="filters-reset-row">
-                <button
-                    onClick={onClear}
-                    disabled={!hasFilters}
-                    className="filters-reset-btn"
-                    style={{
-                        color: hasFilters ? 'var(--accent)' : 'var(--text-secondary)',
-                        cursor: hasFilters ? 'pointer' : 'not-allowed',
-                        opacity: hasFilters ? 1 : 0.4,
-                    }}
-                    onMouseOver={(e) => hasFilters && (e.currentTarget.style.filter = 'brightness(1.2)')}
-                    onMouseOut={(e) => hasFilters && (e.currentTarget.style.filter = 'none')}
-                >
-                    <RefreshCw size={13} />
-                    <span>Resetar Filtros</span>
-                </button>
-            </div>
-
+            <div className="filters-grid">
             <CustomDropdown
                 label="Gravidade"
                 icon={AlertTriangle}
@@ -252,7 +300,45 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
                 value={period}
                 data={data}
                 onChange={setPeriod}
+                usarMesesFechados={usarMesesFechados}
+                onUsarMesesFechados={setUsarMesesFechados}
             />
+            </div>
+
+            <div className="filters-options-bar">
+                <label
+                    className="periodo-fechado-check filters-option-chip"
+                    title={usarMesesFechados ? textoBannerMesesFechados() : 'Incluir o mês corrente nos cálculos dos cards'}
+                >
+                    <input
+                        type="checkbox"
+                        checked={usarMesesFechados}
+                        onChange={(e) => setUsarMesesFechados(e.target.checked)}
+                    />
+                    <CalendarClock size={14} aria-hidden="true" />
+                    <span>Meses fechados nos cálculos</span>
+                </label>
+
+                <div className="filters-options-right">
+                    <VisaoToggle value={visaoDetalhada} onChange={setVisaoDetalhada} />
+
+                    <button
+                        onClick={onClear}
+                        disabled={!hasFilters}
+                        className="filters-reset-btn filters-option-chip"
+                        style={{
+                            color: hasFilters ? 'var(--accent)' : 'var(--text-secondary)',
+                            cursor: hasFilters ? 'pointer' : 'not-allowed',
+                            opacity: hasFilters ? 1 : 0.4,
+                        }}
+                        onMouseOver={(e) => hasFilters && (e.currentTarget.style.filter = 'brightness(1.2)')}
+                        onMouseOut={(e) => hasFilters && (e.currentTarget.style.filter = 'none')}
+                    >
+                        <RefreshCw size={13} />
+                        <span>Resetar Filtros</span>
+                    </button>
+                </div>
+            </div>
         </>
     );
 }
@@ -272,8 +358,8 @@ export function FilterBar({ data, filters, filterOptions, setters, onClear }: Fi
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
-    const { client, mfr, desc, store, severity, period } = filters;
-    const hasActiveFilters = client !== -1 || mfr !== -1 || desc !== -1 || store !== -1 || severity !== -1 || period.length > 0;
+    const { client, mfr, desc, store, severity, period, usarMesesFechados, visaoDetalhada } = filters;
+    const hasActiveFilters = client !== -1 || mfr !== -1 || desc !== -1 || store !== -1 || severity !== -1 || period.length > 0 || !usarMesesFechados || visaoDetalhada;
 
     // Mobile View
     if (isMobile) {

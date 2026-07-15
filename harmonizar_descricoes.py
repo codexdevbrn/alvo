@@ -21,6 +21,8 @@ Lógica de match:
   do Power BI (GABARITO HARM[descricao]).
 
 Segurança:
+- Pastas que contêm `BI/` são tratadas como fonte somente leitura: a
+  harmonização recusa gravar nelas (use a pasta de trabalho).
 - Antes de sobrescrever o Base.csv, é criado um backup `Base.antes-harm.csv`
   na mesma pasta — apenas na PRIMEIRA execução (se o backup já existir, ele é
   preservado, para não perder o estado original em re-execuções).
@@ -39,6 +41,11 @@ import sys
 import warnings
 
 import pandas as pd
+
+class ErroHarmonizacao(Exception):
+    """Erro amigável (arquivo/coluna ausente) - capturável por chamadores programáticos."""
+    pass
+
 
 COLUNA_CODIGO_BASE = "Código Interno"
 COLUNA_DESCRICAO_BASE = "descricao"
@@ -80,6 +87,13 @@ def carregar_harmonizacao(caminho_harm: str) -> dict[str, str]:
 
 
 def harmonizar(pasta_empresa: str, nome_harm: str, nome_base: str, dry_run: bool) -> None:
+    # Pasta com BI/ é fonte somente leitura — não gravar Base.csv / backup lá.
+    if os.path.isdir(os.path.join(pasta_empresa, "BI")):
+        raise ErroHarmonizacao(
+            f"A pasta '{pasta_empresa}' contém BI/ (fonte somente leitura). "
+            "Rode a harmonização na pasta de trabalho, onde está o Base.csv."
+        )
+
     caminho_base = os.path.join(pasta_empresa, nome_base)
     caminho_harm = (
         nome_harm if os.path.isabs(nome_harm) else os.path.join(pasta_empresa, nome_harm)
@@ -87,7 +101,7 @@ def harmonizar(pasta_empresa: str, nome_harm: str, nome_base: str, dry_run: bool
 
     for caminho, rotulo in ((caminho_base, "arquivo base"), (caminho_harm, "planilha de harmonização")):
         if not os.path.exists(caminho):
-            sys.exit(f"ERRO: {rotulo} não encontrado: {caminho}")
+            raise ErroHarmonizacao(f"{rotulo} não encontrado: {caminho}")
 
     print(f"Lendo planilha de harmonização: {caminho_harm}")
     mapa = carregar_harmonizacao(caminho_harm)
@@ -100,7 +114,9 @@ def harmonizar(pasta_empresa: str, nome_harm: str, nome_base: str, dry_run: bool
 
     for coluna in (COLUNA_CODIGO_BASE, COLUNA_DESCRICAO_BASE):
         if coluna not in df.columns:
-            sys.exit(f"ERRO: coluna '{coluna}' não encontrada no {nome_base}. Colunas: {list(df.columns)}")
+            raise ErroHarmonizacao(
+                f"coluna '{coluna}' não encontrada no {nome_base}. Colunas: {list(df.columns)}"
+            )
 
     codigos = df[COLUNA_CODIGO_BASE].str.strip()
     df[COLUNA_DESCRICAO_BASE] = codigos.map(mapa).fillna("")
@@ -146,7 +162,11 @@ def main():
                         help="Só imprime o relatório, sem gravar nada")
     args = parser.parse_args()
 
-    harmonizar(args.pasta_empresa, args.harm, args.base, args.dry_run)
+    try:
+        harmonizar(args.pasta_empresa, args.harm, args.base, args.dry_run)
+    except ErroHarmonizacao as exc:
+        print(f"ERRO: {exc}", file=sys.stderr)
+        sys.exit(1)
 
 
 if __name__ == "__main__":

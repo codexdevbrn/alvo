@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, DollarSign, ShoppingCart, Users } from 'lucide-react';
 import { PeriodSelector } from './PeriodSelector';
+import { resolverPeriodoEfetivo } from '../utils/periodoFechado';
 import { HistoryChart } from './HistoryChart';
 import type { DashboardData, DashboardStats } from '../types/dashboard';
 
@@ -23,6 +24,7 @@ interface RevenueDetailModalProps {
     formatCurrency: (value: number) => string;
     formatNumber: (value: number) => string;
     period: number[]; // main specific period for fallback
+    usarMesesFechados: boolean;
 }
 
 // ==========================================
@@ -43,7 +45,8 @@ export function RevenueDetailModal({
     store,
     formatCurrency,
     formatNumber,
-    period
+    period,
+    usarMesesFechados,
 }: RevenueDetailModalProps) {
     const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
@@ -139,6 +142,7 @@ export function RevenueDetailModal({
                                         value={modalPeriod}
                                         data={data}
                                         onChange={setModalPeriod}
+                                        usarMesesFechados={usarMesesFechados}
                                     />
                                 </div>
                             </div>
@@ -152,7 +156,11 @@ export function RevenueDetailModal({
                                 flexShrink: 0
                             }}>
                                 {(() => {
-                                    const periodIndices = modalPeriod.length > 0 ? modalPeriod : (period.length > 0 ? period : data.monthly.map((_, i) => i));
+                                    const periodIndices = resolverPeriodoEfetivo(
+                                        data,
+                                        modalPeriod.length > 0 ? modalPeriod : period,
+                                        usarMesesFechados,
+                                    );
                                     const selectedYears = Array.from(new Set(periodIndices.map(idx => data.monthly[idx].year))).sort((a, b) => a - b);
                                     const isTrend = periodIndices.length > 0 && selectedYears.length === 1;
 

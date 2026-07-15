@@ -12,7 +12,8 @@ function formatarMoeda(valor: number): string {
   return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 }
 
-function formatarPct(valor: number): string {
+function formatarPct(valor: number | null): string {
+  if (valor == null || Number.isNaN(valor)) return '—';
   return `${valor.toFixed(2)}%`;
 }
 

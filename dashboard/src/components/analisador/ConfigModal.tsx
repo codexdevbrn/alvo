@@ -12,8 +12,10 @@ export interface ConfigAnaliseState {
   reducaoMinimaSemVenda: number;
   topNPoderCompra: number | '';
   excluirPeriodoAtual: boolean;
-  caminhoEmpresasInput: string;
-  caminhoEmpresas: string | null;
+  caminhoFonteInput: string;
+  caminhoFonte: string | null;
+  caminhoTrabalhoInput: string;
+  caminhoTrabalho: string | null;
 }
 
 interface ConfigModalProps {
@@ -64,23 +66,42 @@ export function ConfigModal({ aberto, onFechar, config, onChange, onSalvarCaminh
 
         <div className="config-modal-body custom-scrollbar">
           <section className="config-modal-secao">
-            <h3>Pasta de empresas</h3>
+            <h3>Pastas de dados</h3>
             <label className="analisador-campo">
-              <span>Caminho base (config.json por empresa)</span>
+              <span>Pasta fonte (BI, somente leitura)</span>
               <input
                 className="analisador-input"
-                value={config.caminhoEmpresasInput}
-                onChange={(e) => onChange({ caminhoEmpresasInput: e.target.value })}
-                placeholder="Ex.: C:\...\base-clientes"
+                value={config.caminhoFonteInput}
+                onChange={(e) => onChange({ caminhoFonteInput: e.target.value })}
+                placeholder="Ex.: C:\...\clientes-fonte"
               />
             </label>
+            <p className="analisador-hint">
+              Subpastas com BI/. O app nunca cria, altera nem apaga nada nesta pasta.
+            </p>
+            <label className="analisador-campo">
+              <span>Pasta de trabalho (Base.csv / config.json)</span>
+              <input
+                className="analisador-input"
+                value={config.caminhoTrabalhoInput}
+                onChange={(e) => onChange({ caminhoTrabalhoInput: e.target.value })}
+                placeholder="Ex.: C:\...\clientes-trabalho"
+              />
+            </label>
+            <p className="analisador-hint">
+              Onde ficam Base.csv, config.json e harm.xlsx. Deve ser distinta da fonte.
+            </p>
             <div className="analisador-acoes">
               <button type="button" onClick={onSalvarCaminho} className="analisador-btn analisador-btn-pri">
-                Salvar caminho
+                Salvar caminhos
               </button>
             </div>
-            {config.caminhoEmpresas && (
-              <p className="analisador-hint">Atual: {config.caminhoEmpresas}</p>
+            {(config.caminhoFonte || config.caminhoTrabalho) && (
+              <p className="analisador-hint">
+                Fonte: {config.caminhoFonte || '—'}
+                <br />
+                Trabalho: {config.caminhoTrabalho || '—'}
+              </p>
             )}
           </section>
 

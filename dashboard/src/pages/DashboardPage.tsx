@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useTransition } from 'react';
+import { useState, useMemo, useEffect, useTransition, useRef } from 'react';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import { FilterBar } from '../components/FilterBar';
 import { MetricsGrid } from '../components/MetricsGrid';
@@ -10,8 +10,106 @@ import { DashboardHeader } from '../components/DashboardHeader';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { obterSummaryEmpresa } from '../api/client';
 import { formatCurrency, formatNumber } from '../utils/formatters';
+import { descricaoPeriodoPadrao, abrevUltimoMesFechado, resolverPeriodoEfetivo } from '../utils/periodoFechado';
 import type { AggregateResult, ChartPoint, DashboardData, ProductStats, Row, TrendItem } from '../types/dashboard';
 import '../index.css';
+
+// ==========================================
+// Period window helpers
+// ==========================================
+
+function calcPeriodWindows(data: DashboardData, targetPeriod: number[]) {
+  const availableYears = Array.from(new Set(data.monthly.map(m => m.year))).sort((a, b) => b - a);
+  let pA: number[] = [];
+  let pB: number[] = [];
+  const yearsInSelection = Array.from(
+    new Set(targetPeriod.map(idx => data.monthly[idx]?.year).filter((y): y is number => y !== undefined)),
+  );
+  const isTrendMode = targetPeriod.length > 0 && yearsInSelection.length === 1;
+
+  if (!isTrendMode) {
+    const lastYear = availableYears[0];
+    const prevYear = availableYears[1] || lastYear;
+    targetPeriod.forEach(idx => {
+      const m = data.monthly[idx];
+      if (!m) return;
+      if (m.year === prevYear && lastYear !== prevYear) pA.push(idx);
+      if (m.year === lastYear) pB.push(idx);
+    });
+  } else {
+    const sortedPeriod = [...targetPeriod].sort((a, b) => a - b);
+    const totalSelected = sortedPeriod.length;
+    if (totalSelected === 12) {
+      pB = sortedPeriod.slice(-3);
+      pA = sortedPeriod.slice(0, -3);
+    } else {
+      const currentCount = Math.max(1, Math.min(3, Math.floor(totalSelected / 4) || 1));
+      pB = sortedPeriod.slice(-currentCount);
+      pA = sortedPeriod.slice(0, -currentCount);
+    }
+  }
+
+  return { pA, pB, isTrendMode, yearsInSelection, availableYears };
+}
+
+function buildComparisonChartData(
+  data: DashboardData,
+  populationRows: Row[],
+  pA: number[],
+  pB: number[],
+  statsA: AggregateResult,
+  statsB: AggregateResult,
+): ChartPoint[] {
+  const pASet = new Set(pA);
+  const pBSet = new Set(pB);
+  const monthMap: Record<string, {
+    revenueA: number | null; revenueB: number | null;
+    mfrsA: number | null; mfrsB: number | null;
+    descsA: number | null; descsB: number | null;
+    cntA: number | null; cntB: number | null;
+    clientsA: number | null; clientsB: number | null;
+  }> = {};
+
+  const emptyMonth = () => ({
+    revenueA: null, revenueB: null,
+    mfrsA: null, mfrsB: null,
+    descsA: null, descsB: null,
+    cntA: null, cntB: null,
+    clientsA: null, clientsB: null,
+  });
+
+  [...pA, ...pB].forEach(idx => {
+    const m = data.monthly[idx];
+    if (!m) return;
+    const mName = m.name.split('/')[0];
+    if (!monthMap[mName]) monthMap[mName] = emptyMonth();
+
+    const node = statsA.monthlyNodes[idx] || statsB.monthlyNodes[idx];
+    if (node) {
+      if (pASet.has(idx)) {
+        monthMap[mName].revenueA = (monthMap[mName].revenueA ?? 0) + node.rev;
+        monthMap[mName].mfrsA = (monthMap[mName].mfrsA ?? 0) + node.mfrs.size;
+        monthMap[mName].descsA = (monthMap[mName].descsA ?? 0) + node.descs.size;
+        let kCount = 0;
+        populationRows.forEach(r => { if (r[0] === idx) { kCount++; } });
+        monthMap[mName].cntA = kCount;
+        monthMap[mName].clientsA = node.clients.size;
+      }
+      if (pBSet.has(idx)) {
+        monthMap[mName].revenueB = (monthMap[mName].revenueB ?? 0) + node.rev;
+        monthMap[mName].mfrsB = (monthMap[mName].mfrsB ?? 0) + node.mfrs.size;
+        monthMap[mName].descsB = (monthMap[mName].descsB ?? 0) + node.descs.size;
+        let kCount = 0;
+        populationRows.forEach(r => { if (r[0] === idx) { kCount++; } });
+        monthMap[mName].cntB = kCount;
+        monthMap[mName].clientsB = node.clients.size;
+      }
+    }
+  });
+
+  const uniqueOrder = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
+  return uniqueOrder.filter(m => monthMap[m]).map(m => ({ name: m, ...monthMap[m] }));
+}
 
 // ==========================================
 // Main Component
@@ -31,6 +129,8 @@ export default function DashboardPage() {
   const [empresa, setEmpresa] = useState<string>(() => localStorage.getItem('alvo_empresa') || '');
   const [empresaLoading, setEmpresaLoading] = useState(false);
   const [empresaError, setEmpresaError] = useState<string | null>(null);
+  /** null = modal fechado; string (incl. '') = empresa pendente de confirmação */
+  const [empresaPendenteConfirmacao, setEmpresaPendenteConfirmacao] = useState<string | null>(null);
 
   // Filter States with Persistence (atualizam na hora — a UI responde imediatamente)
   const [client, setClient] = useState<number>(() => { const v = localStorage.getItem('alvo_client'); return v !== null ? Number(v) : -1; });
@@ -40,6 +140,25 @@ export default function DashboardPage() {
   const [severity, setSeverity] = useState<number>(() => { const v = localStorage.getItem('alvo_severity'); return v !== null ? Number(v) : -1; });
   const [period, setPeriod] = useState<number[]>(() => JSON.parse(localStorage.getItem('alvo_period') || '[]'));
   const [modalPeriod, setModalPeriod] = useState<number[]>(() => JSON.parse(localStorage.getItem('alvo_period_modal') || '[]'));
+  const [usarMesesFechados, setUsarMesesFechados] = useState(() => {
+    const v = localStorage.getItem('alvo_meses_fechados');
+    return v === null ? true : v === 'true';
+  });
+  // Cálculos dos cards/breakdowns seguem em transition; o gráfico só ganha/perde a linha de corte.
+  const [computeUsarMesesFechados, setComputeUsarMesesFechados] = useState(usarMesesFechados);
+  const chartSnapshotRef = useRef<{
+    key: string;
+    chartData: ChartPoint[];
+    chartLabelA: string;
+    chartLabelB: string;
+    chartHasA: boolean;
+    chartHasB: boolean;
+    singleMonthMode: boolean;
+  } | null>(null);
+  const [visaoDetalhada, setVisaoDetalhada] = useState(() => {
+    const v = localStorage.getItem('alvo_visao_detalhada');
+    return v === 'true';
+  });
 
   // Debounce: só recalcula depois que o usuário para de clicar (~300ms)
   const debouncedClient = useDebouncedValue(client, 300);
@@ -72,6 +191,12 @@ export default function DashboardPage() {
     });
   }, [debouncedClient, debouncedMfr, debouncedDesc, debouncedStore, debouncedSeverity, debouncedPeriod]);
 
+  useEffect(() => {
+    startComputeTransition(() => {
+      setComputeUsarMesesFechados(usarMesesFechados);
+    });
+  }, [usarMesesFechados]);
+
   const filtersSettled =
     computeFilters.client === client &&
     computeFilters.mfr === mfr &&
@@ -95,7 +220,9 @@ export default function DashboardPage() {
     localStorage.setItem('alvo_severity', severity.toString());
     localStorage.setItem('alvo_period', JSON.stringify(period));
     localStorage.setItem('alvo_period_modal', JSON.stringify(modalPeriod));
-  }, [client, mfr, desc, store, severity, period, modalPeriod]);
+    localStorage.setItem('alvo_meses_fechados', String(usarMesesFechados));
+    localStorage.setItem('alvo_visao_detalhada', String(visaoDetalhada));
+  }, [client, mfr, desc, store, severity, period, modalPeriod, usarMesesFechados, visaoDetalhada]);
 
   // Carrega os dados: summary.json estático (padrão) ou o summary processado
   // pelo backend para a empresa selecionada. A primeira chamada por empresa
@@ -111,20 +238,24 @@ export default function DashboardPage() {
       return res.json();
     };
 
+    const controller = new AbortController();
+
     const carregar = async () => {
       setEmpresaError(null);
       if (data === null) setLoading(true);
       else setEmpresaLoading(true);
 
       try {
-        const d = empresa ? await obterSummaryEmpresa(empresa) : await carregarEstatico();
+        const d = empresa
+          ? await obterSummaryEmpresa(empresa, controller.signal)
+          : await carregarEstatico();
         if (!cancelado) setData(d);
       } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
         console.error('Error loading data:', err);
         if (cancelado) return;
         if (empresa) {
           setEmpresaError(err instanceof Error ? err.message : 'Falha ao carregar os dados da empresa.');
-          // Sem dados na tela ainda? Cai no summary estático para não quebrar.
           if (data === null) {
             try {
               const d = await carregarEstatico();
@@ -141,7 +272,10 @@ export default function DashboardPage() {
     };
 
     carregar();
-    return () => { cancelado = true; };
+    return () => {
+      cancelado = true;
+      controller.abort();
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [empresa]);
 
@@ -151,12 +285,79 @@ export default function DashboardPage() {
     setEmpresa(nova);
   };
 
+  const solicitarTrocaEmpresa = (nova: string) => {
+    if (nova === empresa) return;
+    setEmpresaPendenteConfirmacao(nova);
+  };
+
+  const confirmarTrocaEmpresa = () => {
+    if (empresaPendenteConfirmacao === null) return;
+    const nova = empresaPendenteConfirmacao;
+    setEmpresaPendenteConfirmacao(null);
+    handleEmpresaChange(nova);
+  };
+
+  const cancelarTrocaEmpresa = () => {
+    setEmpresaPendenteConfirmacao(null);
+  };
+
+  useEffect(() => {
+    if (empresaPendenteConfirmacao === null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') cancelarTrocaEmpresa();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [empresaPendenteConfirmacao]);
+
+  const textoConfirmacaoEmpresa = (() => {
+    if (empresaPendenteConfirmacao === null) return '';
+    if (empresaPendenteConfirmacao === '') return 'Deseja mesmo carregar os dados padrão?';
+    return `Deseja mesmo carregar os dados da ${empresaPendenteConfirmacao}?`;
+  })();
+
+  const modalConfirmacaoEmpresa = empresaPendenteConfirmacao !== null ? (
+    <div
+      className="config-modal-overlay"
+      role="presentation"
+      onClick={cancelarTrocaEmpresa}
+    >
+      <div
+        className="config-modal"
+        style={{ width: 'min(420px, 100%)', maxHeight: 'none' }}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-empresa-titulo"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="config-modal-header">
+          <h2 id="confirm-empresa-titulo">Confirmar carga</h2>
+        </div>
+        <div className="config-modal-body" style={{ padding: '1.25rem' }}>
+          <p style={{ margin: '0 0 1.25rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            {textoConfirmacaoEmpresa}
+          </p>
+          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+            <button type="button" className="analisador-btn analisador-btn-sec" onClick={cancelarTrocaEmpresa}>
+              Não
+            </button>
+            <button type="button" className="analisador-btn analisador-btn-pri" onClick={confirmarTrocaEmpresa}>
+              Sim, carregar
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  ) : null;
+
   // ==========================================
   // Helper Functions
   // ==========================================
 
   const clearFilters = () => {
     setClient(-1); setMfr(-1); setDesc(-1); setStore(-1); setPeriod([]); setSeverity(-1);
+    setUsarMesesFechados(true);
+    setVisaoDetalhada(false);
   };
 
   // ==========================================
@@ -172,47 +373,21 @@ export default function DashboardPage() {
     const desc = computeFilters.desc;
     const store = computeFilters.store;
     const severity = computeFilters.severity;
-    const period = computeFilters.period;
+    const periodoManual = computeFilters.period;
+    const period = resolverPeriodoEfetivo(data, periodoManual, computeUsarMesesFechados);
+    const periodChart = resolverPeriodoEfetivo(data, periodoManual, false);
 
-    // 1. Calculate Period Windows
-    const availableYears = Array.from(new Set(data.monthly.map(m => m.year))).sort((a, b) => b - a);
-    let pA: number[] = [];
-    let pB: number[] = [];
-    const yearsInSelection = Array.from(new Set(period.map(idx => data.monthly[idx]?.year).filter(y => y !== undefined)));
-    const isTrendMode = period.length > 0 && yearsInSelection.length === 1;
-
-    if (!isTrendMode) {
-      // Comparison Mode (YoY): 2025 vs 2024
-      const lastYear = availableYears[0];
-      const prevYear = availableYears[1] || lastYear;
-
-      const targetIndices = period.length === 0 ? data.monthly.map((_, i) => i) : period;
-
-      targetIndices.forEach(idx => {
-        const m = data.monthly[idx];
-        if (m.year === prevYear && lastYear !== prevYear) pA.push(idx);
-        if (m.year === lastYear) pB.push(idx);
-      });
-    } else {
-      // TREND MODE
-      const sortedPeriod = [...period].sort((a, b) => a - b);
-      const totalSelected = sortedPeriod.length;
-
-      if (totalSelected === 12) {
-        // Specific formula for full year: Last 3 Months (B) / Last 9 Months (A)
-        pB = sortedPeriod.slice(-3);
-        pA = sortedPeriod.slice(0, -3); // Corrected to take the first 9 months
-      } else {
-        // Proportional split: ~25% for "Current" (cap at 3), rest for "Baseline"
-        // If 12Selected -> 3 vs 9. If 2Selected -> 1 vs 1.
-        const currentCount = Math.max(1, Math.min(3, Math.floor(totalSelected / 4) || 1));
-        pB = sortedPeriod.slice(-currentCount);
-        pA = sortedPeriod.slice(0, -currentCount);
-      }
-    }
+    const { pA, pB, isTrendMode, yearsInSelection, availableYears } = calcPeriodWindows(data, period);
+    const {
+      pA: pAChart,
+      pB: pBChart,
+      isTrendMode: isTrendModeChart,
+      availableYears: availableYearsChart,
+    } = calcPeriodWindows(data, periodChart);
 
     const pASet = new Set(pA);
     const pBSet = new Set(pB);
+    const pAChartSet = new Set(pAChart);
 
     // 2. Population Filtering (Direct Filters)
     const consumerFinalId = data.maps.c.indexOf("Consumidor Final");
@@ -241,9 +416,10 @@ export default function DashboardPage() {
         const yNew = refYears[0];
         const yOld = refYears[1];
 
-        // Get all month indices for these years (FULL YEAR comparison)
-        const refPA = data.monthly.map((m, i) => m.year === yOld ? i : -1).filter(i => i !== -1);
-        const refPB = data.monthly.map((m, i) => m.year === yNew ? i : -1).filter(i => i !== -1);
+        // Referência de gravidade usa o mesmo recorte de período efetivo
+        // (meses fechados por padrão, ou seleção manual).
+        const refPA = data.monthly.map((m, i) => m.year === yOld && period.includes(i) ? i : -1).filter(i => i !== -1);
+        const refPB = data.monthly.map((m, i) => m.year === yNew && period.includes(i) ? i : -1).filter(i => i !== -1);
 
         const perf: Record<number, { vA: number, vB: number }> = {};
         rowsForSev.forEach(r => {
@@ -345,62 +521,19 @@ export default function DashboardPage() {
 
     const statsA = aggregate(populationRows, pA, isTrendMode);
     const statsB = aggregate(populationRows, pB, isTrendMode);
-    const statsTotal = aggregate(populationRows, period.length === 0 ? data.monthly.map((_, i) => (data.monthly[i].year === availableYears[0]) ? i : -1).filter(x => x !== -1) : period, isTrendMode);
+    const statsTotal = aggregate(populationRows, period, isTrendMode);
+    const statsAChart = aggregate(populationRows, pAChart, isTrendModeChart);
+    const statsBChart = aggregate(populationRows, pBChart, isTrendModeChart);
+    const statsTotalChart = aggregate(populationRows, periodChart, isTrendModeChart);
 
-    const isComparisonMode = !isTrendMode;
     let chartData: ChartPoint[] = [];
 
-    if (isComparisonMode) {
-      // Acumulador com campos sempre numéricos (inicializados em 0) — mais
-      // estrito que ChartPoint (que permite null para os "buracos" do modo
-      // tendência), então += funciona sem checagem de nulidade a cada linha.
-      const monthMap: Record<string, {
-        revenueA: number; revenueB: number;
-        mfrsA: number; mfrsB: number;
-        descsA: number; descsB: number;
-        cntA: number; cntB: number;
-        clientsA: number; clientsB: number;
-      }> = {};
-
-      [...pA, ...pB].forEach(idx => {
-        const m = data.monthly[idx];
-        if (!m) return;
-        const mName = m.name.split('/')[0];
-        if (!monthMap[mName]) monthMap[mName] = { revenueA: 0, revenueB: 0, mfrsA: 0, mfrsB: 0, descsA: 0, descsB: 0, cntA: 0, cntB: 0, clientsA: 0, clientsB: 0 };
-
-        const node = statsA.monthlyNodes[idx] || statsB.monthlyNodes[idx];
-        if (node) {
-          if (pASet.has(idx)) {
-            monthMap[mName].revenueA += node.rev;
-            monthMap[mName].mfrsA += node.mfrs.size;
-            monthMap[mName].descsA += node.descs.size;
-            // For clients/count, we use the raw numbers for comparison
-            let kCount = 0;
-            populationRows.forEach(r => { if (r[0] === idx) { kCount++; } });
-            monthMap[mName].cntA = kCount;
-            monthMap[mName].clientsA = node.clients.size;
-          }
-          if (pBSet.has(idx)) {
-            monthMap[mName].revenueB += node.rev;
-            monthMap[mName].mfrsB += node.mfrs.size;
-            monthMap[mName].descsB += node.descs.size;
-            let kCount = 0;
-            populationRows.forEach(r => { if (r[0] === idx) { kCount++; } });
-            monthMap[mName].cntB = kCount;
-            monthMap[mName].clientsB = node.clients.size;
-          }
-        }
-      });
-
-      const uniqueOrder = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-      chartData = uniqueOrder
-        .filter(m => monthMap[m])
-        .map(m => ({ name: m, ...monthMap[m] }));
+    if (!isTrendModeChart) {
+      chartData = buildComparisonChartData(data, populationRows, pAChart, pBChart, statsAChart, statsBChart);
     } else {
-      // Trend Mode: Continuous line with split colors if possible, but for now single series
-      chartData = [...period].sort((a, b) => a - b).map(idx => {
-        const cNodes = statsTotal.monthlyNodes[idx];
-        const isA = pASet.has(idx);
+      chartData = [...periodChart].sort((a, b) => a - b).map(idx => {
+        const cNodes = statsTotalChart.monthlyNodes[idx];
+        const isA = pAChartSet.has(idx);
         const m = data.monthly[idx];
         return {
           name: m?.name || '?',
@@ -420,8 +553,12 @@ export default function DashboardPage() {
     const labelB = isTrendMode
       ? (pB.length === 1 ? "Mês Atual" : `Média últ. ${pB.length} Meses`)
       : (availableYears[0]?.toString() || "Atual");
-    const chartLabelA = labelA;
-    const chartLabelB = isTrendMode ? "Receita Mensal" : labelB;
+    const chartLabelA = isTrendModeChart
+      ? (pAChart.length > 0 ? (pAChart.length === 1 ? "Mês Ant." : `Média ${pAChart.length} Meses Ant.`) : "")
+      : (availableYearsChart[1]?.toString() || "Anterior");
+    const chartLabelB = isTrendModeChart
+      ? "Receita Mensal"
+      : (availableYearsChart[0]?.toString() || "Atual");
     const yearLabel = isTrendMode ? (yearsInSelection[0]?.toString() || "") : (availableYears[0]?.toString() || "");
 
     // 6. Filter Options (population context - Independent per dimension)
@@ -507,21 +644,29 @@ export default function DashboardPage() {
     const topDescs = buildTrend('d');
 
     let topProducts: ProductStats[] = [];
-    if (desc !== -1) {
-      const prodStats: Record<number, { vA: number, vB: number }> = {};
+    const showProductView = visaoDetalhada || desc !== -1;
+    if (showProductView) {
+      const prodStats: Record<number, { vA: number; vB: number; descRev: Record<number, number> }> = {};
       populationRows.forEach(r => {
-        const rId = r[5], pid = r[0], rev = r[6];
-        if (!prodStats[rId]) prodStats[rId] = { vA: 0, vB: 0 };
+        const rId = r[5], dId = r[4], pid = r[0], rev = r[6];
+        if (!prodStats[rId]) prodStats[rId] = { vA: 0, vB: 0, descRev: {} };
         if (pASet.has(pid)) prodStats[rId].vA += rev;
         if (pBSet.has(pid)) prodStats[rId].vB += rev;
+        prodStats[rId].descRev[dId] = (prodStats[rId].descRev[dId] || 0) + rev;
       });
-      topProducts = Object.entries(prodStats).map(([id, s]) => ({
-        id: Number(id),
-        name: data.maps.r[Number(id)],
-        avg24: isTrendMode ? (s.vA / (pA.length || 1)) : s.vA,
-        avg25: isTrendMode ? (s.vB / (pB.length || 1)) : s.vB,
-        total: s.vA + s.vB
-      })).sort((a, b) => b.total - a.total).slice(0, 50);
+      topProducts = Object.entries(prodStats).map(([id, s]) => {
+        const descId = Number(
+          Object.entries(s.descRev).sort(([, a], [, b]) => b - a)[0]?.[0] ?? -1,
+        );
+        return {
+          id: Number(id),
+          name: data.maps.r[Number(id)],
+          descricao: descId >= 0 ? data.maps.d[descId] : '—',
+          avg24: isTrendMode ? (s.vA / (pA.length || 1)) : s.vA,
+          avg25: isTrendMode ? (s.vB / (pB.length || 1)) : s.vB,
+          total: s.vA + s.vB,
+        };
+      }).sort((a, b) => b.total - a.total).slice(0, 50);
     }
 
     // Quando a seleção resulta em um único mês no gráfico principal (ex.:
@@ -530,71 +675,68 @@ export default function DashboardPage() {
     // boa visualização — o HistoryChart troca para barras nesse caso.
     const singleMonthMode = chartData.length === 1;
 
+    const chartKey = JSON.stringify(computeFilters);
+    const chartHasA = !!statsAChart.rev && !isTrendModeChart;
+    const chartHasB = !!statsBChart.rev;
+    let stableChart = {
+      chartData,
+      chartLabelA,
+      chartLabelB,
+      chartHasA,
+      chartHasB,
+      singleMonthMode,
+    };
+    const cached = chartSnapshotRef.current;
+    if (
+      cached
+      && cached.key === chartKey
+      && cached.chartLabelA === chartLabelA
+      && cached.chartLabelB === chartLabelB
+      && cached.chartHasA === chartHasA
+      && cached.chartHasB === chartHasB
+      && cached.singleMonthMode === singleMonthMode
+      && cached.chartData.length === chartData.length
+      && cached.chartData.every((p, i) => (
+        p.name === chartData[i].name
+        && p.revenueA === chartData[i].revenueA
+        && p.revenueB === chartData[i].revenueB
+      ))
+    ) {
+      stableChart = cached;
+    } else {
+      chartSnapshotRef.current = { key: chartKey, ...stableChart };
+    }
+
     return {
       stats: {
-        statsA, statsB, statsTotal, topClients, topMfrs, topDescs, topProducts, chartData,
-        labelA, labelB, chartLabelA, chartLabelB, yearLabel, singleYearMode: isTrendMode, singleMonthMode,
+        statsA, statsB, statsTotal, topClients, topMfrs, topDescs, topProducts,
+        chartData: stableChart.chartData,
+        labelA, labelB,
+        chartLabelA: stableChart.chartLabelA,
+        chartLabelB: stableChart.chartLabelB,
+        yearLabel, singleYearMode: isTrendMode,
+        singleMonthMode: stableChart.singleMonthMode,
+        chartHasA: stableChart.chartHasA,
+        chartHasB: stableChart.chartHasB,
         lenA: pA.length, lenB: pB.length,
-        // Helper to get stats for any period (used by modal)
+        usarMesesFechados: computeUsarMesesFechados,
+        periodoDescricao: computeUsarMesesFechados ? descricaoPeriodoPadrao(data) : undefined,
         getStatsForPeriod: (targetPeriod: number[]) => {
-          let sA: number[] = [];
-          let sB: number[] = [];
-          const years = Array.from(new Set(targetPeriod.map(idx => data.monthly[idx].year)));
-          const isTrend = targetPeriod.length > 0 && years.length === 1;
-          let sorted: number[] = [];
+          const resolved = resolverPeriodoEfetivo(data, targetPeriod, false);
+          const { pA: sA, pB: sB, isTrendMode: isTrend } = calcPeriodWindows(data, resolved);
+          const sorted = isTrend ? [...resolved].sort((a, b) => a - b) : [];
 
-          if (!isTrend) {
-            const lastYear = availableYears[0];
-            const prevYear = availableYears[1] || lastYear;
-            const tIdx = targetPeriod.length === 0 ? data.monthly.map((_, i) => i) : targetPeriod;
-            tIdx.forEach(idx => {
-              const m = data.monthly[idx];
-              if (m.year === prevYear && lastYear !== prevYear) sA.push(idx);
-              if (m.year === lastYear) sB.push(idx);
-            });
-          } else {
-            sorted = [...targetPeriod].sort((a, b) => a - b);
-            const total = sorted.length;
-            const currentCount = Math.max(1, Math.min(3, Math.floor(total / 4) || 1));
-            sB = sorted.slice(-currentCount);
-            sA = sorted.slice(0, -currentCount);
-          }
-
-          const stA = aggregate(populationRows, sA);
-          const stB = aggregate(populationRows, sB);
+          const stA = aggregate(populationRows, sA, isTrend);
+          const stB = aggregate(populationRows, sB, isTrend);
 
           let cData: ChartPoint[] = [];
           if (!isTrend) {
-            const mMap: Record<string, {
-              revenueA: number; revenueB: number;
-              cntA: number; cntB: number;
-              clientsA: number; clientsB: number;
-            }> = {};
-            const sASet = new Set(sA);
-            const sBSet = new Set(sB);
-            [...sA, ...sB].forEach(idx => {
-              const mName = data.monthly[idx].name.split('/')[0];
-              if (!mMap[mName]) mMap[mName] = { revenueA: 0, revenueB: 0, cntA: 0, cntB: 0, clientsA: 0, clientsB: 0 };
-              const node = stA.monthlyNodes[idx] || stB.monthlyNodes[idx];
-              if (node) {
-                if (sASet.has(idx)) {
-                  mMap[mName].revenueA += node.rev;
-                  mMap[mName].cntA = node.cnt;
-                  mMap[mName].clientsA = node.clients.size;
-                }
-                if (sBSet.has(idx)) {
-                  mMap[mName].revenueB += node.rev;
-                  mMap[mName].cntB = node.cnt;
-                  mMap[mName].clientsB = node.clients.size;
-                }
-              }
-            });
-            const uniqueOrder = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-            cData = uniqueOrder.filter(m => mMap[m]).map(m => ({ name: m, ...mMap[m] }));
+            cData = buildComparisonChartData(data, populationRows, sA, sB, stA, stB);
           } else {
+            const statsTotalModal = aggregate(populationRows, resolved, isTrend);
             const sASet = new Set(sA);
             cData = sorted.map((idx: number) => {
-              const node = stA.monthlyNodes[idx] || stB.monthlyNodes[idx];
+              const node = statsTotalModal.monthlyNodes[idx];
               const isA = sASet.has(idx);
               return {
                 name: data.monthly[idx].name,
@@ -608,6 +750,7 @@ export default function DashboardPage() {
             });
           }
 
+          const years = Array.from(new Set(resolved.map(idx => data.monthly[idx].year)));
           const yearB = isTrend ? (years[0] || '') : (availableYears[0] || '');
           const lA = isTrend ? "Baseline" : (availableYears[1]?.toString() || "Anterior");
           const lB = isTrend
@@ -620,7 +763,7 @@ export default function DashboardPage() {
       filterOptions: { clientOpts, mfrOpts, descOpts, storeOpts },
       noDataMessage: populationRows.length === 0 ? "Nenhum dado encontrado para os filtros selecionados." : null
     };
-  }, [data, computeFilters, historyType]);
+  }, [data, computeFilters, historyType, computeUsarMesesFechados, visaoDetalhada]);
 
   // ==========================================
   // Render
@@ -635,14 +778,15 @@ export default function DashboardPage() {
       <div className="dashboard-container">
         <DashboardHeader
           empresa={empresa}
-          onEmpresaChange={handleEmpresaChange}
+          onEmpresaChange={solicitarTrocaEmpresa}
           empresaLoading={empresaLoading}
         />
+        {modalConfirmacaoEmpresa}
         <div className="glass-card" style={{ padding: '4rem', textAlign: 'center' }}>
           <AlertTriangle size={48} color="#f43f5e" style={{ marginBottom: '1rem' }} />
           <h2 style={{ color: 'white' }}>Não foi possível carregar os dados</h2>
           <p style={{ color: 'var(--text-secondary)' }}>
-            {empresaError || 'Verifique se o backend está no ar e se o caminho dos dados está configurado (engrenagem no topo).'}
+            {empresaError || 'Verifique se o backend está no ar e se as pastas fonte/trabalho estão configuradas (engrenagem no topo).'}
           </p>
         </div>
       </div>
@@ -656,9 +800,11 @@ export default function DashboardPage() {
         clientName={client !== -1 ? data?.maps.c[client] : undefined}
         isFiltering={isFilterPending}
         empresa={empresa}
-        onEmpresaChange={handleEmpresaChange}
+        onEmpresaChange={solicitarTrocaEmpresa}
         empresaLoading={empresaLoading}
       />
+
+      {modalConfirmacaoEmpresa}
 
       {empresaError && (
         <div className="glass-card" style={{ padding: '0.85rem 1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -673,17 +819,17 @@ export default function DashboardPage() {
         <div className="glass-card" style={{ padding: '0.85rem 1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <Loader2 size={18} className="dashboard-filter-spinner" style={{ color: 'var(--accent)', flexShrink: 0 }} />
           <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-            Processando a base de <strong style={{ color: 'white' }}>{empresa || 'dados padrão'}</strong>… a primeira carga pode levar alguns segundos.
+            Preparando a base de <strong style={{ color: 'white' }}>{empresa || 'dados padrão'}</strong>… se os dados de origem foram atualizados, a normalização pode levar alguns minutos antes do dashboard aparecer.
           </span>
         </div>
       )}
 
       <FilterBar
         data={data!}
-        filters={{ client, mfr, desc, store, severity, period }}
+        filters={{ client, mfr, desc, store, severity, period, usarMesesFechados, visaoDetalhada }}
         filterOptions={processed.filterOptions}
         setters={{
-          setClient, setMfr, setDesc, setStore, setSeverity,
+          setClient, setMfr, setDesc, setStore, setSeverity, setUsarMesesFechados, setVisaoDetalhada,
           setPeriod: (newPeriod: number[]) => {
             // Enhanced Period Logic: Sync Months across Years
             if (!data) {
@@ -691,9 +837,8 @@ export default function DashboardPage() {
               return;
             }
 
-            const allIndices = data.monthly.map((_, i) => i);
-            const effectivePrev = period.length === 0 ? allIndices : period;
-            const effectiveNew = newPeriod.length === 0 ? allIndices : newPeriod;
+            const effectivePrev = resolverPeriodoEfetivo(data, period, usarMesesFechados);
+            const effectiveNew = resolverPeriodoEfetivo(data, newPeriod, usarMesesFechados);
 
             const prevSet = new Set(effectivePrev);
             const newSet = new Set(effectiveNew);
@@ -751,14 +896,10 @@ export default function DashboardPage() {
               }
             }
 
-            // Safety: if we reconstructed "All", revert to empty array
-            if (newPeriod.length === data.monthly.length) {
-              newPeriod = [];
-            } else {
-              // Ensure sorting or uniqueness if needed, but not strictly required by logic
-              // newPeriod = Array.from(new Set(newPeriod)).sort((a,b) => a-b);
-            }
-
+            // Não normaliza mais "todos os meses" de volta para [] — hoje []
+            // significa "sem seleção manual" (cai no default capado no mês
+            // corrente via periodoBase), enquanto uma seleção explícita de
+            // todos os índices é o estado distinto do botão "Todos os meses".
             setPeriod(newPeriod);
           }
         }}
@@ -783,17 +924,21 @@ export default function DashboardPage() {
               chartData={processed.stats?.chartData || []}
               labelA={processed.stats?.chartLabelA || ""}
               labelB={processed.stats?.chartLabelB || ""}
-              showA={!!processed.stats?.statsA?.rev && !processed.stats?.singleYearMode}
-              showB={!!processed.stats?.statsB?.rev}
+              showA={!!processed.stats?.chartHasA}
+              showB={!!processed.stats?.chartHasB}
               singleMonthMode={!!processed.stats?.singleMonthMode}
+              usarMesesFechados={usarMesesFechados}
+              mesCorteFechado={usarMesesFechados ? abrevUltimoMesFechado() : null}
+              isLoading={isFilterPending}
             />
 
             <BreakdownSection
+              key={`${visaoDetalhada ? 'det' : 'sin'}-${desc}`}
               topClients={processed.stats?.topClients || []}
               topMfrs={processed.stats?.topMfrs || []}
               topDescs={processed.stats?.topDescs || []}
               topProducts={processed.stats?.topProducts || []}
-              isDescFiltered={desc !== -1}
+              showProductView={visaoDetalhada || desc !== -1}
               selectedDescName={desc !== -1 ? data?.maps.d[desc] : undefined}
               labelA={processed.stats?.labelA || ""}
               labelB={processed.stats?.labelB || ""}
@@ -824,6 +969,7 @@ export default function DashboardPage() {
         formatCurrency={formatCurrency}
         formatNumber={formatNumber}
         period={period}
+        usarMesesFechados={usarMesesFechados}
       />
     </div>
   );

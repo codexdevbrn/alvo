@@ -1,6 +1,7 @@
 export interface ProductStats {
     id: number;
     name: string;
+    descricao: string;
     avg24: number;
     avg25: number;
     total: number;
@@ -51,15 +52,15 @@ export interface TrendItem {
 export interface ChartPoint {
     name: string;
     revenueA?: number | null;
-    revenueB?: number;
-    mfrsA?: number;
-    mfrsB?: number;
-    descsA?: number;
-    descsB?: number;
+    revenueB?: number | null;
+    mfrsA?: number | null;
+    mfrsB?: number | null;
+    descsA?: number | null;
+    descsB?: number | null;
     cntA?: number | null;
-    cntB?: number;
+    cntB?: number | null;
     clientsA?: number | null;
-    clientsB?: number;
+    clientsB?: number | null;
 }
 
 export interface AggregateResult {
@@ -101,8 +102,13 @@ export interface DashboardStats {
     yearLabel: string;
     singleYearMode: boolean;
     singleMonthMode: boolean;
+    chartHasA?: boolean;
+    chartHasB?: boolean;
     lenA: number;
     lenB: number;
+    /** true quando a opção "meses fechados" está ativa nos cálculos */
+    usarMesesFechados?: boolean;
+    periodoDescricao?: string;
     getStatsForPeriod: (targetPeriod: number[]) => {
         chartData: ChartPoint[];
         labelA: string;

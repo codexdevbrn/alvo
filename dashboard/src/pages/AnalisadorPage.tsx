@@ -3,25 +3,31 @@ import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Download, FolderOpen, LogOut, Save, Settings } from 'lucide-react';
 import {
   analisar,
-  carregarConfiguracaoEmpresa,
   clearToken,
-  definirCaminhoEmpresas,
+  definirCaminhoFonteDados,
+  definirCaminhoTrabalho,
   exportarRelatorio,
   listarEmpresas,
   obterBase,
-  obterCaminhoEmpresas,
+  obterCaminhoFonteDados,
+  obterCaminhoTrabalho,
   obterCatalogo,
   obterPreviaGrupos,
   obterPreviaProdutos,
+  obterTagsClientes,
   salvarConfiguracaoEmpresa,
+  salvarTagsUmCliente,
   sugerirCortesGrupos,
+  tentarCarregarConfiguracaoEmpresa,
   type CategoriaCatalogo,
+  type ConfigEmpresaSalva,
   type Grupo,
   type ItemClientePrevia,
   type ItemProdutoPrevia,
   type ParametrosAnalise,
   type PreviaBase,
   type ResultadoAnalise,
+  type TagCliente,
 } from '../api/client';
 import { PreviaClientesTable } from '../components/analisador/PreviaClientesTable';
 import { PreviaProdutosTable } from '../components/analisador/PreviaProdutosTable';
@@ -32,18 +38,43 @@ import { ExportarModal } from '../components/analisador/ExportarModal';
 
 type Etapa = 'carregando-base' | 'config' | 'resultados';
 
-function normalizarTexto(texto: string): string {
-  return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-}
+type OverridePrevia = {
+  clientesExcluidos: string[];
+  cortes: [number, number, number];
+  balcao: boolean;
+  produtosExcluidos: string[];
+  corte: number;
+  maxPorGrupo: number;
+};
 
-function ehProdutoNaoHarmonizado(nomeProduto: string): boolean {
-  return normalizarTexto(nomeProduto).includes('harmonizad');
+const CORTES_CLIENTES_PADRAO: [number, number, number] = [30, 50, 60];
+const CORTE_PRODUTOS_PADRAO = 80;
+const MAX_POR_GRUPO_PADRAO = 20;
+
+function resumirRegrasConfig(dados: ConfigEmpresaSalva): string[] {
+  const cortes = dados.cortesClientes ?? CORTES_CLIENTES_PADRAO;
+  const linhas = [
+    `Cortes de clientes: ${cortes.join(' / ')}%`,
+    `Corte de produtos (alto giro): ${dados.corteProdutos ?? CORTE_PRODUTOS_PADRAO}%`,
+    `Máx. por grupo (sugerir): ${dados.maxPorGrupo ?? MAX_POR_GRUPO_PADRAO}`,
+    `Granularidade: ${dados.granularidade ?? 'Mensal'}`,
+    `Períodos de queda: ${dados.periodosQueda ?? 2}`,
+    `Desconsiderar balcão: ${dados.desconsiderarBalcao ? 'sim' : 'não'}`,
+    `Desconsiderar demais produtos: ${dados.desconsiderarDemaisProdutos ? 'sim' : 'não'}`,
+    `Desconsiderar não harmonizados: ${dados.desconsiderarNaoHarmonizados ? 'sim' : 'não'}`,
+    `Clientes excluídos: ${(dados.clientesExcluidos ?? []).length}`,
+    `Produtos excluídos: ${(dados.produtosExcluidos ?? []).length}`,
+    `Relatórios marcados: ${(dados.chavesSelecionadas ?? []).length}`,
+  ];
+  return linhas;
 }
 
 export default function AnalisadorPage() {
   const navigate = useNavigate();
   const [etapa, setEtapa] = useState<Etapa>('carregando-base');
   const [erro, setErro] = useState<string | null>(null);
+  const [sucesso, setSucesso] = useState<string | null>(null);
+  const [salvandoConfig, setSalvandoConfig] = useState(false);
   const [carregando, setCarregando] = useState(false);
 
   const [previa, setPrevia] = useState<PreviaBase | null>(null);
@@ -74,46 +105,193 @@ export default function AnalisadorPage() {
   const [maxPorGrupo, setMaxPorGrupo] = useState(20);
   const [grupos, setGrupos] = useState<Grupo[] | null>(null);
   const [itensClientes, setItensClientes] = useState<ItemClientePrevia[]>([]);
+  const [tagsPorCliente, setTagsPorCliente] = useState<Record<string, TagCliente[]>>({});
   const [carregandoGrupos, setCarregandoGrupos] = useState(false);
   const [produtosGrupos, setProdutosGrupos] = useState<Grupo[] | null>(null);
   const [itensProdutos, setItensProdutos] = useState<ItemProdutoPrevia[]>([]);
+  const [produtosDemaisCompletos, setProdutosDemaisCompletos] = useState<string[]>([]);
+  const [produtosNaoHarmCompletos, setProdutosNaoHarmCompletos] = useState<string[]>([]);
   const [carregandoProdutos, setCarregandoProdutos] = useState(false);
 
   const [empresas, setEmpresas] = useState<string[]>([]);
-  const [empresaSelecionada, setEmpresaSelecionada] = useState('');
+  const [empresaSelecionada, setEmpresaSelecionada] = useState(
+    () => localStorage.getItem('alvo_empresa') || '',
+  );
 
-  const [caminhoEmpresas, setCaminhoEmpresas] = useState<string | null>(null);
+  const [caminhoFonte, setCaminhoFonte] = useState<string | null>(null);
+  const [caminhoTrabalho, setCaminhoTrabalho] = useState<string | null>(null);
   const [mostrarConfig, setMostrarConfig] = useState(false);
-  const [caminhoEmpresasInput, setCaminhoEmpresasInput] = useState('');
+  const [caminhoFonteInput, setCaminhoFonteInput] = useState('');
+  const [caminhoTrabalhoInput, setCaminhoTrabalhoInput] = useState('');
+  const [configPendente, setConfigPendente] = useState<{
+    empresa: string;
+    dados: ConfigEmpresaSalva;
+  } | null>(null);
 
   const nomeEmpresaEfetivo = empresaSelecionada || nomeEmpresaManual.trim();
+  const empresaBase = empresaSelecionada || null;
 
   useEffect(() => {
     obterCatalogo()
       .then(setCatalogo)
       .catch((e) => setErro(e instanceof Error ? e.message : 'Falha ao carregar catálogo.'));
     listarEmpresas().then(setEmpresas).catch(() => {});
-    obterCaminhoEmpresas().then((caminho) => {
-      setCaminhoEmpresas(caminho);
-      setCaminhoEmpresasInput(caminho || '');
-    }).catch(() => {});
+    Promise.all([obterCaminhoFonteDados(true), obterCaminhoTrabalho(true)])
+      .then(([fonte, trabalho]) => {
+        setCaminhoFonte(fonte);
+        setCaminhoFonteInput(fonte || '');
+        setCaminhoTrabalho(trabalho);
+        setCaminhoTrabalhoInput(trabalho || '');
+      })
+      .catch(() => {});
+  }, []);
+
+  const aplicarDadosConfig = (dados: ConfigEmpresaSalva): OverridePrevia => {
+    const cortes = (dados.cortesClientes ?? CORTES_CLIENTES_PADRAO) as [number, number, number];
+    const corte = dados.corteProdutos ?? CORTE_PRODUTOS_PADRAO;
+    const maxG = dados.maxPorGrupo ?? MAX_POR_GRUPO_PADRAO;
+    const clientes = dados.clientesExcluidos ?? [];
+    const produtos = dados.produtosExcluidos ?? [];
+    const balcao = Boolean(dados.desconsiderarBalcao);
+
+    setCortesClientes(cortes);
+    setCorteProdutos(corte);
+    setPeriodosQueda(dados.periodosQueda ?? 2);
+    setDesconsiderarBalcao(balcao);
+    setDesconsiderarDemaisProdutos(Boolean(dados.desconsiderarDemaisProdutos));
+    setDesconsiderarNaoHarmonizados(Boolean(dados.desconsiderarNaoHarmonizados));
+    setExcluirPeriodoAtual(dados.excluirPeriodoAtual ?? true);
+    setTopNProdutos(dados.topNProdutos ?? '');
+    setReducaoMinimaErosao(dados.reducaoMinimaErosao ?? 50);
+    setQuedaMinimaAlertaRs(dados.quedaMinimaAlertaRs ?? 3000);
+    setQuedaMinimaErosaoRs(dados.quedaMinimaErosaoRs ?? 3000);
+    setReducaoMinimaSemVenda(dados.reducaoMinimaSemVenda ?? 90);
+    setTopNPoderCompra(dados.topNPoderCompra ?? '');
+    setMaxPorGrupo(maxG);
+    setClientesExcluidos(new Set(clientes));
+    setProdutosExcluidos(new Set(produtos));
+    setChavesSelecionadas(new Set(dados.chavesSelecionadas ?? []));
+    setGranularidade(dados.granularidade ?? 'Mensal');
+
+    return {
+      clientesExcluidos: clientes,
+      cortes,
+      balcao,
+      produtosExcluidos: produtos,
+      corte,
+      maxPorGrupo: maxG,
+    };
+  };
+
+  const resetarParaPadrao = (): OverridePrevia => {
+    setCortesClientes(CORTES_CLIENTES_PADRAO);
+    setCorteProdutos(CORTE_PRODUTOS_PADRAO);
+    setPeriodosQueda(2);
+    setDesconsiderarBalcao(false);
+    setDesconsiderarDemaisProdutos(false);
+    setDesconsiderarNaoHarmonizados(false);
+    setExcluirPeriodoAtual(true);
+    setTopNProdutos('');
+    setReducaoMinimaErosao(50);
+    setQuedaMinimaAlertaRs(3000);
+    setQuedaMinimaErosaoRs(3000);
+    setReducaoMinimaSemVenda(90);
+    setTopNPoderCompra('');
+    setMaxPorGrupo(MAX_POR_GRUPO_PADRAO);
+    setClientesExcluidos(new Set());
+    setProdutosExcluidos(new Set());
+    // Mantém catálogo / chaves já escolhidas pelo usuário se houver — só limpa exclusões e cortes.
+    return {
+      clientesExcluidos: [],
+      cortes: CORTES_CLIENTES_PADRAO,
+      balcao: false,
+      produtosExcluidos: [],
+      corte: CORTE_PRODUTOS_PADRAO,
+      maxPorGrupo: MAX_POR_GRUPO_PADRAO,
+    };
+  };
+
+  const carregarBaseAtual = async (
+    empresa: string | null,
+    opcoes?: { ajustarCortes?: boolean; override?: OverridePrevia },
+  ) => {
+    const ajustarCortes = opcoes?.ajustarCortes ?? true;
+    setErro(null);
+    setEtapa('carregando-base');
+    try {
+      const resultado = await obterBase(empresa);
+      setPrevia(resultado);
+      if (resultado.granularidades.length > 0) {
+        if (opcoes?.ajustarCortes === false) {
+          setGranularidade((atual) =>
+            resultado.granularidades.includes(atual) ? atual : resultado.granularidades[0],
+          );
+        } else {
+          setGranularidade(resultado.granularidades[0]);
+        }
+      }
+      setEtapa('config');
+      await carregarPrevias(empresa, { ajustarCortes, override: opcoes?.override });
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Falha ao carregar a base de dados.');
+      setEtapa('config');
+    }
+  };
+
+  /** Antes de puxar dados: se há config.json, pergunta; senão usa o padrão (autoajuste max). */
+  const iniciarEmpresa = async (nome: string | null) => {
+    setConfigPendente(null);
+    if (!nome) {
+      const override = resetarParaPadrao();
+      await carregarBaseAtual(null, { ajustarCortes: true, override });
+      return;
+    }
+    setEtapa('carregando-base');
+    try {
+      const dados = await tentarCarregarConfiguracaoEmpresa(nome);
+      if (dados) {
+        setConfigPendente({ empresa: nome, dados });
+        return;
+      }
+      const override = resetarParaPadrao();
+      await carregarBaseAtual(nome, { ajustarCortes: true, override });
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Falha ao verificar configuração da empresa.');
+      const override = resetarParaPadrao();
+      await carregarBaseAtual(nome, { ajustarCortes: true, override });
+    }
+  };
+
+  const confirmarAplicarConfig = () => {
+    if (!configPendente) return;
+    const { empresa, dados } = configPendente;
+    setConfigPendente(null);
+    const override = aplicarDadosConfig(dados);
+    void carregarBaseAtual(empresa, { ajustarCortes: false, override });
+  };
+
+  const recusarConfig = () => {
+    if (!configPendente) return;
+    const empresa = configPendente.empresa;
+    setConfigPendente(null);
+    const override = resetarParaPadrao();
+    void carregarBaseAtual(empresa, { ajustarCortes: true, override });
+  };
+
+  useEffect(() => {
+    void iniciarEmpresa(empresaSelecionada || null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    setErro(null);
-    obterBase()
-      .then((resultado) => {
-        setPrevia(resultado);
-        if (resultado.granularidades.length > 0) setGranularidade(resultado.granularidades[0]);
-        setEtapa('config');
-        carregarPrevias();
-      })
-      .catch((e) => {
-        setErro(e instanceof Error ? e.message : 'Falha ao carregar a base de dados.');
-        setEtapa('config');
-      });
+    if (!configPendente) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') recusarConfig();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [configPendente]);
 
   const montarParametros = (): ParametrosAnalise => ({
     granularidades: [granularidade],
@@ -133,12 +311,16 @@ export default function AnalisadorPage() {
     top_n_poder_compra: topNPoderCompra === '' ? null : topNPoderCompra,
     nome_empresa: nomeEmpresaEfetivo,
     nome_usuario: '',
+    empresa: empresaBase,
   });
 
   const atualizarPreviaGrupos = async (parametros?: {
     clientesExcluidos?: string[];
     cortes?: [number, number, number];
     balcao?: boolean;
+    empresa?: string | null;
+    maxPorGrupo?: number;
+    ajustarCortes?: boolean;
   }) => {
     setErro(null);
     setCarregandoGrupos(true);
@@ -147,7 +329,13 @@ export default function AnalisadorPage() {
         clientes_excluidos: parametros?.clientesExcluidos ?? Array.from(clientesExcluidos),
         cortes_clientes: parametros?.cortes ?? cortesClientes,
         desconsiderar_balcao: parametros?.balcao ?? desconsiderarBalcao,
+        max_itens_por_grupo: parametros?.maxPorGrupo ?? maxPorGrupo,
+        ajustar_cortes: parametros?.ajustarCortes ?? true,
+        empresa: parametros?.empresa !== undefined ? parametros.empresa : empresaBase,
       });
+      if (Array.isArray(resultado.cortes_clientes) && resultado.cortes_clientes.length === 3) {
+        setCortesClientes(resultado.cortes_clientes as [number, number, number]);
+      }
       setGrupos(resultado.grupos);
       if (!Array.isArray(resultado.itens)) {
         setItensClientes([]);
@@ -162,7 +350,7 @@ export default function AnalisadorPage() {
     }
   };
 
-  const handleAtualizarPreviaGrupos = () => atualizarPreviaGrupos();
+  const handleAtualizarPreviaGrupos = () => atualizarPreviaGrupos({ ajustarCortes: false });
 
   const handleSugerirCortes = async () => {
     setErro(null);
@@ -173,6 +361,7 @@ export default function AnalisadorPage() {
         cortes_clientes: cortesClientes,
         desconsiderar_balcao: desconsiderarBalcao,
         max_por_grupo: maxPorGrupo,
+        empresa: empresaBase,
       });
       setCortesClientes(resultado.cortes_clientes);
       setGrupos(resultado.grupos);
@@ -192,6 +381,9 @@ export default function AnalisadorPage() {
   const atualizarPreviaProdutos = async (parametros?: {
     produtosExcluidos?: string[];
     corte?: number;
+    empresa?: string | null;
+    maxPorGrupo?: number;
+    ajustarCortes?: boolean;
   }) => {
     setErro(null);
     setCarregandoProdutos(true);
@@ -199,8 +391,20 @@ export default function AnalisadorPage() {
       const resultado = await obterPreviaProdutos({
         produtos_excluidos: parametros?.produtosExcluidos ?? Array.from(produtosExcluidos),
         corte_produtos: parametros?.corte ?? corteProdutos,
+        max_itens_por_grupo: parametros?.maxPorGrupo ?? maxPorGrupo,
+        ajustar_cortes: parametros?.ajustarCortes ?? true,
+        empresa: parametros?.empresa !== undefined ? parametros.empresa : empresaBase,
       });
+      if (typeof resultado.corte_produtos === 'number') {
+        setCorteProdutos(resultado.corte_produtos);
+      }
       setProdutosGrupos(resultado.grupos);
+      setProdutosDemaisCompletos(
+        Array.isArray(resultado.produtos_demais) ? resultado.produtos_demais : [],
+      );
+      setProdutosNaoHarmCompletos(
+        Array.isArray(resultado.produtos_nao_harmonizados) ? resultado.produtos_nao_harmonizados : [],
+      );
       if (!Array.isArray(resultado.itens)) {
         setItensProdutos([]);
         setErro('Backend desatualizado: a prévia não retornou a lista de produtos. Reinicie o uvicorn (porta do proxy em vite.config.ts).');
@@ -214,45 +418,95 @@ export default function AnalisadorPage() {
     }
   };
 
-  const handleAtualizarPreviaProdutos = () => atualizarPreviaProdutos();
+  const handleAtualizarPreviaProdutos = () => atualizarPreviaProdutos({ ajustarCortes: false });
 
-  // Ao ligar, exclui de vez (via produtos_excluidos) os produtos hoje
-  // classificados como "Demais" na prévia atual — deixa de fora dos
-  // relatórios finais. Ao desligar, devolve exatamente esses mesmos produtos.
+  // Ao ligar, exclui de vez (via produtos_excluidos) TODOS os produtos
+  // classificados como "Demais" (lista completa do backend, não só a prévia).
+  // Ao desligar, devolve exatamente esses mesmos produtos.
   const handleToggleDesconsiderarDemais = async (checked: boolean) => {
     setDesconsiderarDemaisProdutos(checked);
-    const produtosDemais = itensProdutos.filter((item) => item.grupo === 'Demais').map((item) => item.produto);
+    const produtosDemais = produtosDemaisCompletos;
     const novoSet = new Set(produtosExcluidos);
     produtosDemais.forEach((produto) => {
       if (checked) novoSet.add(produto);
       else novoSet.delete(produto);
     });
     setProdutosExcluidos(novoSet);
-    await atualizarPreviaProdutos({ produtosExcluidos: Array.from(novoSet) });
+    await atualizarPreviaProdutos({
+      produtosExcluidos: Array.from(novoSet),
+      ajustarCortes: false,
+    });
   };
 
-  // Ao ligar, exclui de vez os produtos "não harmonizados" (catch-all de
-  // vendas que não puderam ser classificadas num produto específico, ex.:
-  // "NÃO HARMONIZADO" / "Não harmonizados"). Ao desligar, devolve esses
-  // mesmos produtos.
+  // Ao ligar, exclui todos os "não harmonizados" (lista completa). Ao desligar, devolve.
   const handleToggleDesconsiderarNaoHarmonizados = async (checked: boolean) => {
     setDesconsiderarNaoHarmonizados(checked);
-    const produtosNaoHarmonizados = itensProdutos
-      .filter((item) => ehProdutoNaoHarmonizado(item.produto))
-      .map((item) => item.produto);
+    const produtosNaoHarmonizados = produtosNaoHarmCompletos;
     const novoSet = new Set(produtosExcluidos);
     produtosNaoHarmonizados.forEach((produto) => {
       if (checked) novoSet.add(produto);
       else novoSet.delete(produto);
     });
     setProdutosExcluidos(novoSet);
-    await atualizarPreviaProdutos({ produtosExcluidos: Array.from(novoSet) });
+    await atualizarPreviaProdutos({
+      produtosExcluidos: Array.from(novoSet),
+      ajustarCortes: false,
+    });
+  };
+
+  const carregarTagsClientes = async (empresa: string | null) => {
+    if (!empresa) {
+      setTagsPorCliente({});
+      return;
+    }
+    try {
+      const dados = await obterTagsClientes(empresa);
+      setTagsPorCliente(dados.tags ?? {});
+    } catch {
+      setTagsPorCliente({});
+    }
+  };
+
+  const handleTagsClienteChange = async (cliente: string, tags: TagCliente[]) => {
+    if (!empresaBase) return;
+    const tinhaBalcao = (tagsPorCliente[cliente] ?? []).includes('cliente_balcao');
+    const temBalcao = tags.includes('cliente_balcao');
+    try {
+      const dados = await salvarTagsUmCliente(empresaBase, cliente, tags);
+      setTagsPorCliente(dados.tags ?? {});
+      // Tag só cadastra o nome; o filtro só muda a prévia se o checkbox estiver ligado.
+      if (desconsiderarBalcao && tinhaBalcao !== temBalcao) {
+        await atualizarPreviaGrupos({ ajustarCortes: false, empresa: empresaBase });
+      }
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Falha ao salvar tags do cliente.');
+    }
   };
 
   // Carrega em sequência para não estourar memória com a base grande.
-  const carregarPrevias = async () => {
-    await atualizarPreviaGrupos();
-    await atualizarPreviaProdutos();
+  const carregarPrevias = async (
+    empresa?: string | null,
+    opcoes?: { ajustarCortes?: boolean; override?: OverridePrevia },
+  ) => {
+    const emp = empresa !== undefined ? empresa : empresaBase;
+    const ajustarCortes = opcoes?.ajustarCortes ?? true;
+    const o = opcoes?.override;
+    await carregarTagsClientes(emp ?? null);
+    await atualizarPreviaGrupos({
+      empresa: emp,
+      ajustarCortes,
+      clientesExcluidos: o?.clientesExcluidos,
+      cortes: o?.cortes,
+      balcao: o?.balcao,
+      maxPorGrupo: o?.maxPorGrupo,
+    });
+    await atualizarPreviaProdutos({
+      empresa: emp,
+      ajustarCortes,
+      produtosExcluidos: o?.produtosExcluidos,
+      corte: o?.corte,
+      maxPorGrupo: o?.maxPorGrupo,
+    });
   };
 
   const configAtual = () => ({
@@ -266,24 +520,51 @@ export default function AnalisadorPage() {
 
   const handleSalvarConfiguracaoEmpresa = async () => {
     if (!nomeEmpresaEfetivo) {
-      setErro('Selecione ou informe o nome da empresa antes de salvar.');
+      const msg = 'Selecione ou informe o nome da empresa antes de salvar.';
+      setErro(msg);
+      setSucesso(null);
+      return;
+    }
+    if (!caminhoTrabalho) {
+      const msg = 'Configure a pasta de trabalho (engrenagem) antes de salvar a configuração.';
+      setErro(msg);
+      setSucesso(null);
       return;
     }
     setErro(null);
+    setSucesso(null);
+    setSalvandoConfig(true);
     try {
-      await salvarConfiguracaoEmpresa(nomeEmpresaEfetivo, configAtual());
-      const nomes = await listarEmpresas();
-      setEmpresas(nomes);
+      const resultado = await salvarConfiguracaoEmpresa(nomeEmpresaEfetivo, configAtual());
+      const caminho = resultado.caminho || `${caminhoTrabalho}/${nomeEmpresaEfetivo}/config.json`;
+      setSucesso(`Configuração salva em ${caminho}`);
       setEmpresaSelecionada(nomeEmpresaEfetivo);
       setNomeEmpresaManual('');
+      localStorage.setItem('alvo_empresa', nomeEmpresaEfetivo);
+      try {
+        const nomes = await listarEmpresas();
+        setEmpresas(nomes);
+      } catch {
+        // Salvamento já ok — falha ao listar empresas não invalida o arquivo.
+      }
     } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Falha ao salvar configuração da empresa.');
+      const msg = e instanceof Error ? e.message : 'Falha ao salvar configuração da empresa.';
+      setErro(msg);
+      setSucesso(null);
+    } finally {
+      setSalvandoConfig(false);
     }
   };
 
   const handleSelecionarEmpresa = (nome: string) => {
     setEmpresaSelecionada(nome);
-    if (nome) setNomeEmpresaManual('');
+    if (nome) {
+      setNomeEmpresaManual('');
+      localStorage.setItem('alvo_empresa', nome);
+    } else {
+      localStorage.removeItem('alvo_empresa');
+    }
+    void iniciarEmpresa(nome || null);
   };
 
   const handleCarregarConfiguracaoEmpresa = async () => {
@@ -293,49 +574,50 @@ export default function AnalisadorPage() {
     }
     setErro(null);
     try {
-      const dados = await carregarConfiguracaoEmpresa<Partial<ReturnType<typeof configAtual>>>(empresaSelecionada);
-      setCortesClientes(dados.cortesClientes ?? [30, 50, 60]);
-      setCorteProdutos(dados.corteProdutos ?? 80);
-      setPeriodosQueda(dados.periodosQueda ?? 2);
-      setDesconsiderarBalcao(Boolean(dados.desconsiderarBalcao));
-      setDesconsiderarDemaisProdutos(Boolean(dados.desconsiderarDemaisProdutos));
-      setDesconsiderarNaoHarmonizados(Boolean(dados.desconsiderarNaoHarmonizados));
-      setExcluirPeriodoAtual(dados.excluirPeriodoAtual ?? true);
+      const dados = await tentarCarregarConfiguracaoEmpresa(empresaSelecionada);
+      if (!dados) {
+        setErro('Configuração não encontrada para esta empresa.');
+        return;
+      }
       setNomeEmpresaManual('');
-      setTopNProdutos(dados.topNProdutos ?? '');
-      setReducaoMinimaErosao(dados.reducaoMinimaErosao ?? 50);
-      setQuedaMinimaAlertaRs(dados.quedaMinimaAlertaRs ?? 3000);
-      setQuedaMinimaErosaoRs(dados.quedaMinimaErosaoRs ?? 3000);
-      setReducaoMinimaSemVenda(dados.reducaoMinimaSemVenda ?? 90);
-      setTopNPoderCompra(dados.topNPoderCompra ?? '');
-      setMaxPorGrupo(dados.maxPorGrupo ?? 20);
-      setClientesExcluidos(new Set(dados.clientesExcluidos ?? []));
-      setProdutosExcluidos(new Set(dados.produtosExcluidos ?? []));
-      setChavesSelecionadas(new Set(dados.chavesSelecionadas ?? []));
-      setGranularidade(dados.granularidade ?? 'Mensal');
+      const override = aplicarDadosConfig(dados);
       await atualizarPreviaGrupos({
-        clientesExcluidos: dados.clientesExcluidos ?? [],
-        cortes: dados.cortesClientes ?? [30, 50, 60],
-        balcao: Boolean(dados.desconsiderarBalcao),
+        clientesExcluidos: override.clientesExcluidos,
+        cortes: override.cortes,
+        balcao: override.balcao,
+        maxPorGrupo: override.maxPorGrupo,
+        ajustarCortes: false,
+        empresa: empresaSelecionada,
       });
       await atualizarPreviaProdutos({
-        produtosExcluidos: dados.produtosExcluidos ?? [],
-        corte: dados.corteProdutos ?? 80,
+        produtosExcluidos: override.produtosExcluidos,
+        corte: override.corte,
+        maxPorGrupo: override.maxPorGrupo,
+        ajustarCortes: false,
+        empresa: empresaSelecionada,
       });
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Falha ao carregar configuração da empresa.');
     }
   };
 
-  const handleSalvarCaminhoEmpresas = async () => {
+  const handleSalvarCaminhos = async () => {
     setErro(null);
     try {
-      const caminho = await definirCaminhoEmpresas(caminhoEmpresasInput.trim());
-      setCaminhoEmpresas(caminho);
+      if (caminhoFonteInput.trim()) {
+        const fonte = await definirCaminhoFonteDados(caminhoFonteInput.trim(), true);
+        setCaminhoFonte(fonte);
+        setCaminhoFonteInput(fonte);
+      }
+      if (caminhoTrabalhoInput.trim()) {
+        const trabalho = await definirCaminhoTrabalho(caminhoTrabalhoInput.trim(), true);
+        setCaminhoTrabalho(trabalho);
+        setCaminhoTrabalhoInput(trabalho);
+      }
       const nomes = await listarEmpresas();
       setEmpresas(nomes);
     } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Falha ao salvar o caminho.');
+      setErro(e instanceof Error ? e.message : 'Falha ao salvar os caminhos.');
     }
   };
 
@@ -521,8 +803,10 @@ export default function AnalisadorPage() {
           reducaoMinimaSemVenda,
           topNPoderCompra,
           excluirPeriodoAtual,
-          caminhoEmpresasInput,
-          caminhoEmpresas,
+          caminhoFonteInput,
+          caminhoFonte,
+          caminhoTrabalhoInput,
+          caminhoTrabalho,
         }}
         onChange={(patch) => {
           if (patch.granularidade !== undefined) setGranularidade(patch.granularidade);
@@ -534,9 +818,10 @@ export default function AnalisadorPage() {
           if (patch.reducaoMinimaSemVenda !== undefined) setReducaoMinimaSemVenda(patch.reducaoMinimaSemVenda);
           if (patch.topNPoderCompra !== undefined) setTopNPoderCompra(patch.topNPoderCompra);
           if (patch.excluirPeriodoAtual !== undefined) setExcluirPeriodoAtual(patch.excluirPeriodoAtual);
-          if (patch.caminhoEmpresasInput !== undefined) setCaminhoEmpresasInput(patch.caminhoEmpresasInput);
+          if (patch.caminhoFonteInput !== undefined) setCaminhoFonteInput(patch.caminhoFonteInput);
+          if (patch.caminhoTrabalhoInput !== undefined) setCaminhoTrabalhoInput(patch.caminhoTrabalhoInput);
         }}
-        onSalvarCaminho={handleSalvarCaminhoEmpresas}
+        onSalvarCaminho={handleSalvarCaminhos}
       />
 
       <ExportarModal
@@ -549,14 +834,77 @@ export default function AnalisadorPage() {
       />
 
       {erro && (
-        <div className="glass-card glass-card-flat analisador-erro">
+        <div className="glass-card glass-card-flat analisador-erro" role="alert">
           {erro}
         </div>
       )}
 
-      {etapa === 'carregando-base' && (
+      {sucesso && (
+        <div className="glass-card glass-card-flat analisador-sucesso" role="status">
+          {sucesso}
+        </div>
+      )}
+
+      {configPendente && (
+        <div
+          className="config-modal-overlay"
+          role="presentation"
+          onClick={recusarConfig}
+        >
+          <div
+            className="config-modal"
+            style={{ width: 'min(480px, 100%)', maxHeight: 'min(80vh, 640px)' }}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="confirm-config-titulo"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="config-modal-header">
+              <h2 id="confirm-config-titulo">Configuração salva</h2>
+            </div>
+            <div className="config-modal-body" style={{ padding: '1.25rem' }}>
+              <p style={{ margin: '0 0 1rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                A empresa <strong>{configPendente.empresa}</strong> tem um <code>config.json</code>.
+                Deseja aplicar essas regras antes de carregar os dados?
+              </p>
+              <ul
+                style={{
+                  margin: '0 0 1.25rem',
+                  paddingLeft: '1.25rem',
+                  color: 'var(--text-secondary)',
+                  lineHeight: 1.6,
+                  fontSize: '0.95rem',
+                }}
+              >
+                {resumirRegrasConfig(configPendente.dados).map((linha) => (
+                  <li key={linha}>{linha}</li>
+                ))}
+              </ul>
+              <p style={{ margin: '0 0 1.25rem', fontSize: '0.9rem', color: 'var(--text-muted, var(--text-secondary))' }}>
+                Se escolher Não, usa o padrão (cortes 30/50/60 e 80%, com ajuste automático até {MAX_POR_GRUPO_PADRAO} por grupo).
+              </p>
+              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                <button type="button" className="analisador-btn analisador-btn-sec" onClick={recusarConfig}>
+                  Não, usar padrão
+                </button>
+                <button type="button" className="analisador-btn analisador-btn-pri" onClick={confirmarAplicarConfig}>
+                  Sim, aplicar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {etapa === 'carregando-base' && !configPendente && (
         <div className="glass-card glass-card-flat" style={{ maxWidth: 480 }}>
           <p className="analisador-hint">Carregando base de dados...</p>
+        </div>
+      )}
+
+      {etapa === 'carregando-base' && configPendente && (
+        <div className="glass-card glass-card-flat" style={{ maxWidth: 480 }}>
+          <p className="analisador-hint">Aguardando confirmação da configuração salva...</p>
         </div>
       )}
 
@@ -580,6 +928,9 @@ export default function AnalisadorPage() {
                 onChange={(e) => handleSelecionarEmpresa(e.target.value)}
               >
                 <option value="">— Digitar manualmente —</option>
+                {empresaSelecionada && !empresas.includes(empresaSelecionada) && (
+                  <option value={empresaSelecionada}>{empresaSelecionada}</option>
+                )}
                 {empresas.map((nome) => (
                   <option key={nome} value={nome}>{nome}</option>
                 ))}
@@ -600,14 +951,25 @@ export default function AnalisadorPage() {
               <button type="button" onClick={handleCarregarConfiguracaoEmpresa} className="analisador-btn analisador-btn-sec">
                 <FolderOpen size={16} /> Carregar configuração
               </button>
-              <button type="button" onClick={handleSalvarConfiguracaoEmpresa} className="analisador-btn analisador-btn-sec">
-                <Save size={16} /> Salvar configuração
+              <button
+                type="button"
+                onClick={handleSalvarConfiguracaoEmpresa}
+                disabled={salvandoConfig}
+                className="analisador-btn analisador-btn-sec"
+              >
+                <Save size={16} /> {salvandoConfig ? 'Salvando...' : 'Salvar configuração'}
               </button>
             </div>
+            {sucesso && (
+              <p className="analisador-feedback-inline ok" role="status">{sucesso}</p>
+            )}
+            {erro && (
+              <p className="analisador-feedback-inline erro" role="alert">{erro}</p>
+            )}
             <p className="analisador-hint" style={{ width: '100%' }}>
               {empresaSelecionada
-                ? `Configuração será lida/salva em ${caminhoEmpresas || 'base-clientes'}/${empresaSelecionada}/config.json`
-                : 'Sem empresa selecionada: digite o nome manualmente. Selecione uma pasta em base-clientes para carregar config.json.'}
+                ? `Lê Base.csv em ${caminhoTrabalho || 'pasta de trabalho'}/${empresaSelecionada}/; se não existir, normaliza o BI da fonte e cria a pasta no trabalho. Ao salvar, grava config.json nessa pasta de trabalho.`
+                : 'Sem empresa: usa base_de_dados.xlsx da raiz. Selecione uma empresa (ou abra o Analisador com uma já escolhida no Dashboard).'}
             </p>
           </div>
 
@@ -643,7 +1005,11 @@ export default function AnalisadorPage() {
                 <input
                   type="checkbox"
                   checked={desconsiderarBalcao}
-                  onChange={(e) => setDesconsiderarBalcao(e.target.checked)}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setDesconsiderarBalcao(checked);
+                    void atualizarPreviaGrupos({ balcao: checked, ajustarCortes: false });
+                  }}
                 />
                 Desconsiderar clientes balcão
               </label>
@@ -660,7 +1026,14 @@ export default function AnalisadorPage() {
                 excluidos={clientesExcluidos}
                 onToggle={(cliente) => toggleSet(clientesExcluidos, cliente, setClientesExcluidos)}
                 carregando={carregandoGrupos}
+                empresa={empresaBase}
+                tagsPorCliente={tagsPorCliente}
+                onTagsChange={handleTagsClienteChange}
+                desconsiderarBalcao={desconsiderarBalcao}
               />
+              <p className="analisador-hint" style={{ width: '100%', marginTop: '0.5rem' }}>
+                Cortes ajustados automaticamente para ≤{maxPorGrupo} por grupo (exceto Demais: até 300 na prévia; contagem total acima).
+              </p>
               {resumoGrupos(grupos, 'clientes', clientesExcluidosPorGrupo)}
             </div>
 
@@ -711,6 +1084,9 @@ export default function AnalisadorPage() {
                 onToggle={(produto) => toggleSet(produtosExcluidos, produto, setProdutosExcluidos)}
                 carregando={carregandoProdutos}
               />
+              <p className="analisador-hint" style={{ width: '100%', marginTop: '0.5rem' }}>
+                Corte ajustado automaticamente para ≤{maxPorGrupo} no alto giro (Demais: até 300 na prévia; contagem total acima).
+              </p>
               {resumoGrupos(produtosGrupos, 'produtos', produtosExcluidosPorGrupo)}
             </div>
           </div>

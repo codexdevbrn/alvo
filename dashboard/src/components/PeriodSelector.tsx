@@ -1,34 +1,32 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, type MouseEvent } from 'react';
 import { X, TrendingUp, Check } from 'lucide-react';
 import type { DashboardData } from '../types/dashboard';
+import {
+    indicesAteMesAtual,
+    indicesMesesFechados,
+    mesDeRotulo,
+    periodosIguais,
+    rotuloCorteMesesFechados,
+} from '../utils/periodoFechado';
 
 interface PeriodSelectorProps {
     label: string;
     value: number[];
     data: DashboardData;
     onChange: (value: number[]) => void;
+    usarMesesFechados?: boolean;
+    onUsarMesesFechados?: (value: boolean) => void;
 }
 
-const MES_NUM: Record<string, number> = {
-    jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6,
-    jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12,
-};
-
-function mesDeRotulo(name: string): number {
-    return MES_NUM[name.split('/')[0].toLowerCase()] ?? 0;
-}
-
-export function PeriodSelector({ label, value, data, onChange }: PeriodSelectorProps) {
+export function PeriodSelector({ label, value, data, onChange, usarMesesFechados = false, onUsarMesesFechados }: PeriodSelectorProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [expandedYears, setExpandedYears] = useState<Set<number>>(() => new Set());
     const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-    // Guarda o último mês clicado e quando, para detectar duplo clique sem
-    // atrasar o clique simples (ver handleMonthClick).
     const lastMonthClickRef = useRef<{ idx: number; time: number }>({ idx: -1, time: 0 });
 
     const years = Array.from(new Set(data.monthly.map((m) => m.year))).sort((a, b) => a - b);
     const allIndices = data.monthly.map((_, i) => i);
-    const isAllSelected = value.length === 0;
+    const selecionados = value.length === 0 ? allIndices : value;
 
     useEffect(() => {
         const timeoutId = closeTimeoutRef.current;
@@ -54,36 +52,28 @@ export function PeriodSelector({ label, value, data, onChange }: PeriodSelectorP
         });
     };
 
-    // Isola um mês (por número, ex.: 1 = janeiro): filtra apenas esse mês,
-    // em todos os anos disponíveis — usado no duplo clique e no "Ver mês atual".
     const isolarMes = (mesNum: number) => {
         const indices = data.monthly
             .map((m, i) => (mesDeRotulo(m.name) === mesNum ? i : -1))
             .filter((i) => i !== -1);
-        onChange(indices.length === allIndices.length ? [] : indices);
+        onChange(indices);
+    };
+
+    const aplicarSelecao = (indices: number[]) => {
+        if (periodosIguais(indices, allIndices)) {
+            onChange([]);
+            return;
+        }
+        onChange(indices);
     };
 
     const toggleMonth = (idx: number) => {
-        let newValue: number[];
-        if (isAllSelected) {
-            newValue = allIndices.filter((i) => i !== idx);
-        } else {
-            newValue = value.includes(idx) ? value.filter((v) => v !== idx) : [...value, idx];
-        }
-
-        if (newValue.length === allIndices.length) newValue = [];
-        onChange(newValue);
+        const base = selecionados;
+        const newValue = base.includes(idx) ? base.filter((v) => v !== idx) : [...base, idx];
+        aplicarSelecao(newValue);
     };
 
-    // Clique único alterna o mês imediatamente (com sincronia entre anos
-    // feita no pai) — sem atraso, para que cliques rápidos em meses
-    // diferentes em sequência funcionem normalmente. Só quando o SEGUNDO
-    // clique cai no mesmo mês dentro da janela é que tratamos como duplo
-    // clique e isolamos esse mês.
     const handleMonthClick = (idx: number) => {
-        // Date.now() aqui é seguro: handleMonthClick só roda a partir do
-        // onClick do botão de mês, nunca durante o render — a regra de
-        // pureza do eslint-plugin-react-hooks não distingue isso ainda.
         // eslint-disable-next-line react-hooks/purity
         const agora = Date.now();
         const ehDuploClique =
@@ -110,44 +100,57 @@ export function PeriodSelector({ label, value, data, onChange }: PeriodSelectorP
             .filter((i) => i !== -1);
 
         let newValue: number[];
-        if (isAllSelected) {
-            newValue = allIndices.filter((idx) => !yearIndices.includes(idx));
-        } else if (!currentlySelected) {
-            newValue = Array.from(new Set([...value, ...yearIndices]));
+        if (currentlySelected) {
+            newValue = selecionados.filter((idx) => !yearIndices.includes(idx));
         } else {
-            newValue = value.filter((idx) => !yearIndices.includes(idx));
+            newValue = Array.from(new Set([...selecionados, ...yearIndices]));
         }
 
-        if (newValue.length === allIndices.length) newValue = [];
-        onChange(newValue);
+        aplicarSelecao(newValue);
     };
 
-    const selectUntilNow = () => {
+    const selectMesesFechados = (e?: MouseEvent) => {
+        e?.stopPropagation();
         if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
-        const agora = new Date();
-        const anoAtual = agora.getFullYear();
-        const mesAtual = agora.getMonth() + 1;
-
-        const indices = data.monthly
-            .map((m, idx) => {
-                const mes = mesDeRotulo(m.name);
-                if (m.year < anoAtual) return idx;
-                if (m.year === anoAtual && mes > 0 && mes <= mesAtual) return idx;
-                return -1;
-            })
-            .filter((i) => i !== -1);
-
-        onChange(indices.length === allIndices.length ? [] : indices);
+        onUsarMesesFechados?.(true);
+        // Seleção explícita (não []) — trava o gráfico nos mesmos meses
+        // fechados usados no cálculo, em vez de deixar o mês corrente aberto
+        // aparecer no traçado.
+        onChange(indicesMesesFechados(data));
     };
 
-    const verMesAtual = () => {
+    const selectAteAgora = (e?: MouseEvent) => {
+        e?.stopPropagation();
+        if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
+        onUsarMesesFechados?.(false);
+        // Mesmo corte (jan..mês corrente) nos dois anos, mas incluindo o mês
+        // corrente — diferente de "Meses fechados", que o exclui.
+        onChange(indicesAteMesAtual(data));
+    };
+
+    const selectTodosOsMeses = (e?: MouseEvent) => {
+        e?.stopPropagation();
+        if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
+        onUsarMesesFechados?.(false);
+        // Seleção explícita de tudo (não []) — [] agora cai no fallback "até o
+        // último mês disponível" (periodoBase), então precisa ser literal para
+        // realmente pegar anos anteriores completos além do mês corrente.
+        onChange(allIndices);
+    };
+
+    const verMesAtual = (e?: MouseEvent) => {
+        e?.stopPropagation();
         if (closeTimeoutRef.current) clearTimeout(closeTimeoutRef.current);
         const mesAtual = new Date().getMonth() + 1;
         isolarMes(mesAtual);
     };
 
     const getSelectedText = () => {
-        if (value.length === 0) return 'Todos os períodos';
+        if (value.length === 0) {
+            return usarMesesFechados ? 'Todos os períodos (só meses fechados)' : 'Todos os períodos';
+        }
+        if (periodosIguais(value, allIndices)) return 'Todos os meses (incl. mês corrente)';
+
         const contagens = years
             .map((y) => {
                 const n = value.filter((i) => data.monthly[i]?.year === y).length;
@@ -158,13 +161,15 @@ export function PeriodSelector({ label, value, data, onChange }: PeriodSelectorP
         return `${value.length} meses selecionados`;
     };
 
+    const mesEstaSelecionado = (idx: number) => selecionados.includes(idx);
+
     return (
         <div className="filter-group" style={{ position: 'relative' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <label style={{ marginBottom: 0 }}>
                     <TrendingUp size={12} style={{ marginRight: 4 }} /> {label}
                 </label>
-                {value.length > 0 && (
+                {!periodosIguais(value, allIndices) && value.length > 0 && (
                     <button
                         type="button"
                         onClick={(e) => {
@@ -172,6 +177,7 @@ export function PeriodSelector({ label, value, data, onChange }: PeriodSelectorP
                             onChange([]);
                         }}
                         className="mini-clear-btn"
+                        title="Limpar seleção (todos os períodos)"
                     >
                         <X size={10} />
                     </button>
@@ -208,54 +214,111 @@ export function PeriodSelector({ label, value, data, onChange }: PeriodSelectorP
                             overflowY: 'auto',
                         }}
                     >
-                        <div style={{ display: 'flex', gap: '6px', marginBottom: '8px' }}>
-                            <button
-                                type="button"
-                                onClick={selectUntilNow}
-                                style={{
-                                    flex: 1,
-                                    padding: '8px 10px',
-                                    borderRadius: '8px',
-                                    border: '1px solid rgba(99, 102, 241, 0.35)',
-                                    background: 'rgba(99, 102, 241, 0.12)',
-                                    color: 'var(--text-primary)',
-                                    fontSize: '0.72rem',
-                                    fontWeight: 600,
-                                    cursor: 'pointer',
-                                    fontFamily: 'inherit',
-                                }}
-                            >
-                                Meses até agora
-                            </button>
-                            <button
-                                type="button"
-                                onClick={verMesAtual}
-                                title="Filtra apenas o mês atual em todos os anos"
-                                style={{
-                                    flex: 1,
-                                    padding: '8px 10px',
-                                    borderRadius: '8px',
-                                    border: '1px solid rgba(16, 185, 129, 0.35)',
-                                    background: 'rgba(16, 185, 129, 0.12)',
-                                    color: 'var(--text-primary)',
-                                    fontSize: '0.72rem',
-                                    fontWeight: 600,
-                                    cursor: 'pointer',
-                                    fontFamily: 'inherit',
-                                }}
-                            >
-                                Mês atual
-                            </button>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginBottom: '8px' }}>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                                <button
+                                    type="button"
+                                    onClick={selectMesesFechados}
+                                    title="Só meses fechados, mesmo corte nos dois anos"
+                                    style={{
+                                        flex: 1,
+                                        padding: '8px 10px',
+                                        borderRadius: '8px',
+                                        border: periodosIguais(value, indicesMesesFechados(data))
+                                            ? '1px solid rgba(99, 102, 241, 0.65)'
+                                            : '1px solid rgba(99, 102, 241, 0.35)',
+                                        background: periodosIguais(value, indicesMesesFechados(data))
+                                            ? 'rgba(99, 102, 241, 0.22)'
+                                            : 'rgba(99, 102, 241, 0.12)',
+                                        color: 'var(--text-primary)',
+                                        fontSize: '0.72rem',
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        fontFamily: 'inherit',
+                                    }}
+                                >
+                                    Meses fechados
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={selectAteAgora}
+                                    title="Jan até o mês corrente (incluso), mesmo corte nos dois anos"
+                                    style={{
+                                        flex: 1,
+                                        padding: '8px 10px',
+                                        borderRadius: '8px',
+                                        border: periodosIguais(value, indicesAteMesAtual(data))
+                                            ? '1px solid rgba(245, 158, 11, 0.65)'
+                                            : '1px solid rgba(245, 158, 11, 0.35)',
+                                        background: periodosIguais(value, indicesAteMesAtual(data))
+                                            ? 'rgba(245, 158, 11, 0.22)'
+                                            : 'rgba(245, 158, 11, 0.12)',
+                                        color: 'var(--text-primary)',
+                                        fontSize: '0.72rem',
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        fontFamily: 'inherit',
+                                    }}
+                                >
+                                    Meses até agora
+                                </button>
+                            </div>
+                            <div style={{ display: 'flex', gap: '6px' }}>
+                                <button
+                                    type="button"
+                                    onClick={verMesAtual}
+                                    title="Filtra apenas o mês corrente em todos os anos"
+                                    style={{
+                                        flex: 1,
+                                        padding: '8px 10px',
+                                        borderRadius: '8px',
+                                        border: '1px solid rgba(16, 185, 129, 0.35)',
+                                        background: 'rgba(16, 185, 129, 0.12)',
+                                        color: 'var(--text-primary)',
+                                        fontSize: '0.72rem',
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        fontFamily: 'inherit',
+                                    }}
+                                >
+                                    Mês atual
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={selectTodosOsMeses}
+                                    title="Todos os meses de todos os anos, incl. corrente"
+                                    style={{
+                                        flex: 1,
+                                        padding: '8px 10px',
+                                        borderRadius: '8px',
+                                        border: periodosIguais(value, allIndices)
+                                            ? '1px solid rgba(148, 163, 184, 0.65)'
+                                            : '1px solid rgba(148, 163, 184, 0.35)',
+                                        background: periodosIguais(value, allIndices)
+                                            ? 'rgba(148, 163, 184, 0.22)'
+                                            : 'rgba(148, 163, 184, 0.12)',
+                                        color: 'var(--text-primary)',
+                                        fontSize: '0.72rem',
+                                        fontWeight: 600,
+                                        cursor: 'pointer',
+                                        fontFamily: 'inherit',
+                                    }}
+                                >
+                                    Todos os meses
+                                </button>
+                            </div>
                         </div>
                         <p
                             style={{
                                 margin: '0 2px 8px',
                                 fontSize: '0.62rem',
                                 color: 'var(--text-secondary)',
-                                lineHeight: 1.3,
+                                lineHeight: 1.35,
                             }}
                         >
-                            Dica: clique duplo num mês para ver só ele nos anos disponíveis.
+                            {usarMesesFechados
+                                ? `Com a opção ativa, entram só meses fechados (${rotuloCorteMesesFechados()}). Dica: duplo clique num mês para ver só ele nos anos disponíveis.`
+                                : 'Todos os meses entram nos cálculos, inclusive o mês corrente. Dica: duplo clique num mês para ver só ele nos anos disponíveis.'}
                         </p>
 
                         {years.map((y) => {
@@ -263,12 +326,9 @@ export function PeriodSelector({ label, value, data, onChange }: PeriodSelectorP
                                 .map((m, idx) => (m.year === y ? idx : -1))
                                 .filter((i) => i !== -1);
                             const yearAllSelected =
-                                isAllSelected ||
-                                (yearIndices.length > 0 && yearIndices.every((idx) => value.includes(idx)));
+                                yearIndices.length > 0 && yearIndices.every((idx) => mesEstaSelecionado(idx));
                             const yearSomeSelected =
-                                !isAllSelected &&
-                                yearIndices.some((idx) => value.includes(idx)) &&
-                                !yearAllSelected;
+                                yearIndices.some((idx) => mesEstaSelecionado(idx)) && !yearAllSelected;
                             const isExpanded = expandedYears.has(y);
 
                             return (
@@ -377,24 +437,20 @@ export function PeriodSelector({ label, value, data, onChange }: PeriodSelectorP
                                                                 fontSize: '0.7rem',
                                                                 borderRadius: '8px',
                                                                 border: '1px solid',
-                                                                borderColor:
-                                                                    isAllSelected || value.includes(idx)
-                                                                        ? 'transparent'
-                                                                        : 'var(--border)',
+                                                                borderColor: mesEstaSelecionado(idx)
+                                                                    ? 'transparent'
+                                                                    : 'var(--border)',
                                                                 cursor: 'pointer',
-                                                                background:
-                                                                    isAllSelected || value.includes(idx)
-                                                                        ? y === years[0]
-                                                                            ? 'var(--accent)'
-                                                                            : '#10b981'
-                                                                        : 'rgba(255,255,255,0.02)',
-                                                                color:
-                                                                    isAllSelected || value.includes(idx)
-                                                                        ? 'white'
-                                                                        : 'var(--text-secondary)',
+                                                                background: mesEstaSelecionado(idx)
+                                                                    ? y === years[years.length - 1]
+                                                                        ? 'var(--accent)'
+                                                                        : '#10b981'
+                                                                    : 'rgba(255,255,255,0.02)',
+                                                                color: mesEstaSelecionado(idx)
+                                                                    ? 'white'
+                                                                    : 'var(--text-secondary)',
                                                                 transition: 'all 0.2s',
-                                                                fontWeight:
-                                                                    isAllSelected || value.includes(idx) ? 600 : 500,
+                                                                fontWeight: mesEstaSelecionado(idx) ? 600 : 500,
                                                             }}
                                                         >
                                                             {m.name.split('/')[0]}

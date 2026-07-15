@@ -18,6 +18,23 @@ REGEX_BALCAO = re.compile(
     r"(?i)(?:cliente sem cadastro|cliente final|venda externa|consumidor.*|.*balc[aã]o.*)"
 )
 
+TAG_CLIENTE_BALCAO = "cliente_balcao"
+TAGS_CLIENTE_VALIDAS = frozenset({"inadimplente", "cliente_balcao", "encerrou_operacao"})
+
+
+def mascara_clientes_balcao(serie_clientes, clientes_balcao_extra=None):
+    """True onde o nome casa REGEX_BALCAO OU está na lista explícita (tags da empresa).
+
+    A lista extras só é aplicada quando o caller liga desconsiderar_balcao —
+    a tag apenas cadastra o nome; o checkbox decide se o filtro roda.
+    """
+    mascara = serie_clientes.astype(str).str.contains(REGEX_BALCAO, na=False)
+    extras = [nome for nome in (clientes_balcao_extra or []) if nome]
+    if extras:
+        mascara = mascara | serie_clientes.isin(extras)
+    return mascara
+
+
 MESES_PT = {
     "janeiro": 1, "fevereiro": 2, "março": 3, "marco": 3, "abril": 4,
     "maio": 5, "junho": 6, "julho": 7, "agosto": 8, "setembro": 9,
@@ -257,7 +274,8 @@ def top_fabricantes(df, n=20):
     return resultado
 
 
-def poder_compra_agregado(df, clientes_excluidos=None, cortes=(30.0, 50.0, 60.0), desconsiderar_balcao=False, top_n=None):
+def poder_compra_agregado(df, clientes_excluidos=None, cortes=(30.0, 50.0, 60.0), desconsiderar_balcao=False, top_n=None,
+                          clientes_balcao_extra=None):
     """
     Poder de compra "de pico" de cada cliente: média dos 3 meses-calendário
     de MAIOR receita (não a média corrida, nem o total agregado) — reflete a
@@ -284,7 +302,10 @@ def poder_compra_agregado(df, clientes_excluidos=None, cortes=(30.0, 50.0, 60.0)
         .rename("Poder_De_Compra")
     )
 
-    classificacao = classificar_clientes_agregado(df, clientes_excluidos, cortes, desconsiderar_balcao)
+    classificacao = classificar_clientes_agregado(
+        df, clientes_excluidos, cortes, desconsiderar_balcao,
+        clientes_balcao_extra=clientes_balcao_extra,
+    )
     resultado = classificacao[["Cliente", "Percentual_Acumulado", "Faixa"]].rename(columns={"Faixa": "Grupo"})
     resultado = resultado.merge(top3_por_cliente, on="Cliente", how="left")
     resultado["Poder_De_Compra"] = resultado["Poder_De_Compra"].fillna(0.0)
@@ -725,7 +746,8 @@ def impacto_financeiro_churn(df, erosao_df, granularidade="Mensal"):
 # Frequência e Renúncia (poder de compra)
 # ---------------------------------------------------------------------------
 
-def calcular_frequencia(df, granularidade="Mensal", campo="Cliente", desconsiderar_balcao=False):
+def calcular_frequencia(df, granularidade="Mensal", campo="Cliente", desconsiderar_balcao=False,
+                        clientes_balcao_extra=None):
     """
     Frequência de compra por (campo, período):
       - Frequencia_Simples: nº de meses-calendário distintos com receita > 0
@@ -745,11 +767,11 @@ def calcular_frequencia(df, granularidade="Mensal", campo="Cliente", desconsider
     frequencia = contagem_meses.reset_index().rename(columns={col_periodo: "Periodo"})
     frequencia["_ordem"] = frequencia["Periodo"].map(ordem_periodo)
     frequencia.sort_values([campo, "_ordem"], inplace=True)
-    
+
     if desconsiderar_balcao and campo == "Cliente":
-        mascara = frequencia[campo].str.contains(REGEX_BALCAO, na=False)
+        mascara = mascara_clientes_balcao(frequencia[campo], clientes_balcao_extra)
         frequencia.loc[mascara, "Frequencia_Simples"] = 0
-        
+
     frequencia["Frequencia_Acumulada"] = frequencia.groupby(campo)["Frequencia_Simples"].cumsum()
     frequencia.drop(columns=["_ordem"], inplace=True)
     frequencia.reset_index(drop=True, inplace=True)
@@ -798,7 +820,8 @@ def calcular_renuncia(df, granularidade="Mensal", campo="Cliente"):
 # ---------------------------------------------------------------------------
 
 def classificar_faixas(df, granularidade="Mensal", campo="Cliente", excluidos=None,
-                        cortes=(30.0, 50.0, 60.0), nomes_grupos=None, desconsiderar_balcao=False):
+                        cortes=(30.0, 50.0, 60.0), nomes_grupos=None, desconsiderar_balcao=False,
+                        clientes_balcao_extra=None):
     """
     Classifica entidades (clientes ou produtos) em faixas por representatividade
     acumulada no faturamento, período a período.
@@ -827,8 +850,8 @@ def classificar_faixas(df, granularidade="Mensal", campo="Cliente", excluidos=No
 
     resultados = []
     for periodo, grupo in base.groupby(col_periodo):
-        if desconsiderar_balcao and campo == "Cliente":
-            mascara_balcao = grupo[campo].str.contains(REGEX_BALCAO, na=False)
+        if campo == "Cliente" and desconsiderar_balcao:
+            mascara_balcao = mascara_clientes_balcao(grupo[campo], clientes_balcao_extra)
             grupo_normal = grupo[~mascara_balcao]
             grupo_balcao = grupo[mascara_balcao]
         else:
@@ -887,7 +910,11 @@ def classificar_faixas(df, granularidade="Mensal", campo="Cliente", excluidos=No
     else:
         classificado = pd.concat(resultados, ignore_index=True)
 
-    frequencia = calcular_frequencia(base, granularidade, campo, desconsiderar_balcao=desconsiderar_balcao)
+    frequencia = calcular_frequencia(
+        base, granularidade, campo,
+        desconsiderar_balcao=desconsiderar_balcao,
+        clientes_balcao_extra=clientes_balcao_extra,
+    )
     renuncia = calcular_renuncia(base, granularidade, campo)
 
     classificado = classificado.merge(frequencia, on=[campo, "Periodo"], how="left")
@@ -925,7 +952,7 @@ def _limitar_top_por_grupo(classificado, top_por_grupo):
 
 
 def classificar_abc(df, granularidade="Mensal", clientes_excluidos=None, cortes_clientes=(30.0, 50.0, 60.0),
-                     desconsiderar_balcao=False, top_clientes_por_grupo=5):
+                     desconsiderar_balcao=False, top_clientes_por_grupo=5, clientes_balcao_extra=None):
     """
     Classificação de clientes por representatividade no faturamento (ver
     classificar_faixas) — recorte "executivo" pro relatório final:
@@ -943,6 +970,7 @@ def classificar_abc(df, granularidade="Mensal", clientes_excluidos=None, cortes_
     classificado = classificar_faixas(
         df, granularidade, campo="Cliente", excluidos=clientes_excluidos,
         cortes=cortes_clientes, desconsiderar_balcao=desconsiderar_balcao,
+        clientes_balcao_extra=clientes_balcao_extra,
     )
     classificado = classificado.drop(columns=["Frequencia_Simples", "Frequencia_Acumulada"])
     return _limitar_top_por_grupo(classificado, top_clientes_por_grupo)
@@ -958,7 +986,8 @@ def classificar_produtos_por_receita(df, granularidade="Mensal", corte_percentua
                                cortes=(corte_percentual,), nomes_grupos=["Grupo 1"])
 
 
-def classificar_clientes_agregado(df, clientes_excluidos=None, cortes=(30.0, 50.0, 60.0), desconsiderar_balcao=False):
+def classificar_clientes_agregado(df, clientes_excluidos=None, cortes=(30.0, 50.0, 60.0), desconsiderar_balcao=False,
+                                  clientes_balcao_extra=None):
     """
     Classificação RÁPIDA (não por período) de cada cliente em um grupo, usando
     a receita agregada de todo o CSV como referência — pensada para a prévia
@@ -966,9 +995,9 @@ def classificar_clientes_agregado(df, clientes_excluidos=None, cortes=(30.0, 50.
     feita por classificar_faixas/classificar_abc).
 
     Se desconsiderar_balcao=True, clientes tipo "consumidor final"/"balcão"
-    (ver REGEX_BALCAO) ficam de fora do cálculo dos grupos e da curva
-    acumulada, mas continuam na lista com Faixa="Balcão" e o % real de
-    receita (não zerado) — só não entram na classificação Grupo 1/2/3/Demais.
+    (REGEX_BALCAO) e nomes em clientes_balcao_extra (tags da empresa) ficam
+    de fora do cálculo dos grupos. Com o flag desligado, todos entram —
+    a tag só cadastra o nome na lista do filtro.
 
     Retorna DataFrame: Cliente, Receita, Percentual_Individual,
     Percentual_Acumulado (NaN para linhas de Balcão), Faixa.
@@ -977,7 +1006,7 @@ def classificar_clientes_agregado(df, clientes_excluidos=None, cortes=(30.0, 50.
     base = df[~df["Cliente"].isin(excluidos)] if excluidos else df
 
     if desconsiderar_balcao:
-        mascara_balcao = base["Cliente"].str.contains(REGEX_BALCAO, na=False)
+        mascara_balcao = mascara_clientes_balcao(base["Cliente"], clientes_balcao_extra)
         base_normal = base[~mascara_balcao]
         base_balcao = base[mascara_balcao]
     else:
@@ -1016,7 +1045,7 @@ def classificar_clientes_agregado(df, clientes_excluidos=None, cortes=(30.0, 50.
         receita_balcao = base_balcao.groupby("Cliente")["Receita"].sum().sort_values(ascending=False).reset_index()
         receita_balcao.columns = ["Cliente", "Receita"]
         receita_balcao["Percentual_Individual"] = (receita_balcao["Receita"] / total * 100) if total > 0 else 0.0
-        receita_balcao["Percentual_Acumulado"] = float("nan")
+        receita_balcao["Percentual_Acumulado"] = None
         receita_balcao["Faixa"] = "Balcão"
         receita_balcao["Frequencia"] = 0
         resultado = pd.concat([receita_balcao, resultado], ignore_index=True)
@@ -1044,7 +1073,8 @@ def classificar_produtos_agregado(df, corte_percentual=80.0):
     return resultado
 
 
-def contar_clientes_por_grupo(df, clientes_excluidos=None, cortes=(30.0, 50.0, 60.0), desconsiderar_balcao=False):
+def contar_clientes_por_grupo(df, clientes_excluidos=None, cortes=(30.0, 50.0, 60.0), desconsiderar_balcao=False,
+                              clientes_balcao_extra=None):
     """
     Conta quantos clientes caem em cada grupo para os cortes informados
     (sem ajustar automaticamente), usando a receita agregada total como
@@ -1058,7 +1088,7 @@ def contar_clientes_por_grupo(df, clientes_excluidos=None, cortes=(30.0, 50.0, 6
     base = df[~df["Cliente"].isin(excluidos)] if excluidos else df
 
     if desconsiderar_balcao:
-        mascara_balcao = base["Cliente"].str.contains(REGEX_BALCAO, na=False)
+        mascara_balcao = mascara_clientes_balcao(base["Cliente"], clientes_balcao_extra)
         base_normal = base[~mascara_balcao]
     else:
         base_normal = base
@@ -1081,7 +1111,8 @@ def contar_clientes_por_grupo(df, clientes_excluidos=None, cortes=(30.0, 50.0, 6
 
 
 def sugerir_cortes_grupos(df, clientes_excluidos=None, cortes_iniciais=(30.0, 50.0, 60.0),
-                           max_por_grupo=10, passo=0.5, desconsiderar_balcao=False):
+                           max_por_grupo=10, passo=0.5, desconsiderar_balcao=False,
+                           clientes_balcao_extra=None):
     """
     Ajusta (reduz) os cortes percentuais cumulativos até que cada grupo não
     ultrapasse max_por_grupo clientes, usando a receita agregada total (soma
@@ -1095,7 +1126,7 @@ def sugerir_cortes_grupos(df, clientes_excluidos=None, cortes_iniciais=(30.0, 50
     base = df[~df["Cliente"].isin(excluidos)] if excluidos else df
 
     if desconsiderar_balcao:
-        mascara_balcao = base["Cliente"].str.contains(REGEX_BALCAO, na=False)
+        mascara_balcao = mascara_clientes_balcao(base["Cliente"], clientes_balcao_extra)
         base_normal = base[~mascara_balcao]
     else:
         base_normal = base
@@ -1128,6 +1159,31 @@ def sugerir_cortes_grupos(df, clientes_excluidos=None, cortes_iniciais=(30.0, 50
     contagens.append(int((percentual_acumulado > limite_inferior).sum()))
 
     return cortes, contagens
+
+
+def sugerir_corte_produtos(df, corte_inicial=80.0, max_por_grupo=20, passo=0.5):
+    """
+    Reduz o corte percentual cumulativo de produtos até o Grupo 1 (alto giro)
+    não ultrapassar max_por_grupo itens — mesmo espírito de sugerir_cortes_grupos.
+
+    Retorna (corte_ajustado, [qtd_grupo1, qtd_demais]).
+    """
+    receita_produto = df.groupby("descricao")["Receita"].sum().sort_values(ascending=False)
+    total = receita_produto.sum()
+    corte = float(corte_inicial)
+    if total <= 0 or receita_produto.empty:
+        return round(corte, 1), [0, 0]
+
+    percentual_acumulado = receita_produto.cumsum() / total * 100
+    while True:
+        quantidade = int((percentual_acumulado <= corte).sum())
+        if quantidade <= max_por_grupo or corte <= passo:
+            break
+        corte -= passo
+    corte = round(corte, 1)
+    qtd_grupo1 = int((percentual_acumulado <= corte).sum())
+    qtd_demais = int((percentual_acumulado > corte).sum())
+    return corte, [qtd_grupo1, qtd_demais]
 
 
 # ---------------------------------------------------------------------------
@@ -1346,7 +1402,8 @@ def gerar_analises_completas(df, granularidades, clientes_excluidos=None,
                               desconsiderar_balcao=False, excluir_periodo_atual=True,
                               top_n_produtos=None, reducao_minima_erosao=50.0,
                               queda_minima_alerta_rs=0.0, queda_minima_erosao_rs=0.0,
-                              reducao_minima_sem_venda=90.0, top_n_poder_compra=None):
+                              reducao_minima_sem_venda=90.0, top_n_poder_compra=None,
+                              clientes_balcao_extra=None):
     """
     Roda as análises solicitadas para cada granularidade escolhida.
 
@@ -1459,6 +1516,7 @@ def gerar_analises_completas(df, granularidades, clientes_excluidos=None,
             abc = classificar_abc(
                 df_periodo, granularidade, clientes_excluidos, cortes_clientes,
                 desconsiderar_balcao=desconsiderar_balcao, top_clientes_por_grupo=None,
+                clientes_balcao_extra=clientes_balcao_extra,
             )
             if precisa("abc"):
                 analises["abc"] = _limitar_top_por_grupo(abc, 5)
@@ -1468,6 +1526,7 @@ def gerar_analises_completas(df, granularidades, clientes_excluidos=None,
             analises["poder_compra_clientes"] = poder_compra_agregado(
                 df_periodo, clientes_excluidos, cortes_clientes,
                 desconsiderar_balcao=desconsiderar_balcao, top_n=top_n_poder_compra,
+                clientes_balcao_extra=clientes_balcao_extra,
             )
 
         if precisa("abc_produtos"):

@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
 import { formatCurrency } from '../utils/formatters';
 import type { TrendItem, ProductStats } from '../types/dashboard';
 
@@ -6,12 +7,66 @@ import type { TrendItem, ProductStats } from '../types/dashboard';
 // Types & Interfaces
 // ==========================================
 
+type ProductSortKey = 'name' | 'descricao' | 'avg24' | 'avg25' | 'delta';
+type SortDir = 'asc' | 'desc';
+
+interface ProductSortState {
+    key: ProductSortKey;
+    dir: SortDir;
+}
+
+interface SortableThProps {
+    label: string;
+    column: ProductSortKey;
+    sort: ProductSortState;
+    onSort: (column: ProductSortKey) => void;
+    padding: string;
+    align?: 'left' | 'right';
+}
+
+function SortableTh({ label, column, sort, onSort, padding, align = 'left' }: SortableThProps) {
+    const isActive = sort.key === column;
+    const Icon = !isActive ? ArrowUpDown : sort.dir === 'asc' ? ArrowDown : ArrowUp;
+
+    return (
+        <th style={{ padding, textAlign: align }}>
+            <button
+                type="button"
+                className="breakdown-sort-btn"
+                onClick={() => onSort(column)}
+                aria-sort={isActive ? (sort.dir === 'asc' ? 'ascending' : 'descending') : 'none'}
+            >
+                <span>{label}</span>
+                <Icon size={12} aria-hidden="true" />
+            </button>
+        </th>
+    );
+}
+
+function productDelta(p: ProductStats): number {
+    return p.avg24 ? ((p.avg25 - p.avg24) / p.avg24) * 100 : 0;
+}
+
+function sortProducts(items: ProductStats[], sort: ProductSortState): ProductStats[] {
+    const sorted = [...items];
+    sorted.sort((a, b) => {
+        let cmp = 0;
+        if (sort.key === 'name') cmp = a.name.localeCompare(b.name, 'pt-BR', { numeric: true, sensitivity: 'base' });
+        else if (sort.key === 'descricao') cmp = a.descricao.localeCompare(b.descricao, 'pt-BR', { sensitivity: 'base' });
+        else if (sort.key === 'avg24') cmp = a.avg24 - b.avg24;
+        else if (sort.key === 'avg25') cmp = a.avg25 - b.avg25;
+        else cmp = productDelta(a) - productDelta(b);
+        return sort.dir === 'asc' ? cmp : -cmp;
+    });
+    return sorted;
+}
+
 interface BreakdownSectionProps {
     topClients: TrendItem[];
     topMfrs: TrendItem[];
     topDescs: TrendItem[];
     topProducts: ProductStats[];
-    isDescFiltered: boolean;
+    showProductView: boolean;
     selectedDescName?: string;
     labelA: string;
     labelB: string;
@@ -44,13 +99,13 @@ function TrendCard({ title, items, barColor, barGlow, isMobile }: TrendCardProps
                     paddingRight: '8px'
                 }}
             >
-                {items.map((item, i) => {
+                {items.map((item) => {
                     const totalRevenue = item.rev24 + item.rev25;
                     const maxTotal = items[0] ? (items[0].rev24 + items[0].rev25) : 1;
                     const percentChange = (item.rev24 && item.rev24 > 0) ? ((item.rev25 - item.rev24) / item.rev24) * 100 : 0;
                     const isPositive = percentChange >= 0;
                     return (
-                        <div key={i}>
+                        <div key={item.id}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: isMobile ? '0.7rem' : '0.8rem' }}>
                                 <span style={{ color: 'var(--text-secondary)', fontWeight: 500, maxWidth: isMobile ? '120px' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
                                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -90,12 +145,26 @@ export function BreakdownSection({
     topMfrs,
     topDescs,
     topProducts,
-    isDescFiltered,
+    showProductView,
     selectedDescName,
     labelA,
     labelB
 }: BreakdownSectionProps) {
     const [isMobile, setIsMobile] = useState(window.innerWidth <= 1280);
+    const [productSort, setProductSort] = useState<ProductSortState>({ key: 'avg25', dir: 'desc' });
+
+    const handleProductSort = (column: ProductSortKey) => {
+        setProductSort(prev => (
+            prev.key === column
+                ? { key: column, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+                : { key: column, dir: column === 'name' || column === 'descricao' ? 'asc' : 'desc' }
+        ));
+    };
+
+    const sortedProducts = useMemo(
+        () => sortProducts(topProducts, productSort),
+        [topProducts, productSort],
+    );
 
     // ==========================================
     // Effects
@@ -113,34 +182,39 @@ export function BreakdownSection({
     // Sub-renders (Conditionals)
     // ==========================================
 
-    if (isDescFiltered) {
+    if (showProductView) {
+        const title = selectedDescName
+            ? `Performance de Produtos em ${selectedDescName}`
+            : 'Performance por Produto (códigos internos)';
+
         return (
             <div className="glass-card" style={{ gridColumn: 'span 2' }}>
-                <h3 style={{ color: 'white', marginBottom: '1.5rem', fontSize: isMobile ? '1rem' : '1.25rem' }}>Performance de Produtos em {selectedDescName}</h3>
+                <h3 style={{ color: 'white', marginBottom: '1.5rem', fontSize: isMobile ? '1rem' : '1.25rem' }}>{title}</h3>
                 <div className="custom-scrollbar" style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: isMobile ? '0.75rem' : '0.85rem' }}>
                         <thead>
-                            <tr style={{ color: 'var(--text-secondary)', textAlign: 'left', borderBottom: '1px solid var(--border)' }}>
-                                <th style={{ padding }}>Referência / Produto</th>
-                                <th style={{ padding }}>{labelA || "Período A"}</th>
-                                <th style={{ padding }}>{labelB || "Período B"}</th>
-                                <th style={{ padding }}>Var.</th>
+                            <tr style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--border)' }}>
+                                <SortableTh label="Código de referência" column="name" sort={productSort} onSort={handleProductSort} padding={padding} />
+                                <SortableTh label="Descrição" column="descricao" sort={productSort} onSort={handleProductSort} padding={padding} />
+                                <SortableTh label={labelA || 'Período A'} column="avg24" sort={productSort} onSort={handleProductSort} padding={padding} align="right" />
+                                <SortableTh label={labelB || 'Período B'} column="avg25" sort={productSort} onSort={handleProductSort} padding={padding} align="right" />
+                                <SortableTh label="Var." column="delta" sort={productSort} onSort={handleProductSort} padding={padding} align="right" />
                             </tr>
                         </thead>
                         <tbody>
-                            {topProducts.map((p, i) => {
-                                const delta = p.avg24 ? ((p.avg25 - p.avg24) / p.avg24) * 100 : 0;
+                            {sortedProducts.map((p) => {
+                                const delta = productDelta(p);
                                 return (
-                                    <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                    <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
                                         <td style={{ padding, color: 'white', fontWeight: 500 }}>
-                                            <div style={{ display: 'flex', flexDirection: 'column' }}>
-                                                <span style={{ maxWidth: isMobile ? '120px' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
-                                                <span style={{ fontSize: '0.65rem', color: 'var(--text-secondary)' }}>Ref: {p.id}</span>
-                                            </div>
+                                            <span style={{ maxWidth: isMobile ? '100px' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{p.name}</span>
                                         </td>
-                                        <td style={{ padding, color: 'var(--text-secondary)' }}>{formatCurrency(p.avg24)}</td>
-                                        <td style={{ padding, color: 'var(--text-secondary)' }}>{formatCurrency(p.avg25)}</td>
-                                        <td style={{ padding }}>
+                                        <td style={{ padding, color: 'var(--text-secondary)', maxWidth: isMobile ? '140px' : '280px' }}>
+                                            <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }} title={p.descricao}>{p.descricao}</span>
+                                        </td>
+                                        <td style={{ padding, color: 'var(--text-secondary)', textAlign: 'right' }}>{formatCurrency(p.avg24)}</td>
+                                        <td style={{ padding, color: 'var(--text-secondary)', textAlign: 'right' }}>{formatCurrency(p.avg25)}</td>
+                                        <td style={{ padding, textAlign: 'right' }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                                 <span style={{ color: delta >= 0 ? '#10b981' : '#f43f5e', fontWeight: 700 }}>
                                                     {delta > 0 ? '+' : ''}{delta > 1000 ? '1k%+' : delta.toFixed(delta > 100 ? 0 : 1)}%
