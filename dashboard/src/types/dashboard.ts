@@ -106,13 +106,21 @@ export interface DashboardStats {
     chartHasB?: boolean;
     lenA: number;
     lenB: number;
-    /** true quando a opção "meses fechados" está ativa nos cálculos */
-    usarMesesFechados?: boolean;
-    periodoDescricao?: string;
-    getStatsForPeriod: (targetPeriod: number[]) => {
-        chartData: ChartPoint[];
-        labelA: string;
-        labelB: string;
-        isTrend: boolean;
-    };
+  /** Granularidade usada nos cálculos dos cards. */
+  granularidade?: GranularidadeDash;
+  /** Ex.: "mês" | "trimestre" — para títulos de média. */
+  unidadePeriodo?: string;
+  /** Performance geral = média das taxas YoY por bucket (undefined em modo tendência). */
+  performancePct?: number;
+  /** true quando a opção "meses fechados" está ativa nos cálculos */
+  usarMesesFechados?: boolean;
+  periodoDescricao?: string;
+  getStatsForPeriod: (targetPeriod: number[]) => {
+    chartData: ChartPoint[];
+    labelA: string;
+    labelB: string;
+    isTrend: boolean;
+  };
 }
+
+export type GranularidadeDash = 'Mensal' | 'Trimestral' | 'Semestral' | 'Anual';

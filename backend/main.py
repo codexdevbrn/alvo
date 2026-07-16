@@ -527,16 +527,13 @@ def _rede_seguranca_demais(frame: pd.DataFrame, max_demais: int = MAX_ITENS_DEMA
     return pd.concat(partes, ignore_index=True) if partes else frame.iloc[0:0]
 
 
-def _itens_clientes_previa(
-    classificado: pd.DataFrame,
-    omitir_balcao: bool = False,
-) -> list[dict]:
+def _itens_clientes_previa(classificado: pd.DataFrame) -> list[dict]:
+    """Serializa a prévia. Clientes Faixa=Balcão entram na lista (visíveis, fora dos
+    cortes ABC); o frontend marca a checkbox como desmarcada quando
+    desconsiderar_balcao está ativo."""
     if classificado.empty:
         return []
     frame = classificado[["Cliente", "Receita", "Percentual_Individual", "Percentual_Acumulado", "Faixa"]].copy()
-    if omitir_balcao:
-        # Desconsiderar = não listar na prévia (já ficam fora dos cortes/grupos).
-        frame = frame[frame["Faixa"] != "Balcão"]
     if frame.empty:
         return []
     frame = frame.sort_values("Receita", ascending=False)
@@ -618,7 +615,7 @@ def _previa_grupos_resposta(
     return {
         "cortes_clientes": cortes,
         "grupos": _contagens_para_grupos(cortes, contagens),
-        "itens": _itens_clientes_previa(classificado, omitir_balcao=desconsiderar_balcao),
+        "itens": _itens_clientes_previa(classificado),
     }
 
 

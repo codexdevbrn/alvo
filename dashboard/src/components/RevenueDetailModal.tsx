@@ -3,7 +3,7 @@ import { X, DollarSign, ShoppingCart, Users } from 'lucide-react';
 import { PeriodSelector } from './PeriodSelector';
 import { resolverPeriodoEfetivo } from '../utils/periodoFechado';
 import { HistoryChart } from './HistoryChart';
-import type { DashboardData, DashboardStats } from '../types/dashboard';
+import type { DashboardData, DashboardStats, GranularidadeDash } from '../types/dashboard';
 
 // ==========================================
 // Types & Interfaces
@@ -25,6 +25,7 @@ interface RevenueDetailModalProps {
     formatNumber: (value: number) => string;
     period: number[]; // main specific period for fallback
     usarMesesFechados: boolean;
+    granularidade?: GranularidadeDash;
 }
 
 // ==========================================
@@ -47,6 +48,7 @@ export function RevenueDetailModal({
     formatNumber,
     period,
     usarMesesFechados,
+    granularidade = 'Mensal',
 }: RevenueDetailModalProps) {
     const [isMobile, setIsMobile] = useState(window.innerWidth <= 768);
 
@@ -143,6 +145,7 @@ export function RevenueDetailModal({
                                         data={data}
                                         onChange={setModalPeriod}
                                         usarMesesFechados={usarMesesFechados}
+                                        granularidade={granularidade}
                                     />
                                 </div>
                             </div>
@@ -160,6 +163,8 @@ export function RevenueDetailModal({
                                         data,
                                         modalPeriod.length > 0 ? modalPeriod : period,
                                         usarMesesFechados,
+                                        new Date(),
+                                        granularidade,
                                     );
                                     const selectedYears = Array.from(new Set(periodIndices.map(idx => data.monthly[idx].year))).sort((a, b) => a - b);
                                     const isTrend = periodIndices.length > 0 && selectedYears.length === 1;

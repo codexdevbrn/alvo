@@ -292,9 +292,45 @@ h3 {
 
 .filters-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
   gap: 0.75rem;
   align-items: end;
+}
+
+.granularidade-segmented {
+  display: flex;
+  width: min(100%, 360px);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.granularidade-seg-btn {
+  flex: 1;
+  padding: 0.45rem 0.35rem;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.granularidade-seg-btn + .granularidade-seg-btn {
+  border-left: 1px solid var(--border);
+}
+
+.granularidade-seg-btn.is-active {
+  background: rgba(99, 102, 241, 0.28);
+  color: white;
+}
+
+.granularidade-seg-btn:hover:not(.is-active) {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
 }
 
 .filters-options-bar {
@@ -305,6 +341,27 @@ h3 {
   gap: 0.65rem;
   padding-top: 0.65rem;
   border-top: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.granularidade-options {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex: 1 1 auto;
+  justify-content: center;
+  min-width: 0;
+}
+
+.granularidade-options-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
 }
 
 .filters-options-right {

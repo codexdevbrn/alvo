@@ -44,16 +44,7 @@ export function PreviaClientesTable({
   const [menu, setMenu] = useState<MenuTags | null>(null);
   const [salvandoTag, setSalvandoTag] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
-  const lista = useMemo(() => {
-    const base = itens ?? [];
-    if (!desconsiderarBalcao) return base;
-    // Espelho do backend: balcão (faixa ou tag) não entra na prévia considerada.
-    return base.filter((item) => {
-      if (item.grupo === 'Balcão') return false;
-      const tags = tagsPorCliente[item.cliente] ?? [];
-      return !tags.includes('cliente_balcao');
-    });
-  }, [itens, desconsiderarBalcao, tagsPorCliente]);
+  const lista = useMemo(() => itens ?? [], [itens]);
 
   const gruposDisponiveis = useMemo(() => {
     const nomes = new Set(lista.map((item) => item.grupo));
@@ -69,10 +60,24 @@ export function PreviaClientesTable({
     });
   }, [lista, busca, grupoFiltro]);
 
+  /** Com “desconsiderar balcão”, faixa Balcão fica fora das métricas (checkbox off). */
+  const estaExcluido = (item: ItemClientePrevia) =>
+    excluidos.has(item.cliente) || (desconsiderarBalcao && item.grupo === 'Balcão');
+
   const consideradosNoFiltro = useMemo(
-    () => itensFiltrados.filter((item) => !excluidos.has(item.cliente)).length,
-    [itensFiltrados, excluidos],
+    () =>
+      itensFiltrados.filter((item) => {
+        if (excluidos.has(item.cliente)) return false;
+        if (desconsiderarBalcao && item.grupo === 'Balcão') return false;
+        return true;
+      }).length,
+    [itensFiltrados, excluidos, desconsiderarBalcao],
   );
+
+  const qtdBalcaoFora = useMemo(() => {
+    if (!desconsiderarBalcao) return 0;
+    return lista.filter((item) => item.grupo === 'Balcão' && !excluidos.has(item.cliente)).length;
+  }, [lista, desconsiderarBalcao, excluidos]);
 
   const tagsDoMenu = menu ? (tagsPorCliente[menu.cliente] ?? []) : [];
 
@@ -188,7 +193,8 @@ export function PreviaClientesTable({
               </tr>
             )}
             {itensFiltrados.map((item) => {
-              const excluido = excluidos.has(item.cliente);
+              const forcaBalcao = desconsiderarBalcao && item.grupo === 'Balcão';
+              const excluido = estaExcluido(item);
               const tags = tagsPorCliente[item.cliente] ?? [];
               return (
                 <tr key={item.cliente} className={excluido ? 'is-excluido' : undefined}>
@@ -197,7 +203,12 @@ export function PreviaClientesTable({
                       <input
                         type="checkbox"
                         checked={!excluido}
-                        onChange={() => onToggle(item.cliente)}
+                        disabled={forcaBalcao}
+                        title={forcaBalcao ? 'Cliente balcão — fora dos cálculos enquanto “Desconsiderar clientes balcão” estiver marcado' : undefined}
+                        onChange={() => {
+                          if (forcaBalcao) return;
+                          onToggle(item.cliente);
+                        }}
                       />
                     </label>
                   </td>
@@ -239,9 +250,11 @@ export function PreviaClientesTable({
       <p className="analisador-hint">
         {consideradosNoFiltro} de {itensFiltrados.length} cliente(s) considerado(s) nas métricas
         {itensFiltrados.length !== lista.length && ` · base completa: ${lista.length} cliente(s)`}
-        {excluidos.size > 0 && ` · ${excluidos.size} excluído(s) das métricas no total`}
+        {(excluidos.size > 0 || qtdBalcaoFora > 0) &&
+          ` · ${excluidos.size + qtdBalcaoFora} excluído(s) das métricas no total`}
+        {desconsiderarBalcao && qtdBalcaoFora > 0 && ` · ${qtdBalcaoFora} no grupo Balcão`}
         {empresa
-          ? ' · Clique no nome para tags. Com “Desconsiderar clientes balcão”, tagged/regex saem da prévia.'
+          ? ' · Clique no nome para tags. Com “Desconsiderar clientes balcão”, eles ficam no grupo Balcão com a inclusão desmarcada e fora dos cálculos/relatórios.'
           : ' · Selecione uma empresa para editar tags.'}
       </p>
 

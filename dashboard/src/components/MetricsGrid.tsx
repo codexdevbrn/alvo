@@ -19,11 +19,15 @@ interface MetricsGridProps {
 export function MetricsGrid({ stats, onRevenueClick }: MetricsGridProps) {
     if (!stats) return null;
 
-    const { statsA, statsB, singleYearMode, labelA, labelB, yearLabel } = stats;
+    const { statsA, statsB, singleYearMode, labelA, labelB, yearLabel, unidadePeriodo } = stats;
     const showTrend = !!labelA;
+    const lenA = stats.lenA || 1;
+    const lenB = stats.lenB || 1;
+    const unidade = unidadePeriodo || 'mês';
 
-    const revA = statsA.rawRev || 0;
-    const revB = statsB.rawRev || 0;
+    // YoY multi-ano: média por bucket da grain (valores mudam ao trocar Mensal/T/S/Anual).
+    const revA = singleYearMode ? (statsA.rawRev || 0) : ((statsA.rawRev || 0) / lenA);
+    const revB = singleYearMode ? (statsB.rawRev || 0) : ((statsB.rawRev || 0) / lenB);
     const revTotal = stats.statsTotal?.rawRev || 0;
     const revAvg = stats.statsTotal?.rev || 0;
 
@@ -34,6 +38,8 @@ export function MetricsGrid({ stats, onRevenueClick }: MetricsGridProps) {
         const avgA = statsA.rev || 0;
         const avgB = statsB.rev || 0;
         trendPct = avgA > 0 ? ((avgB - avgA) / avgA) * 100 : 0;
+    } else if (typeof stats.performancePct === 'number') {
+        trendPct = stats.performancePct;
     }
 
     // ==========================================
@@ -46,6 +52,14 @@ export function MetricsGrid({ stats, onRevenueClick }: MetricsGridProps) {
         return formatted;
     };
 
+    const tituloDesempenho = singleYearMode
+        ? `Receita Total (${yearLabel})`
+        : `Desempenho / ${unidade}`;
+
+    const tituloReceita = singleYearMode
+        ? `Média de Receita (${yearLabel})`
+        : `Receita média / ${unidade} (${labelB})`;
+
     // ==========================================
     // Render
     // ==========================================
@@ -53,7 +67,7 @@ export function MetricsGrid({ stats, onRevenueClick }: MetricsGridProps) {
     return (
         <div className="stat-grid">
             <StatCard
-                title={singleYearMode ? `Receita Total (${yearLabel})` : "Desempenho em Receita"}
+                title={tituloDesempenho}
                 value={singleYearMode ? formatCurrency(revTotal) : formatPerformance(trendValYoy)}
                 icon={DollarSign}
                 trendUp={singleYearMode ? true : trendValYoy >= 0}
@@ -62,7 +76,7 @@ export function MetricsGrid({ stats, onRevenueClick }: MetricsGridProps) {
             />
 
             <StatCard
-                title={singleYearMode ? `Média de Receita (${yearLabel})` : `Receita Total (${labelB})`}
+                title={tituloReceita}
                 value={formatCurrency(singleYearMode ? revAvg : revB)}
                 icon={singleYearMode ? TrendingUp : DollarSign}
                 useTrendColor={false}

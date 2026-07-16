@@ -162,7 +162,7 @@ function chartMargin(isMobile: boolean) {
     return { top: 28, right: isMobile ? 36 : 52, left: -20, bottom: 12 };
 }
 
-const CUTOFF_CHART_LABEL = 'Último mês considerado para os cálculos';
+const CUTOFF_CHART_LABEL = 'Último período considerado para os cálculos';
 
 interface CutoffDisplay {
     x: string;

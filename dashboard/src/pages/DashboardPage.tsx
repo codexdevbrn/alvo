@@ -10,9 +10,26 @@ import { DashboardHeader } from '../components/DashboardHeader';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { obterSummaryEmpresa } from '../api/client';
 import { formatCurrency, formatNumber } from '../utils/formatters';
-import { descricaoPeriodoPadrao, abrevUltimoMesFechado, resolverPeriodoEfetivo } from '../utils/periodoFechado';
-import type { AggregateResult, ChartPoint, DashboardData, ProductStats, Row, TrendItem } from '../types/dashboard';
+import { descricaoPeriodoPadrao, mesDeRotulo, resolverPeriodoEfetivo, rotuloCorteFechadoParaGrafico } from '../utils/periodoFechado';
+import {
+  GRANULARIDADES_DASH,
+  countBucketsInIndices,
+  mediaTaxaYoYPorBucket,
+  remapPeriodoParaGranularidade,
+  rotuloUnidade,
+} from '../utils/granularidade';
+import {
+  buildComparisonChartData,
+  buildTrendChartData,
+  rotulosTendencia,
+} from '../utils/chartGranularidade';
+import type { AggregateResult, ChartPoint, DashboardData, GranularidadeDash, ProductStats, Row, TrendItem } from '../types/dashboard';
 import '../index.css';
+
+function parseGranularidade(raw: string | null): GranularidadeDash {
+  if (raw && (GRANULARIDADES_DASH as string[]).includes(raw)) return raw as GranularidadeDash;
+  return 'Mensal';
+}
 
 // ==========================================
 // Period window helpers
@@ -36,6 +53,13 @@ function calcPeriodWindows(data: DashboardData, targetPeriod: number[]) {
       if (m.year === prevYear && lastYear !== prevYear) pA.push(idx);
       if (m.year === lastYear) pB.push(idx);
     });
+    // YoY justo: só meses (1–12) presentes nos dois anos — evita 2025 com meses extras.
+    if (lastYear !== prevYear && pA.length > 0 && pB.length > 0) {
+      const mesesB = new Set(
+        pB.map((idx) => mesDeRotulo(data.monthly[idx]?.name ?? '')).filter((m) => m > 0),
+      );
+      pA = pA.filter((idx) => mesesB.has(mesDeRotulo(data.monthly[idx]?.name ?? '')));
+    }
   } else {
     const sortedPeriod = [...targetPeriod].sort((a, b) => a - b);
     const totalSelected = sortedPeriod.length;
@@ -50,65 +74,6 @@ function calcPeriodWindows(data: DashboardData, targetPeriod: number[]) {
   }
 
   return { pA, pB, isTrendMode, yearsInSelection, availableYears };
-}
-
-function buildComparisonChartData(
-  data: DashboardData,
-  populationRows: Row[],
-  pA: number[],
-  pB: number[],
-  statsA: AggregateResult,
-  statsB: AggregateResult,
-): ChartPoint[] {
-  const pASet = new Set(pA);
-  const pBSet = new Set(pB);
-  const monthMap: Record<string, {
-    revenueA: number | null; revenueB: number | null;
-    mfrsA: number | null; mfrsB: number | null;
-    descsA: number | null; descsB: number | null;
-    cntA: number | null; cntB: number | null;
-    clientsA: number | null; clientsB: number | null;
-  }> = {};
-
-  const emptyMonth = () => ({
-    revenueA: null, revenueB: null,
-    mfrsA: null, mfrsB: null,
-    descsA: null, descsB: null,
-    cntA: null, cntB: null,
-    clientsA: null, clientsB: null,
-  });
-
-  [...pA, ...pB].forEach(idx => {
-    const m = data.monthly[idx];
-    if (!m) return;
-    const mName = m.name.split('/')[0];
-    if (!monthMap[mName]) monthMap[mName] = emptyMonth();
-
-    const node = statsA.monthlyNodes[idx] || statsB.monthlyNodes[idx];
-    if (node) {
-      if (pASet.has(idx)) {
-        monthMap[mName].revenueA = (monthMap[mName].revenueA ?? 0) + node.rev;
-        monthMap[mName].mfrsA = (monthMap[mName].mfrsA ?? 0) + node.mfrs.size;
-        monthMap[mName].descsA = (monthMap[mName].descsA ?? 0) + node.descs.size;
-        let kCount = 0;
-        populationRows.forEach(r => { if (r[0] === idx) { kCount++; } });
-        monthMap[mName].cntA = kCount;
-        monthMap[mName].clientsA = node.clients.size;
-      }
-      if (pBSet.has(idx)) {
-        monthMap[mName].revenueB = (monthMap[mName].revenueB ?? 0) + node.rev;
-        monthMap[mName].mfrsB = (monthMap[mName].mfrsB ?? 0) + node.mfrs.size;
-        monthMap[mName].descsB = (monthMap[mName].descsB ?? 0) + node.descs.size;
-        let kCount = 0;
-        populationRows.forEach(r => { if (r[0] === idx) { kCount++; } });
-        monthMap[mName].cntB = kCount;
-        monthMap[mName].clientsB = node.clients.size;
-      }
-    }
-  });
-
-  const uniqueOrder = ["jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"];
-  return uniqueOrder.filter(m => monthMap[m]).map(m => ({ name: m, ...monthMap[m] }));
 }
 
 // ==========================================
@@ -144,8 +109,12 @@ export default function DashboardPage() {
     const v = localStorage.getItem('alvo_meses_fechados');
     return v === null ? true : v === 'true';
   });
+  const [granularidade, setGranularidade] = useState<GranularidadeDash>(() =>
+    parseGranularidade(localStorage.getItem('alvo_granularidade')),
+  );
   // Cálculos dos cards/breakdowns seguem em transition; o gráfico só ganha/perde a linha de corte.
   const [computeUsarMesesFechados, setComputeUsarMesesFechados] = useState(usarMesesFechados);
+  const [computeGranularidade, setComputeGranularidade] = useState(granularidade);
   const chartSnapshotRef = useRef<{
     key: string;
     chartData: ChartPoint[];
@@ -197,6 +166,12 @@ export default function DashboardPage() {
     });
   }, [usarMesesFechados]);
 
+  useEffect(() => {
+    startComputeTransition(() => {
+      setComputeGranularidade(granularidade);
+    });
+  }, [granularidade]);
+
   const filtersSettled =
     computeFilters.client === client &&
     computeFilters.mfr === mfr &&
@@ -221,8 +196,9 @@ export default function DashboardPage() {
     localStorage.setItem('alvo_period', JSON.stringify(period));
     localStorage.setItem('alvo_period_modal', JSON.stringify(modalPeriod));
     localStorage.setItem('alvo_meses_fechados', String(usarMesesFechados));
+    localStorage.setItem('alvo_granularidade', granularidade);
     localStorage.setItem('alvo_visao_detalhada', String(visaoDetalhada));
-  }, [client, mfr, desc, store, severity, period, modalPeriod, usarMesesFechados, visaoDetalhada]);
+  }, [client, mfr, desc, store, severity, period, modalPeriod, usarMesesFechados, granularidade, visaoDetalhada]);
 
   // Carrega os dados: summary.json estático (padrão) ou o summary processado
   // pelo backend para a empresa selecionada. A primeira chamada por empresa
@@ -357,7 +333,16 @@ export default function DashboardPage() {
   const clearFilters = () => {
     setClient(-1); setMfr(-1); setDesc(-1); setStore(-1); setPeriod([]); setSeverity(-1);
     setUsarMesesFechados(true);
+    setGranularidade('Mensal');
     setVisaoDetalhada(false);
+  };
+
+  const handleGranularidadeChange = (nova: GranularidadeDash) => {
+    if (nova === granularidade) return;
+    setGranularidade(nova);
+    if (data && period.length > 0) {
+      setPeriod(remapPeriodoParaGranularidade(data, period, nova));
+    }
   };
 
   // ==========================================
@@ -374,8 +359,8 @@ export default function DashboardPage() {
     const store = computeFilters.store;
     const severity = computeFilters.severity;
     const periodoManual = computeFilters.period;
-    const period = resolverPeriodoEfetivo(data, periodoManual, computeUsarMesesFechados);
-    const periodChart = resolverPeriodoEfetivo(data, periodoManual, false);
+    const period = resolverPeriodoEfetivo(data, periodoManual, computeUsarMesesFechados, new Date(), computeGranularidade);
+    const periodChart = resolverPeriodoEfetivo(data, periodoManual, false, new Date(), computeGranularidade);
 
     const { pA, pB, isTrendMode, yearsInSelection, availableYears } = calcPeriodWindows(data, period);
     const {
@@ -430,14 +415,14 @@ export default function DashboardPage() {
         });
 
         const vClients = new Set<number>();
-        const lenA = refPA.length || 1;
-        const lenB = refPB.length || 1;
+        const lenA = countBucketsInIndices(data, refPA, computeGranularidade) || 1;
+        const lenB = countBucketsInIndices(data, refPB, computeGranularidade) || 1;
 
         Object.entries(perf).forEach(([cId, s]) => {
           // Only clients with baseline sales (previous year) can have dropped
           if (s.vA <= 0) return;
 
-          // Compare Average Monthly Revenue of New Year vs Old Year
+          // Compara receita média por unidade da granularidade (mês/trimestre/…)
           const valA = s.vA / lenA;
           const valB = s.vB / lenB;
           const diff = ((valB / valA) - 1) * 100;
@@ -501,7 +486,7 @@ export default function DashboardPage() {
         if (periodSet.has(r[0])) clients_all.add(r[2]);
       }
 
-      const len = targetPeriod.length || 1;
+      const len = countBucketsInIndices(data, targetPeriod, computeGranularidade) || 1;
       const useAvg = forceAverage ?? (targetPeriod.length > 0 && Array.from(new Set(targetPeriod.map(idx => data.monthly[idx]?.year).filter(y => y !== undefined))).length === 1);
 
       return {
@@ -529,35 +514,35 @@ export default function DashboardPage() {
     let chartData: ChartPoint[] = [];
 
     if (!isTrendModeChart) {
-      chartData = buildComparisonChartData(data, populationRows, pAChart, pBChart, statsAChart, statsBChart);
+      chartData = buildComparisonChartData(
+        data, populationRows, pAChart, pBChart, statsAChart, statsBChart, computeGranularidade,
+      );
     } else {
-      chartData = [...periodChart].sort((a, b) => a - b).map(idx => {
-        const cNodes = statsTotalChart.monthlyNodes[idx];
-        const isA = pAChartSet.has(idx);
-        const m = data.monthly[idx];
-        return {
-          name: m?.name || '?',
-          revenueA: isA ? (cNodes?.rev || 0) : null,
-          revenueB: (cNodes?.rev || 0),
-          cntA: isA ? (cNodes?.cnt || 0) : null,
-          cntB: (cNodes?.cnt || 0),
-          clientsA: isA ? (cNodes?.clients.size || 0) : null,
-          clientsB: (cNodes?.clients.size || 0)
-        };
-      });
+      chartData = buildTrendChartData(
+        data, periodChart, pAChartSet, statsTotalChart, computeGranularidade,
+      );
     }
 
+    const bucketsA = countBucketsInIndices(data, pA, computeGranularidade);
+    const bucketsB = countBucketsInIndices(data, pB, computeGranularidade);
+    const bucketsAChart = countBucketsInIndices(data, pAChart, computeGranularidade);
+    const bucketsBChart = countBucketsInIndices(data, pBChart, computeGranularidade);
+    const trendLabels = rotulosTendencia(computeGranularidade, bucketsA, bucketsB);
+    const trendLabelsChart = rotulosTendencia(computeGranularidade, bucketsAChart, bucketsBChart);
     const labelA = isTrendMode
-      ? (pA.length > 0 ? (pA.length === 1 ? "Mês Ant." : `Média ${pA.length} Meses Ant.`) : "")
+      ? trendLabels.labelA
       : (availableYears[1]?.toString() || "Anterior");
     const labelB = isTrendMode
-      ? (pB.length === 1 ? "Mês Atual" : `Média últ. ${pB.length} Meses`)
+      ? trendLabels.labelB
       : (availableYears[0]?.toString() || "Atual");
     const chartLabelA = isTrendModeChart
-      ? (pAChart.length > 0 ? (pAChart.length === 1 ? "Mês Ant." : `Média ${pAChart.length} Meses Ant.`) : "")
+      ? trendLabelsChart.labelA
       : (availableYearsChart[1]?.toString() || "Anterior");
     const chartLabelB = isTrendModeChart
-      ? "Receita Mensal"
+      ? (computeGranularidade === 'Mensal' ? "Receita Mensal"
+        : computeGranularidade === 'Trimestral' ? "Receita Trimestral"
+        : computeGranularidade === 'Semestral' ? "Receita Semestral"
+        : "Receita Anual")
       : (availableYearsChart[0]?.toString() || "Atual");
     const yearLabel = isTrendMode ? (yearsInSelection[0]?.toString() || "") : (availableYears[0]?.toString() || "");
 
@@ -621,9 +606,12 @@ export default function DashboardPage() {
     });
 
     const buildTrend = (mapType: 'c' | 'm' | 'd'): TrendItem[] => {
+      const divA = bucketsA || 1;
+      const divB = bucketsB || 1;
       return Object.entries(trendSums[mapType]).map(([id, v]): TrendItem | null => {
-        const valA = isTrendMode ? (v.vA / (pA.length || 1)) : v.vA;
-        const valB = isTrendMode ? (v.vB / (pB.length || 1)) : v.vB;
+        // Sempre média por bucket da grain — assim os R$ mudam ao trocar granularidade.
+        const valA = v.vA / divA;
+        const valB = v.vB / divB;
         if (valA === 0 && valB === 0) return null;
         return {
           id: Number(id),
@@ -658,12 +646,14 @@ export default function DashboardPage() {
         const descId = Number(
           Object.entries(s.descRev).sort(([, a], [, b]) => b - a)[0]?.[0] ?? -1,
         );
+        const divA = bucketsA || 1;
+        const divB = bucketsB || 1;
         return {
           id: Number(id),
           name: data.maps.r[Number(id)],
           descricao: descId >= 0 ? data.maps.d[descId] : '—',
-          avg24: isTrendMode ? (s.vA / (pA.length || 1)) : s.vA,
-          avg25: isTrendMode ? (s.vB / (pB.length || 1)) : s.vB,
+          avg24: s.vA / divA,
+          avg25: s.vB / divB,
           total: s.vA + s.vB,
         };
       }).sort((a, b) => b.total - a.total).slice(0, 50);
@@ -675,7 +665,7 @@ export default function DashboardPage() {
     // boa visualização — o HistoryChart troca para barras nesse caso.
     const singleMonthMode = chartData.length === 1;
 
-    const chartKey = JSON.stringify(computeFilters);
+    const chartKey = JSON.stringify({ ...computeFilters, gran: computeGranularidade });
     const chartHasA = !!statsAChart.rev && !isTrendModeChart;
     const chartHasB = !!statsBChart.rev;
     let stableChart = {
@@ -718,36 +708,41 @@ export default function DashboardPage() {
         singleMonthMode: stableChart.singleMonthMode,
         chartHasA: stableChart.chartHasA,
         chartHasB: stableChart.chartHasB,
-        lenA: pA.length, lenB: pB.length,
+        lenA: bucketsA, lenB: bucketsB,
+        granularidade: computeGranularidade,
+        unidadePeriodo: rotuloUnidade(computeGranularidade).singular,
+        performancePct: isTrendMode
+          ? undefined
+          : mediaTaxaYoYPorBucket(
+            data,
+            pA,
+            pB,
+            (idx) => statsA.monthlyNodes[idx]?.rev || 0,
+            (idx) => statsB.monthlyNodes[idx]?.rev || 0,
+            computeGranularidade,
+          ),
         usarMesesFechados: computeUsarMesesFechados,
-        periodoDescricao: computeUsarMesesFechados ? descricaoPeriodoPadrao(data) : undefined,
+        periodoDescricao: computeUsarMesesFechados
+          ? descricaoPeriodoPadrao(data, new Date(), computeGranularidade)
+          : undefined,
         getStatsForPeriod: (targetPeriod: number[]) => {
-          const resolved = resolverPeriodoEfetivo(data, targetPeriod, false);
+          const resolved = resolverPeriodoEfetivo(data, targetPeriod, false, new Date(), computeGranularidade);
           const { pA: sA, pB: sB, isTrendMode: isTrend } = calcPeriodWindows(data, resolved);
-          const sorted = isTrend ? [...resolved].sort((a, b) => a - b) : [];
+          const sASet = new Set(sA);
 
           const stA = aggregate(populationRows, sA, isTrend);
           const stB = aggregate(populationRows, sB, isTrend);
 
           let cData: ChartPoint[] = [];
           if (!isTrend) {
-            cData = buildComparisonChartData(data, populationRows, sA, sB, stA, stB);
+            cData = buildComparisonChartData(
+              data, populationRows, sA, sB, stA, stB, computeGranularidade,
+            );
           } else {
             const statsTotalModal = aggregate(populationRows, resolved, isTrend);
-            const sASet = new Set(sA);
-            cData = sorted.map((idx: number) => {
-              const node = statsTotalModal.monthlyNodes[idx];
-              const isA = sASet.has(idx);
-              return {
-                name: data.monthly[idx].name,
-                revenueA: isA ? (node?.rev || 0) : null,
-                revenueB: (node?.rev || 0),
-                cntA: isA ? (node?.cnt || 0) : null,
-                cntB: (node?.cnt || 0),
-                clientsA: isA ? (node?.clients.size || 0) : null,
-                clientsB: (node?.clients.size || 0)
-              };
-            });
+            cData = buildTrendChartData(
+              data, resolved, sASet, statsTotalModal, computeGranularidade,
+            );
           }
 
           const years = Array.from(new Set(resolved.map(idx => data.monthly[idx].year)));
@@ -763,7 +758,7 @@ export default function DashboardPage() {
       filterOptions: { clientOpts, mfrOpts, descOpts, storeOpts },
       noDataMessage: populationRows.length === 0 ? "Nenhum dado encontrado para os filtros selecionados." : null
     };
-  }, [data, computeFilters, historyType, computeUsarMesesFechados, visaoDetalhada]);
+  }, [data, computeFilters, historyType, computeUsarMesesFechados, computeGranularidade, visaoDetalhada]);
 
   // ==========================================
   // Render
@@ -826,80 +821,55 @@ export default function DashboardPage() {
 
       <FilterBar
         data={data!}
-        filters={{ client, mfr, desc, store, severity, period, usarMesesFechados, visaoDetalhada }}
+        filters={{ client, mfr, desc, store, severity, period, usarMesesFechados, visaoDetalhada, granularidade }}
         filterOptions={processed.filterOptions}
         setters={{
           setClient, setMfr, setDesc, setStore, setSeverity, setUsarMesesFechados, setVisaoDetalhada,
+          setGranularidade: handleGranularidadeChange,
           setPeriod: (newPeriod: number[]) => {
-            // Enhanced Period Logic: Sync Months across Years
             if (!data) {
               setPeriod(newPeriod);
               return;
             }
 
-            const effectivePrev = resolverPeriodoEfetivo(data, period, usarMesesFechados);
-            const effectiveNew = resolverPeriodoEfetivo(data, newPeriod, usarMesesFechados);
+            const effectivePrev = resolverPeriodoEfetivo(data, period, usarMesesFechados, new Date(), granularidade);
+            const effectiveNew = resolverPeriodoEfetivo(data, newPeriod, usarMesesFechados, new Date(), granularidade);
 
             const prevSet = new Set(effectivePrev);
             const newSet = new Set(effectiveNew);
 
-            // Identify changes
             const added = effectiveNew.filter(p => !prevSet.has(p));
             const removed = effectivePrev.filter(p => !newSet.has(p));
             const totalChanges = added.length + removed.length;
 
-            if (totalChanges === 1) {
+            if (totalChanges === 1 && granularidade === 'Mensal') {
               const changedIdx = added.length ? added[0] : removed[0];
               const isAdd = added.length > 0;
               const changedMonth = data.monthly[changedIdx];
 
               if (changedMonth) {
-                // Check involved years to see if we are in a multi-year context
-                // We consider 'effectivePrev' years as the context.
                 const involvedYears = Array.from(new Set(effectivePrev.map(idx => data.monthly[idx].year)));
 
-                // Only sync if we have multiple years involved (Comparison Mode)
                 if (involvedYears.length >= 2) {
                   const mName = changedMonth.name.split('/')[0].toLowerCase();
+                  let synced = [...newPeriod];
 
                   involvedYears.forEach(y => {
                     if (y === changedMonth.year) return;
-
-                    // Find corresponding month in this other year
                     const targetIdx = data.monthly.findIndex(m => m.year === y && m.name.split('/')[0].toLowerCase() === mName);
-
-                    if (targetIdx !== -1) {
-                      if (isAdd) {
-                        // If adding, ensure target is in newPeriod
-                        // If newPeriod is [], it implicitly has it, unless we change that?
-                        // Actually, if newPeriod is [], it means All, so it HAS it.
-                        // We only need to act if newPeriod is NOT empty.
-                        if (newPeriod.length > 0) {
-                          if (!newPeriod.includes(targetIdx)) {
-                            newPeriod.push(targetIdx);
-                          }
-                        }
-                      } else {
-                        // If removing, we MUST remove target from newPeriod.
-                        // If newPeriod was [] (All), we can't simply remove.
-                        // But wait, if we are part of a 'remove' action, newPeriod CANNOT be [] (All),
-                        // because we just removed something from effectivePrev. 
-                        // So newPeriod IS explicit list (allIndices minus removed).
-                        // So we can safely filter.
-                        if (newPeriod.length > 0) {
-                          newPeriod = newPeriod.filter(idx => idx !== targetIdx);
-                        }
-                      }
+                    if (targetIdx === -1) return;
+                    if (isAdd) {
+                      if (synced.length > 0 && !synced.includes(targetIdx)) synced.push(targetIdx);
+                    } else if (synced.length > 0) {
+                      synced = synced.filter(idx => idx !== targetIdx);
                     }
                   });
+                  setPeriod(synced);
+                  return;
                 }
               }
             }
 
-            // Não normaliza mais "todos os meses" de volta para [] — hoje []
-            // significa "sem seleção manual" (cai no default capado no mês
-            // corrente via periodoBase), enquanto uma seleção explícita de
-            // todos os índices é o estado distinto do botão "Todos os meses".
             setPeriod(newPeriod);
           }
         }}
@@ -928,7 +898,7 @@ export default function DashboardPage() {
               showB={!!processed.stats?.chartHasB}
               singleMonthMode={!!processed.stats?.singleMonthMode}
               usarMesesFechados={usarMesesFechados}
-              mesCorteFechado={usarMesesFechados ? abrevUltimoMesFechado() : null}
+              mesCorteFechado={usarMesesFechados ? rotuloCorteFechadoParaGrafico(granularidade) : null}
               isLoading={isFilterPending}
             />
 
@@ -970,6 +940,7 @@ export default function DashboardPage() {
         formatNumber={formatNumber}
         period={period}
         usarMesesFechados={usarMesesFechados}
+        granularidade={granularidade}
       />
     </div>
   );
