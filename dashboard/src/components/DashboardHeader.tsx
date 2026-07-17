@@ -98,16 +98,15 @@ export function DashboardHeader({
                 )}
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem', flexWrap: 'wrap' }}>
-                {isFiltering && (
+                {(empresaLoading || isFiltering) && (
                     <div className="dashboard-header-filter-loading" aria-live="polite" aria-busy="true">
                         <Loader2 size={16} className="dashboard-filter-spinner" />
-                        <span>Atualizando…</span>
+                        <span>{empresaLoading ? 'Carregando…' : 'Atualizando…'}</span>
                     </div>
                 )}
                 <EmpresaSelector
                     empresa={empresa}
                     onChange={onEmpresaChange}
-                    loading={empresaLoading}
                     onRecarregarEmpresa={onRecarregarEmpresa}
                 />
                 <button

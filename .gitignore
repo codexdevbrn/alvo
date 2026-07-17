@@ -10,3 +10,11 @@ Base.antes-harm.csv
 
 # Configurações locais de ferramentas
 .claude/
+
+# Pastas de dados locais (não versionar — muito grandes)
+dados-trabalho/
+base-clientes/
+
+# Artefatos graphify / Cursor
+graphify-out/
+.cursor/

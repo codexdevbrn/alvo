@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useTransition, useRef } from 'react';
-import { AlertTriangle, Loader2 } from 'lucide-react';
+import { AlertTriangle } from 'lucide-react';
 import { FilterBar } from '../components/FilterBar';
 import { MetricsGrid } from '../components/MetricsGrid';
 import { HistoryChart } from '../components/HistoryChart';
@@ -224,8 +224,8 @@ export default function DashboardPage() {
   }, [client, mfr, desc, store, severity, period, modalPeriod, usarMesesFechados, granularidade, visaoDetalhada]);
 
   // Carrega os dados: summary.json estático (padrão) ou o summary processado
-  // pelo backend para a empresa selecionada. A primeira chamada por empresa
-  // pode levar alguns segundos (CSV grande) — o backend cacheia por mtime.
+  // pelo backend para a empresa selecionada (lê Base.csv existente; não regenera
+  // o BI automaticamente). O backend cacheia o summary por mtime do CSV.
   useEffect(() => {
     localStorage.setItem('alvo_empresa', empresa);
 
@@ -813,7 +813,6 @@ export default function DashboardPage() {
         <DashboardHeader
           empresa={empresa}
           onEmpresaChange={solicitarTrocaEmpresa}
-          empresaLoading={empresaLoading}
           onRecarregarEmpresa={recarregarEmpresaAtual}
         />
         {modalConfirmacaoEmpresa}
@@ -847,15 +846,6 @@ export default function DashboardPage() {
           <AlertTriangle size={18} color="#f43f5e" style={{ flexShrink: 0 }} />
           <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
             Não foi possível carregar os dados de <strong style={{ color: 'white' }}>{empresa}</strong>: {empresaError}
-          </span>
-        </div>
-      )}
-
-      {empresaLoading && (
-        <div className="glass-card" style={{ padding: '0.85rem 1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-          <Loader2 size={18} className="dashboard-filter-spinner" style={{ color: 'var(--accent)', flexShrink: 0 }} />
-          <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-            Preparando a base de <strong style={{ color: 'white' }}>{empresa || 'dados padrão'}</strong>… se os dados de origem foram atualizados, a normalização pode levar alguns minutos antes do dashboard aparecer.
           </span>
         </div>
       )}

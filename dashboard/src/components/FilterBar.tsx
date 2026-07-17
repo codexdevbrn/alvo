@@ -57,6 +57,8 @@ interface CustomDropdownProps {
     onChange: (ids: number[]) => void;
     onClear: () => void;
     placeholder: string;
+    /** Sem busca: mostra só os N primeiros; com texto na busca, libera o restante. */
+    limitePadrao?: number;
 }
 
 interface FilterBarProps {
@@ -84,17 +86,46 @@ function rotuloSelecao(value: number[], options: { id: number; name: string }[],
     return `${value.length} selecionados`;
 }
 
-function CustomDropdown({ label, icon: Icon, value, options, onChange, onClear, placeholder }: CustomDropdownProps) {
+function CustomDropdown({
+    label,
+    icon: Icon,
+    value,
+    options,
+    onChange,
+    onClear,
+    placeholder,
+    limitePadrao,
+}: CustomDropdownProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
 
     const selectedName = rotuloSelecao(value, options, placeholder);
-    const filteredOptions = options.filter(o => o.name.toLowerCase().includes(search.toLowerCase()));
     const selectedSet = new Set(value);
+    const busca = search.trim().toLowerCase();
+    const matched = busca
+        ? options.filter((o) => o.name.toLowerCase().includes(busca))
+        : options;
+
+    let visibleOptions = matched;
+    let truncated = false;
+    if (limitePadrao != null && limitePadrao > 0 && !busca) {
+        const head = matched.slice(0, limitePadrao);
+        const headIds = new Set(head.map((o) => o.id));
+        const extrasSelecionados = matched.filter(
+            (o) => selectedSet.has(o.id) && !headIds.has(o.id),
+        );
+        visibleOptions = [...head, ...extrasSelecionados];
+        truncated = matched.length > limitePadrao;
+    }
 
     const toggle = (id: number) => {
         if (selectedSet.has(id)) onChange(value.filter(v => v !== id));
         else onChange([...value, id]);
+    };
+
+    const fechar = () => {
+        setIsOpen(false);
+        setSearch('');
     };
 
     return (
@@ -114,7 +145,7 @@ function CustomDropdown({ label, icon: Icon, value, options, onChange, onClear, 
 
             {isOpen && (
                 <>
-                    <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={() => setIsOpen(false)} />
+                    <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={fechar} />
                     <div className="dropdown-menu-panel" style={{
                         position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 1000,
                         marginTop: '8px', padding: '8px',
@@ -123,7 +154,7 @@ function CustomDropdown({ label, icon: Icon, value, options, onChange, onClear, 
                         <input
                             autoFocus
                             type="text"
-                            placeholder="Buscar..."
+                            placeholder={limitePadrao ? `Buscar entre ${options.length.toLocaleString('pt-BR')}…` : 'Buscar...'}
                             value={search}
                             onChange={e => setSearch(e.target.value)}
                             onClick={e => e.stopPropagation()}
@@ -137,11 +168,11 @@ function CustomDropdown({ label, icon: Icon, value, options, onChange, onClear, 
                                 role="option"
                                 aria-selected={value.length === 0}
                                 className={`dropdown-menu-item is-muted${value.length === 0 ? ' is-selected' : ''}`}
-                                onClick={() => { onChange([]); setIsOpen(false); }}
+                                onClick={() => { onChange([]); fechar(); }}
                             >
                                 {placeholder}
                             </div>
-                            {filteredOptions.map(opt => {
+                            {visibleOptions.map(opt => {
                                 const ativo = selectedSet.has(opt.id);
                                 return (
                                     <div
@@ -157,7 +188,12 @@ function CustomDropdown({ label, icon: Icon, value, options, onChange, onClear, 
                                     </div>
                                 );
                             })}
-                            {filteredOptions.length === 0 && (
+                            {truncated && (
+                                <div style={{ padding: '8px 12px', fontSize: '0.75rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
+                                    Mostrando {limitePadrao} de {matched.length.toLocaleString('pt-BR')} — digite para buscar o restante
+                                </div>
+                            )}
+                            {visibleOptions.length === 0 && (
                                 <div style={{ padding: '8px 12px', fontSize: '0.85rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
                                     Nenhuma opção encontrada
                                 </div>
@@ -268,6 +304,7 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
                 onChange={setClient}
                 onClear={() => setClient([])}
                 placeholder="Todos os Clientes"
+                limitePadrao={60}
             />
 
             <CustomDropdown

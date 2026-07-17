@@ -672,24 +672,6 @@ def _lru_set(cache: OrderedDict, key: str, value: dict, max_size: int = _CACHE_E
         cache.popitem(last=False)
 
 
-def _arquivos_origem_mais_recentes(
-    pasta_fonte: str, pasta_trabalho: str, mtime_base_csv: Optional[float],
-) -> bool:
-    """True se BI/ na fonte (ou harm.xlsx no trabalho) for mais novo que o Base.csv."""
-    pasta_bi = os.path.join(pasta_fonte, "BI")
-    candidatos: list[str] = []
-    if os.path.isdir(pasta_bi):
-        candidatos.extend(os.path.join(pasta_bi, nome) for nome in os.listdir(pasta_bi))
-    for nome_harm in ("harm.xlsx", "harm.xls"):
-        caminho_harm = os.path.join(pasta_trabalho, nome_harm)
-        if os.path.exists(caminho_harm):
-            candidatos.append(caminho_harm)
-
-    if mtime_base_csv is None:
-        return bool(candidatos) or os.path.isdir(pasta_bi)
-    return any(os.path.getmtime(c) > mtime_base_csv for c in candidatos if os.path.isfile(c))
-
-
 def _data_ultimo_movimento_bi(pasta_fonte: str) -> Optional[date]:
     """Lê a data exata do último movimento de VENDA no BI da fonte (somente leitura)."""
     try:
@@ -710,10 +692,16 @@ def _ensure_base_csv(
     *,
     forcar: bool = False,
 ) -> str:
-    """Garante Base.csv no trabalho, regenerando a partir do BI da fonte se preciso.
+    """Garante Base.csv no trabalho.
 
-    Com forcar=True, renormaliza mesmo se o Base.csv existir e estiver mais novo
-    que os arquivos de origem (útil após correção de regra de normalização).
+    Por padrão **não** renormaliza quando o BI é mais novo — o lote noturno
+    (ou o botão Regenerar base) atualiza os arquivos. Aqui só:
+
+    - devolve o Base.csv já existente; ou
+    - com ``forcar=True``, regenera a partir do BI da fonte.
+
+    Se o Base.csv não existir e ``forcar`` for False, responde 400 pedindo
+    regeneração manual / lote.
 
     Nunca escreve sob pasta_fonte. Recusa se fonte == trabalho.
     """
@@ -730,34 +718,23 @@ def _ensure_base_csv(
             detail=f"Não foi possível criar a pasta de trabalho da empresa: {exc}",
         )
 
-    mtime_atual = os.path.getmtime(caminho_csv) if os.path.exists(caminho_csv) else None
-
-    if (
-        not forcar
-        and mtime_atual is not None
-        and not _arquivos_origem_mais_recentes(
-            pasta_fonte, pasta_trabalho, mtime_atual,
+    if not forcar:
+        if os.path.isfile(caminho_csv):
+            return caminho_csv
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Base.csv ainda não gerado para '{empresa}'. "
+                "Aguarde a normalização noturna ou use o botão Regenerar base."
+            ),
         )
-        and os.path.exists(os.path.join(pasta_trabalho, "Liquidez_Estoque.csv"))
-        and os.path.exists(os.path.join(pasta_trabalho, "Liquidez_Vendas.csv"))
-    ):
-        return caminho_csv
 
-    if forcar:
-        logger.info("Regeneração forçada da Base.csv para %s (BI fonte -> trabalho).", empresa)
-    elif mtime_atual is None:
-        logger.info("Base.csv ausente para %s — normalizando BI da fonte -> trabalho.", empresa)
-    else:
-        logger.info("Origem mais recente para %s — renormalizando no trabalho.", empresa)
+    logger.info("Regeneração forçada da Base.csv para %s (BI fonte -> trabalho).", empresa)
 
     try:
         normalizar_pasta_empresa(pasta_fonte, pasta_trabalho=pasta_trabalho)
     except ErroNormalizacao as exc:
-        # Regeneração forçada: não mascara falha mantendo Base antiga.
-        if forcar or mtime_atual is None:
-            raise HTTPException(status_code=400, detail=str(exc))
-        logger.warning("Falha ao renormalizar %s, mantendo Base.csv existente: %s", empresa, exc)
-        return caminho_csv
+        raise HTTPException(status_code=400, detail=str(exc))
     except ErroHarmonizacao as exc:
         raise HTTPException(status_code=400, detail=f"Falha ao harmonizar descrições: {exc}")
     except HTTPException:
@@ -1616,7 +1593,8 @@ def ensure_base_empresa(
 ):
     """Garante Base.csv no trabalho a partir do BI da fonte (Analisador / dash).
 
-    Query ``forcar=true`` renormaliza mesmo se o Base.csv já estiver atualizado.
+    Por padrão só verifica se o arquivo existe (não renormaliza se o BI for mais novo).
+    Query ``forcar=true`` equivale a Regenerar base.
     """
     if forcar:
         return _regenerar_base_empresa(nome)

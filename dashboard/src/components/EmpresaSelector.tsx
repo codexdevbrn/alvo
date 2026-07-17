@@ -18,8 +18,6 @@ interface EmpresaSelectorProps {
     /** Empresa selecionada ('' = dados padrão do summary.json estático) */
     empresa: string;
     onChange: (empresa: string) => void;
-    /** true enquanto o summary da empresa está sendo processado no backend */
-    loading?: boolean;
     /** Chamado após regenerar a Base.csv com sucesso — recarrega os dados da empresa. */
     onRecarregarEmpresa?: (empresa: string) => void;
 }
@@ -52,7 +50,6 @@ function gravarLocal(chave: string, valor: string) {
 export function EmpresaSelector({
     empresa,
     onChange,
-    loading = false,
     onRecarregarEmpresa,
 }: EmpresaSelectorProps) {
     const [empresas, setEmpresas] = useState<string[]>([]);
@@ -247,9 +244,7 @@ export function EmpresaSelector({
                     padding: '0.55rem', cursor: 'pointer',
                 }}
             >
-                {loading
-                    ? <Loader2 size={16} className="dashboard-filter-spinner" />
-                    : <Settings size={16} />}
+                <Settings size={16} />
             </button>
 
             {configAberta && (
@@ -372,8 +367,9 @@ export function EmpresaSelector({
                         </div>
 
                         <p className="analisador-hint" style={{ margin: 0 }}>
-                            Regenerar base força a leitura do BI da fonte, recria o Base.csv na pasta de trabalho
-                            {empresa ? ` (${empresa})` : ''} e recarrega o dashboard — mesmo se os arquivos de origem não tiverem mudado.
+                            Regenerar base lê o BI da fonte, recria Base.csv (e Liquidez) na pasta de trabalho
+                            {empresa ? ` (${empresa})` : ''} e recarrega o dashboard. Fora disso o app só usa
+                            o CSV já gerado; a data do último movimento no topo vem do BI.
                         </p>
 
                         <label className="analisador-campo" style={{ marginBottom: 0 }}>
