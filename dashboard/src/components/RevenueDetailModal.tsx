@@ -3,6 +3,7 @@ import { X, DollarSign, ShoppingCart, Users } from 'lucide-react';
 import { PeriodSelector } from './PeriodSelector';
 import { resolverPeriodoEfetivo } from '../utils/periodoFechado';
 import { HistoryChart } from './HistoryChart';
+import { formatPercent } from '../utils/formatters';
 import type { DashboardData, DashboardStats, GranularidadeDash } from '../types/dashboard';
 
 // ==========================================
@@ -17,10 +18,10 @@ interface RevenueDetailModalProps {
     stats: DashboardStats | null;
     modalPeriod: number[];
     setModalPeriod: (period: number[]) => void;
-    client: number;
-    mfr: number;
-    desc: number;
-    store: number;
+    client: number[];
+    mfr: number[];
+    desc: number[];
+    store: number[];
     formatCurrency: (value: number) => string;
     formatNumber: (value: number) => string;
     period: number[]; // main specific period for fallback
@@ -136,7 +137,8 @@ export function RevenueDetailModal({
                                     {historyType === 'revenue' && <><DollarSign color="var(--accent)" size={isMobile ? 18 : 24} /> Receita</>}
                                     {historyType === 'mfr' && <><ShoppingCart color="var(--accent)" size={isMobile ? 18 : 24} /> Volume</>}
                                     {historyType === 'desc' && <><Users color="var(--accent)" size={isMobile ? 18 : 24} /> Clientes</>}
-                                    {client !== -1 && <span style={{ color: 'var(--text-secondary)', fontSize: isMobile ? '0.85rem' : '1.1rem', fontWeight: 400 }}>— {data?.maps.c[client]}</span>}
+                                    {client.length === 1 && <span style={{ color: 'var(--text-secondary)', fontSize: isMobile ? '0.85rem' : '1.1rem', fontWeight: 400 }}>— {data?.maps.c[client[0]]}</span>}
+                                    {client.length > 1 && <span style={{ color: 'var(--text-secondary)', fontSize: isMobile ? '0.85rem' : '1.1rem', fontWeight: 400 }}>— {client.length} clientes</span>}
                                 </h2>
                                 <div style={{ width: isMobile ? '100%' : '250px' }}>
                                     <PeriodSelector
@@ -180,10 +182,10 @@ export function RevenueDetailModal({
                                         rows.forEach(r => {
                                             if (!indicesSet.has(r[0])) return;
                                             if (r[2] === consumerFinalId) return;
-                                            if (client !== -1 && r[2] !== client) return;
-                                            if (mfr !== -1 && r[3] !== mfr) return;
-                                            if (desc !== -1 && r[4] !== desc) return;
-                                            if (store !== -1 && r[1] !== store) return;
+                                            if (client.length && !client.includes(r[2])) return;
+                                            if (mfr.length && !mfr.includes(r[3])) return;
+                                            if (desc.length && !desc.includes(r[4])) return;
+                                            if (store.length && !store.includes(r[1])) return;
 
                                             rev += r[6];
                                             vol += 1;
@@ -231,7 +233,7 @@ export function RevenueDetailModal({
                                                 }}>
                                                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Tendência</p>
                                                     <span style={{ fontSize: isMobile ? '1.1rem' : '1.25rem', fontWeight: 'bold', color: trendPct >= 0 ? '#10b981' : '#f43f5e' }}>
-                                                        {trendPct >= 0 ? '↑' : '↓'} {isFinite(trendPct) ? Math.abs(trendPct).toFixed(2) : '0.00'}%
+                                                        {trendPct >= 0 ? '↑' : '↓'} {formatPercent(Math.abs(trendPct))}
                                                     </span>
                                                 </div>
                                             </>
@@ -261,7 +263,7 @@ export function RevenueDetailModal({
                                                 }}>
                                                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Perf. Geral</p>
                                                     <span style={{ fontSize: isMobile ? '1.1rem' : '1.25rem', fontWeight: 'bold', color: trendPct >= 0 ? '#10b981' : '#f43f5e' }}>
-                                                        {trendPct >= 0 ? '↑' : '↓'} {isFinite(trendPct) ? Math.abs(trendPct).toFixed(2) : '0.00'}%
+                                                        {trendPct >= 0 ? '↑' : '↓'} {formatPercent(Math.abs(trendPct))}
                                                     </span>
                                                 </div>
                                             </>

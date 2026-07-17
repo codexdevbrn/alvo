@@ -72,6 +72,37 @@ class ErroCarregamentoCSV(Exception):
     pass
 
 
+def mapa_cliente_para_grupo_manual(grupos_manuais):
+    """Cliente -> nome do grupo. Em sobreposição, o primeiro grupo da lista vence."""
+    mapa = {}
+    for grupo in grupos_manuais or []:
+        if not isinstance(grupo, dict):
+            continue
+        nome = str(grupo.get("nome") or "").strip()
+        if not nome:
+            continue
+        for cliente in grupo.get("clientes") or []:
+            chave = str(cliente).strip()
+            if chave and chave not in mapa:
+                mapa[chave] = nome
+    return mapa
+
+
+def aplicar_grupos_manuais_em_cliente(df, grupos_manuais):
+    """Substitui Cliente pelo nome do grupo manual (agrega membros no concentrado/ABC).
+
+    Clientes fora de qualquer grupo permanecem individuais. Retorna cópia só
+    quando há mapeamento; caso contrário devolve o mesmo DataFrame.
+    """
+    mapa = mapa_cliente_para_grupo_manual(grupos_manuais)
+    if not mapa or df is None or df.empty or "Cliente" not in df.columns:
+        return df
+    out = df.copy()
+    # replace vetorizado (sem lambda por linha) + strip para casar com o mapa
+    out["Cliente"] = out["Cliente"].astype(str).str.strip().replace(mapa)
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Carregamento e limpeza
 # ---------------------------------------------------------------------------
@@ -540,6 +571,8 @@ def erosao_clientes_por_produto(df, granularidade="Mensal", produtos_alvo=None,
     if produtos_alvo:
         base = base[base["descricao"].isin(produtos_alvo)]
     base = base[base[col_periodo].isin([periodo_anterior, periodo_atual])]
+    if base.empty:
+        return pd.DataFrame(columns=colunas_vazias)
 
     agrupado = (
         base.groupby(["descricao", "Cliente", col_periodo], as_index=False)
@@ -548,6 +581,12 @@ def erosao_clientes_por_produto(df, granularidade="Mensal", produtos_alvo=None,
     )
     pivot_receita = agrupado.pivot_table(index=["descricao", "Cliente"], columns="Periodo", values="Receita", fill_value=0)
     pivot_qtd = agrupado.pivot_table(index=["descricao", "Cliente"], columns="Periodo", values="QTD", fill_value=0)
+    # Com produtos_alvo, a base filtrada pode não ter linhas em um dos dois
+    # períodos (ex.: todos os produtos do alerta sem venda no período atual)
+    # — sem o reindex, pivot.get(periodo, 0) devolve o escalar 0 e o .values
+    # abaixo quebra com AttributeError.
+    pivot_receita = pivot_receita.reindex(columns=[periodo_anterior, periodo_atual], fill_value=0)
+    pivot_qtd = pivot_qtd.reindex(columns=[periodo_anterior, periodo_atual], fill_value=0)
 
     erosao = pivot_receita.index.to_frame(index=False)
     erosao["Receita"] = pivot_receita.get(periodo_atual, 0).values
@@ -1403,7 +1442,7 @@ def gerar_analises_completas(df, granularidades, clientes_excluidos=None,
                               top_n_produtos=None, reducao_minima_erosao=50.0,
                               queda_minima_alerta_rs=0.0, queda_minima_erosao_rs=0.0,
                               reducao_minima_sem_venda=90.0, top_n_poder_compra=None,
-                              clientes_balcao_extra=None):
+                              clientes_balcao_extra=None, grupos_manuais=None):
     """
     Roda as análises solicitadas para cada granularidade escolhida.
 
@@ -1434,6 +1473,21 @@ def gerar_analises_completas(df, granularidades, clientes_excluidos=None,
     def logar(mensagem):
         if callback_log:
             callback_log(mensagem)
+
+    # Grupos manuais: unem membros numa entidade antes de qualquer análise
+    # por Cliente (cortes ABC, concentrado, poder de compra, erosão, etc.).
+    # Exclusões de membros individuais passam a excluir o nome do grupo.
+    if grupos_manuais:
+        mapa_grupos = mapa_cliente_para_grupo_manual(grupos_manuais)
+        df = aplicar_grupos_manuais_em_cliente(df, grupos_manuais)
+        if clientes_excluidos:
+            clientes_excluidos = list({
+                mapa_grupos.get(c, c) for c in clientes_excluidos
+            })
+        if clientes_balcao_extra:
+            clientes_balcao_extra = list({
+                mapa_grupos.get(c, c) for c in clientes_balcao_extra
+            })
 
     # Exclusões da prévia de clientes aplicam a TODAS as análises.
     if clientes_excluidos:
@@ -1510,9 +1564,10 @@ def gerar_analises_completas(df, granularidades, clientes_excluidos=None,
         if precisa_abc:
             logar(f"[{granularidade}] Classificando clientes por faixa de faturamento...")
             # Sempre sem corte aqui (top_clientes_por_grupo=None): migração
-            # precisa ver TODOS os clientes pra detectar corretamente quem
+            # precisa ver TODOS os clientes/grupos pra detectar corretamente quem
             # mudou de faixa. O corte "top 5" é aplicado só na hora de expor
             # a chave "abc" do relatório, não na classificação em si.
+            # Grupos manuais já foram aplicados no df no início desta função.
             abc = classificar_abc(
                 df_periodo, granularidade, clientes_excluidos, cortes_clientes,
                 desconsiderar_balcao=desconsiderar_balcao, top_clientes_por_grupo=None,

@@ -44,16 +44,16 @@ DECISÕES DE NEGÓCIO ASSUMIDAS (revisar/ajustar se necessário) — herdadas e
 generalizadas de base-clientes/teste/normalizar_lupi.py, que originou este
 script a partir do caso da rede Lupi:
 ---------------------------------------------------------------------------
-1. TIPO_MOVIMENTO:
+1. TIPO_MOVIMENTO / MOV:
    - "VENDA"      -> soma positiva de receita (TOTAL) e quantidade (QUANTIDADE).
+     No DW, vendas saem tipicamente com MOV="S" (saída).
    - "DEVOLUCAO"  -> SUBTRAÍDA da receita e da quantidade do mesmo agrupamento
-     (Loja, Cliente, Produto, Ano, Mês). Assume-se que uma devolução reduz a
-     receita líquida que o cliente efetivamente gerou naquele produto/mês -
-     é a leitura mais comum em motores de análise de funil de vendas B2B,
-     mas é uma ESCOLHA: se a devolução no sistema de origem já se referir a
-     um mês diferente da venda original, o efeito líquido pode "vazar" para
-     o mês da devolução em vez do mês da venda. Se isso não for o desejado,
-     ajustar a função `processar_chunk`.
+     (Loja, Cliente, Produto, Ano, Mês), mas só quando MOV="E" (entrada de
+     mercadoria). Linhas de DEVOLUCAO com MOV="S" são documento espelho /
+     contrapartida fiscal e NÃO devem reduzir a receita de novo — incluí-las
+     duplicava a baixa (ex.: Frandiesel jun/2026 ficava em ~442k em vez de
+     ~650k). Se a coluna MOV não existir no arquivo, mantém-se o comportamento
+     antigo (todas as DEVOLUCAO entram).
    - "COMPRA" e "TRANSFER" -> EXCLUÍDOS por completo (não são vendas a
      cliente final, são movimentos de estoque/logística entre lojas ou com
      fornecedores).
@@ -121,6 +121,12 @@ COLUNAS_GRUPO = [
 
 MOVIMENTOS_VALIDOS = ("VENDA", "DEVOLUCAO")
 
+# Colunas lidas do MOVIMENTO (MOV é opcional — ver decisão de negócio 1).
+COLS_MOVIMENTO = {
+    "ID_LOJA", "TIPO_MOVIMENTO", "DATA_MOVIMENTO", "NOME_CLIENTE",
+    "CODIGO_PRODUTO", "QUANTIDADE", "TOTAL", "MOV",
+}
+
 NOME_ARQUIVO_HARM_PADRAO = "harm.xlsx"
 
 
@@ -171,6 +177,36 @@ def resolver_arquivos_bi(pasta_empresa: Path) -> tuple[Path, Path]:
         )
 
     return caminho_movimento, caminho_produto
+
+
+def obter_data_ultimo_movimento(caminho_movimento: Path, *, chunksize: int = CHUNKSIZE) -> date | None:
+    """Data exata (calendário) do último movimento de VENDA no arquivo BI (somente leitura)."""
+    max_data: date | None = None
+    leitor = pd.read_csv(
+        caminho_movimento,
+        sep=";",
+        quotechar='"',
+        encoding="utf-8-sig",
+        dtype=str,
+        usecols=["TIPO_MOVIMENTO", "DATA_MOVIMENTO"],
+        chunksize=chunksize,
+    )
+    for chunk in leitor:
+        vendas = chunk[chunk["TIPO_MOVIMENTO"] == "VENDA"]
+        if vendas.empty:
+            continue
+        datas = pd.to_datetime(
+            vendas["DATA_MOVIMENTO"].str.slice(0, 10),
+            format="%d/%m/%Y",
+            errors="coerce",
+        )
+        candidata = datas.max()
+        if pd.isna(candidata):
+            continue
+        dia = candidata.date()
+        if max_data is None or dia > max_data:
+            max_data = dia
+    return max_data
 
 
 # ---------------------------------------------------------------------------
@@ -226,6 +262,14 @@ def processar_chunk(chunk: pd.DataFrame, produtos: pd.DataFrame, anos_permitidos
     chunk = chunk[chunk["TIPO_MOVIMENTO"].isin(MOVIMENTOS_VALIDOS)].copy()
     if chunk.empty:
         return None
+
+    # DEVOLUCAO + MOV=S = espelho documental; a baixa de receita é só MOV=E.
+    if "MOV" in chunk.columns:
+        mov = chunk["MOV"].fillna("").astype(str).str.strip().str.upper()
+        espelho = (chunk["TIPO_MOVIMENTO"] == "DEVOLUCAO") & mov.eq("S")
+        chunk = chunk.loc[~espelho].copy()
+        if chunk.empty:
+            return None
 
     chunk["QUANTIDADE"] = _parse_numero_br(chunk["QUANTIDADE"]).fillna(0.0)
     chunk["TOTAL"] = _parse_numero_br(chunk["TOTAL"]).fillna(0.0)
@@ -292,8 +336,7 @@ def normalizar(caminho_movimento: Path, caminho_produto: Path) -> pd.DataFrame:
 
     leitor = pd.read_csv(
         caminho_movimento, sep=";", quotechar='"', encoding="utf-8-sig", dtype=str,
-        usecols=["ID_LOJA", "TIPO_MOVIMENTO", "DATA_MOVIMENTO", "NOME_CLIENTE",
-                 "CODIGO_PRODUTO", "QUANTIDADE", "TOTAL"],
+        usecols=lambda c: c in COLS_MOVIMENTO,
         chunksize=CHUNKSIZE,
     )
     for i, chunk in enumerate(leitor, start=1):
@@ -434,6 +477,14 @@ def normalizar_pasta_empresa(
         else:
             print("\nNenhuma planilha de harmonização encontrada (harm.xlsx) - "
                   "mantendo a descrição bruta do catálogo de produtos.")
+
+    # Bases do relatório Liquidez (estoque + vendas) — mesmo BI, pasta trabalho.
+    try:
+        from normalizar_liquidez import normalizar_liquidez_pasta
+        normalizar_liquidez_pasta(pasta_fonte, pasta_trabalho)
+    except Exception as exc:
+        # Não impede o Base.csv; Liquidez falha de forma explícita no log.
+        print(f"[AVISO] Falha ao gerar bases Liquidez: {exc}")
 
     return caminho_saida
 

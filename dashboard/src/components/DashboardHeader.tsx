@@ -14,6 +14,7 @@ interface DashboardHeaderProps {
     empresa: string;
     onEmpresaChange: (empresa: string) => void;
     empresaLoading?: boolean;
+    onRecarregarEmpresa?: (empresa: string) => void;
 }
 
 function PrismaLogo() {
@@ -69,6 +70,7 @@ function PrismaLogo() {
 
 export function DashboardHeader({
     updatedAt, clientName, isFiltering = false, empresa, onEmpresaChange, empresaLoading = false,
+    onRecarregarEmpresa,
 }: DashboardHeaderProps) {
     const navigate = useNavigate();
 
@@ -102,7 +104,12 @@ export function DashboardHeader({
                         <span>Atualizando…</span>
                     </div>
                 )}
-                <EmpresaSelector empresa={empresa} onChange={onEmpresaChange} loading={empresaLoading} />
+                <EmpresaSelector
+                    empresa={empresa}
+                    onChange={onEmpresaChange}
+                    loading={empresaLoading}
+                    onRecarregarEmpresa={onRecarregarEmpresa}
+                />
                 <button
                     onClick={() => navigate(getToken() ? '/analisador' : '/login')}
                     style={{
@@ -114,7 +121,7 @@ export function DashboardHeader({
                     <BarChart3 size={16} /> Analisador de Monitoria
                 </button>
                 <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', textAlign: 'right' }}>
-                    Atualizado em: <span style={{ color: 'white', fontWeight: 500 }}>{updatedAt || 'Carregando...'}</span>
+                    Último movimento: <span style={{ color: 'white', fontWeight: 500 }}>{updatedAt || 'Carregando...'}</span>
                 </div>
             </div>
         </header>

@@ -1,7 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { ItemClientePrevia, TagCliente } from '../../api/client';
-import { TAGS_CLIENTE_OPCOES } from '../../api/client';
+import type {
+  GrupoManualClientes,
+  ItemClientePrevia,
+  TagCatalogoItem,
+  TagCliente,
+} from '../../api/client';
+import { TAGS_CATALOGO_PADRAO } from '../../api/client';
+import { formatCurrency, rotuloGrupoCurto } from '../../utils/formatters';
 
 interface PreviaClientesTableProps {
   itens: ItemClientePrevia[];
@@ -9,8 +15,12 @@ interface PreviaClientesTableProps {
   onToggle: (cliente: string) => void;
   carregando?: boolean;
   tagsPorCliente?: Record<string, TagCliente[]>;
+  tagsCatalogo?: TagCatalogoItem[];
+  gruposManuais?: GrupoManualClientes[];
   empresa?: string | null;
   onTagsChange?: (cliente: string, tags: TagCliente[]) => void | Promise<void>;
+  onToggleGrupoManual?: (cliente: string, grupoId: string) => void | Promise<void>;
+  onCriarGrupoManual?: (cliente: string, nome: string) => void | Promise<void>;
   desconsiderarBalcao?: boolean;
 }
 
@@ -20,13 +30,9 @@ type MenuTags = {
   left: number;
 };
 
-function formatarMoeda(valor: number): string {
-  return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-}
-
 function formatarPct(valor: number | null): string {
   if (valor == null || Number.isNaN(valor)) return '—';
-  return `${valor.toFixed(2)}%`;
+  return `${valor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 }
 
 export function PreviaClientesTable({
@@ -35,14 +41,21 @@ export function PreviaClientesTable({
   onToggle,
   carregando,
   tagsPorCliente = {},
+  tagsCatalogo = TAGS_CATALOGO_PADRAO,
+  gruposManuais = [],
   empresa,
   onTagsChange,
+  onToggleGrupoManual,
+  onCriarGrupoManual,
   desconsiderarBalcao = false,
 }: PreviaClientesTableProps) {
   const [busca, setBusca] = useState('');
   const [grupoFiltro, setGrupoFiltro] = useState('');
   const [menu, setMenu] = useState<MenuTags | null>(null);
   const [salvandoTag, setSalvandoTag] = useState(false);
+  const [criandoGrupo, setCriandoGrupo] = useState(false);
+  const [nomeNovoGrupo, setNomeNovoGrupo] = useState('');
+  const inputGrupoRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const lista = useMemo(() => itens ?? [], [itens]);
 
@@ -81,8 +94,26 @@ export function PreviaClientesTable({
 
   const tagsDoMenu = menu ? (tagsPorCliente[menu.cliente] ?? []) : [];
 
+  const opcoesTags = useMemo(
+    () => tagsCatalogo.filter((item) => item.ativa),
+    [tagsCatalogo],
+  );
+
+  const gruposDoMenu = useMemo(() => {
+    if (!menu) return new Set<string>();
+    return new Set(
+      gruposManuais.filter((g) => g.clientes.includes(menu.cliente)).map((g) => g.id),
+    );
+  }, [menu, gruposManuais]);
+
+  const menuEditavel = Boolean(empresa && (onTagsChange || onToggleGrupoManual));
+
   useEffect(() => {
-    if (!menu) return;
+    if (!menu) {
+      setCriandoGrupo(false);
+      setNomeNovoGrupo('');
+      return;
+    }
     const fechar = () => setMenu(null);
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') fechar();
@@ -90,9 +121,16 @@ export function PreviaClientesTable({
     const onPointer = (e: MouseEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) fechar();
     };
-    const onScroll = () => fechar();
+    // capture:true pega scroll de qualquer ancestral. Digitar no nome do grupo
+    // (ou abrir o campo) pode disparar scrollIntoView / scroll interno — não fechar.
+    const onScroll = (e: Event) => {
+      const alvo = e.target;
+      if (alvo instanceof Node && menuRef.current?.contains(alvo)) return;
+      const ativo = document.activeElement;
+      if (ativo instanceof Node && menuRef.current?.contains(ativo)) return;
+      fechar();
+    };
     window.addEventListener('keydown', onKey);
-    // delay to avoid closing on the same click that opened
     const t = window.setTimeout(() => window.addEventListener('mousedown', onPointer), 0);
     window.addEventListener('scroll', onScroll, true);
     return () => {
@@ -103,15 +141,20 @@ export function PreviaClientesTable({
     };
   }, [menu]);
 
+  useEffect(() => {
+    if (criandoGrupo) inputGrupoRef.current?.focus();
+  }, [criandoGrupo]);
+
   const abrirMenu = (cliente: string, anchor: HTMLElement) => {
-    if (!empresa || !onTagsChange) return;
+    if (!menuEditavel) return;
     const rect = anchor.getBoundingClientRect();
-    const larguraMenu = 210;
-    const alturaEstimada = 148;
+    const larguraMenu = 220;
+    const alturaEstimada =
+      80 + opcoesTags.length * 36 + Math.min(gruposManuais.length, 6) * 36 + (onCriarGrupoManual ? 52 : 28);
     const gap = 2;
     let top = rect.bottom + gap;
     if (top + alturaEstimada > window.innerHeight - 8) {
-      top = Math.max(8, rect.top - alturaEstimada - gap);
+      top = Math.max(8, rect.top - Math.min(alturaEstimada, window.innerHeight - 16) - gap);
     }
     const left = Math.min(
       Math.max(8, rect.left),
@@ -129,6 +172,30 @@ export function PreviaClientesTable({
     setSalvandoTag(true);
     try {
       await onTagsChange(menu.cliente, proximas);
+    } finally {
+      setSalvandoTag(false);
+    }
+  };
+
+  const alternarGrupo = async (grupoId: string) => {
+    if (!menu || !onToggleGrupoManual || !empresa) return;
+    setSalvandoTag(true);
+    try {
+      await onToggleGrupoManual(menu.cliente, grupoId);
+    } finally {
+      setSalvandoTag(false);
+    }
+  };
+
+  const confirmarNovoGrupo = async () => {
+    if (!menu || !onCriarGrupoManual || !empresa) return;
+    const nome = nomeNovoGrupo.trim();
+    if (!nome) return;
+    setSalvandoTag(true);
+    try {
+      await onCriarGrupoManual(menu.cliente, nome);
+      setCriandoGrupo(false);
+      setNomeNovoGrupo('');
     } finally {
       setSalvandoTag(false);
     }
@@ -167,7 +234,7 @@ export function PreviaClientesTable({
           >
             <option value="">Todos</option>
             {gruposDisponiveis.map((grupo) => (
-              <option key={grupo} value={grupo}>{grupo}</option>
+              <option key={grupo} value={grupo}>{rotuloGrupoCurto(grupo)}</option>
             ))}
           </select>
         </label>
@@ -181,8 +248,8 @@ export function PreviaClientesTable({
               <th className="col-nome">Cliente</th>
               <th className="col-tags">Tags</th>
               <th className="col-num">Receita</th>
-              <th className="col-pct">% Receita</th>
-              <th className="col-pct-acum">% Acumulada</th>
+              <th className="col-pct">% Rec.</th>
+              <th className="col-pct-acum">% Acum.</th>
               <th className="col-grupo">Grupo</th>
             </tr>
           </thead>
@@ -217,7 +284,7 @@ export function PreviaClientesTable({
                       type="button"
                       className="analisador-cliente-nome"
                       onClick={(e) => abrirMenu(item.cliente, e.currentTarget)}
-                      disabled={!empresa || !onTagsChange}
+                      disabled={!menuEditavel}
                     >
                       {item.cliente}
                     </button>
@@ -228,8 +295,8 @@ export function PreviaClientesTable({
                         type="button"
                         className="analisador-tags-resumo-btn"
                         onClick={(e) => abrirMenu(item.cliente, e.currentTarget)}
-                        disabled={!empresa || !onTagsChange}
-                        title="Editar tags"
+                        disabled={!menuEditavel}
+                        title="Editar tags e grupos"
                       >
                         {tags.length}
                       </button>
@@ -237,10 +304,10 @@ export function PreviaClientesTable({
                       <span className="analisador-hint" style={{ margin: 0 }}>—</span>
                     )}
                   </td>
-                  <td className="col-num">{formatarMoeda(item.receita)}</td>
+                  <td className="col-num">{formatCurrency(item.receita)}</td>
                   <td className="col-pct">{formatarPct(item.percentual_receita)}</td>
                   <td className="col-pct-acum">{formatarPct(item.percentual_acumulado)}</td>
-                  <td className="col-grupo">{item.grupo}</td>
+                  <td className="col-grupo" title={item.grupo}>{rotuloGrupoCurto(item.grupo)}</td>
                 </tr>
               );
             })}
@@ -254,8 +321,8 @@ export function PreviaClientesTable({
           ` · ${excluidos.size + qtdBalcaoFora} excluído(s) das métricas no total`}
         {desconsiderarBalcao && qtdBalcaoFora > 0 && ` · ${qtdBalcaoFora} no grupo Balcão`}
         {empresa
-          ? ' · Clique no nome para tags. Com “Desconsiderar clientes balcão”, eles ficam no grupo Balcão com a inclusão desmarcada e fora dos cálculos/relatórios.'
-          : ' · Selecione uma empresa para editar tags.'}
+          ? ' · Clique no nome para tags e grupos manuais.'
+          : ' · Selecione uma empresa para editar tags e grupos.'}
       </p>
 
       {menu &&
@@ -265,30 +332,129 @@ export function PreviaClientesTable({
             className="analisador-tags-context"
             style={{ top: menu.top, left: menu.left }}
             role="menu"
-            aria-label={`Tags de ${menu.cliente}`}
+            aria-label={`Tags e grupos de ${menu.cliente}`}
           >
             <p className="analisador-tags-context-titulo" title={menu.cliente}>
               {menu.cliente}
             </p>
-            {TAGS_CLIENTE_OPCOES.map((opcao) => {
-              const marcada = tagsDoMenu.includes(opcao.id);
-              return (
-                <button
-                  key={opcao.id}
-                  type="button"
-                  role="menuitemcheckbox"
-                  aria-checked={marcada}
-                  disabled={salvandoTag}
-                  className={`analisador-tags-context-item${marcada ? ' is-on' : ''}${opcao.id === 'cliente_balcao' ? ' is-balcao' : ''}`}
-                  onClick={() => void alternarTag(opcao.id)}
-                >
-                  <span className="analisador-tags-context-check" aria-hidden="true">
-                    {marcada ? '✓' : ''}
-                  </span>
-                  {opcao.rotulo}
-                </button>
-              );
-            })}
+
+            {onTagsChange && (
+              <>
+                <p className="analisador-tags-context-secao">Tags</p>
+                {opcoesTags.map((opcao) => {
+                  const marcada = tagsDoMenu.includes(opcao.id);
+                  return (
+                    <button
+                      key={opcao.id}
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={marcada}
+                      disabled={salvandoTag}
+                      className={`analisador-tags-context-item${marcada ? ' is-on' : ''}${opcao.id === 'cliente_balcao' ? ' is-balcao' : ''}`}
+                      style={marcada ? { borderColor: `${opcao.cor}55`, color: opcao.cor } : undefined}
+                      onClick={() => void alternarTag(opcao.id)}
+                    >
+                      <span
+                        className="analisador-tags-context-check"
+                        aria-hidden="true"
+                        style={marcada ? { color: opcao.cor } : undefined}
+                      >
+                        {marcada ? '✓' : ''}
+                      </span>
+                      {opcao.rotulo}
+                    </button>
+                  );
+                })}
+                {opcoesTags.length === 0 && (
+                  <p className="analisador-hint" style={{ margin: '0.35rem 0.5rem' }}>
+                    Nenhuma tag ativa. Ative tags em Configurações.
+                  </p>
+                )}
+              </>
+            )}
+
+            {onToggleGrupoManual && (
+              <>
+                <div className="analisador-tags-context-secao-row">
+                  <p className="analisador-tags-context-secao">Grupos</p>
+                  {onCriarGrupoManual && (
+                    <button
+                      type="button"
+                      className="analisador-tags-context-add"
+                      aria-label="Criar grupo"
+                      title={empresa ? 'Criar grupo com este cliente' : 'Selecione uma empresa'}
+                      disabled={!empresa || salvandoTag}
+                      onClick={() => {
+                        if (!empresa) return;
+                        setCriandoGrupo((v) => !v);
+                        setNomeNovoGrupo('');
+                      }}
+                    >
+                      +
+                    </button>
+                  )}
+                </div>
+                {criandoGrupo && onCriarGrupoManual && (
+                  <form
+                    className="analisador-tags-context-novo-grupo"
+                    onSubmit={(e) => {
+                      e.preventDefault();
+                      void confirmarNovoGrupo();
+                    }}
+                  >
+                    <input
+                      ref={inputGrupoRef}
+                      className="analisador-tags-context-novo-grupo-input"
+                      value={nomeNovoGrupo}
+                      placeholder="Nome do grupo"
+                      disabled={salvandoTag}
+                      maxLength={80}
+                      onChange={(e) => setNomeNovoGrupo(e.target.value)}
+                      onKeyDown={(e) => {
+                        // Evita que Escape/setas borbulhem e fechem o modal inteiro
+                        e.stopPropagation();
+                        if (e.key === 'Escape') {
+                          setCriandoGrupo(false);
+                          setNomeNovoGrupo('');
+                        }
+                      }}
+                    />
+                    <button
+                      type="submit"
+                      className="analisador-tags-context-novo-grupo-ok"
+                      disabled={salvandoTag || !nomeNovoGrupo.trim()}
+                      aria-label="Criar grupo"
+                    >
+                      ✓
+                    </button>
+                  </form>
+                )}
+                {gruposManuais.length === 0 && !criandoGrupo && (
+                  <p className="analisador-hint" style={{ margin: '0.35rem 0.5rem' }}>
+                    Nenhum grupo. Use + para criar.
+                  </p>
+                )}
+                {gruposManuais.map((grupo) => {
+                  const marcada = gruposDoMenu.has(grupo.id);
+                  return (
+                    <button
+                      key={grupo.id}
+                      type="button"
+                      role="menuitemcheckbox"
+                      aria-checked={marcada}
+                      disabled={salvandoTag}
+                      className={`analisador-tags-context-item${marcada ? ' is-on' : ''}`}
+                      onClick={() => void alternarGrupo(grupo.id)}
+                    >
+                      <span className="analisador-tags-context-check" aria-hidden="true">
+                        {marcada ? '✓' : ''}
+                      </span>
+                      {grupo.nome}
+                    </button>
+                  );
+                })}
+              </>
+            )}
           </div>,
           document.body,
         )}

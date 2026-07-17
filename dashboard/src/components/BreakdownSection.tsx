@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { ArrowDown, ArrowUp, ArrowUpDown } from 'lucide-react';
-import { formatCurrency } from '../utils/formatters';
+import { formatCurrency, formatPercent } from '../utils/formatters';
 import type { TrendItem, ProductStats } from '../types/dashboard';
 
 // ==========================================
@@ -78,16 +78,23 @@ interface TrendCardProps {
     barColor: string;
     barGlow: string;
     isMobile: boolean;
+    /** Rótulo do período atual (ex.: "2026") — deixa claro que o R$ é total, não média. */
+    labelPeriodo?: string;
 }
 
 // ==========================================
 // Sub-component: single ranked list card (used for cliente/fabricante/categoria)
 // ==========================================
 
-function TrendCard({ title, items, barColor, barGlow, isMobile }: TrendCardProps) {
+function TrendCard({ title, items, barColor, barGlow, isMobile, labelPeriodo }: TrendCardProps) {
+    const maxAtual = Math.max(0, ...items.map((item) => item.rev25));
+
     return (
         <div className="glass-card">
-            <h3 style={{ color: 'white', marginBottom: '1.25rem', fontSize: isMobile ? '1rem' : '1.25rem' }}>{title}</h3>
+            <h3 style={{ color: 'white', marginBottom: '0.35rem', fontSize: isMobile ? '1rem' : '1.25rem' }}>{title}</h3>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', margin: '0 0 1.25rem' }}>
+              Total em {labelPeriodo || 'período atual'} · % vs mesmo mês do ano anterior · barra proporcional ao valor
+            </p>
             <div
                 className="custom-scrollbar"
                 style={{
@@ -100,10 +107,9 @@ function TrendCard({ title, items, barColor, barGlow, isMobile }: TrendCardProps
                 }}
             >
                 {items.map((item) => {
-                    const totalRevenue = item.rev24 + item.rev25;
-                    const maxTotal = items[0] ? (items[0].rev24 + items[0].rev25) : 1;
                     const percentChange = (item.rev24 && item.rev24 > 0) ? ((item.rev25 - item.rev24) / item.rev24) * 100 : 0;
                     const isPositive = percentChange >= 0;
+                    const barPct = maxAtual > 0 ? Math.min(100, Math.max(0, (item.rev25 / maxAtual) * 100)) : 0;
                     return (
                         <div key={item.id}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: isMobile ? '0.7rem' : '0.8rem' }}>
@@ -115,13 +121,13 @@ function TrendCard({ title, items, barColor, barGlow, isMobile }: TrendCardProps
                                         fontSize: '0.65rem',
                                         fontWeight: 'bold'
                                     }}>
-                                        {isPositive ? '↑' : '↓'} {isFinite(percentChange) ? Math.abs(percentChange).toFixed(1) : '0.0'}%
+                                        {isPositive ? '↑' : '↓'} {formatPercent(Math.abs(percentChange), 1)}
                                     </span>
                                 </div>
                             </div>
                             <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px' }}>
                                 <div style={{
-                                    width: `${Math.min(100, Math.max(0, (totalRevenue / (maxTotal || 1)) * 100))}%`,
+                                    width: `${barPct}%`,
                                     height: '100%',
                                     background: barColor,
                                     borderRadius: '2px',
@@ -217,7 +223,7 @@ export function BreakdownSection({
                                         <td style={{ padding, textAlign: 'right' }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
                                                 <span style={{ color: delta >= 0 ? '#10b981' : '#f43f5e', fontWeight: 700 }}>
-                                                    {delta > 0 ? '+' : ''}{delta > 1000 ? '1k%+' : delta.toFixed(delta > 100 ? 0 : 1)}%
+                                                    {delta > 0 ? '+' : ''}{delta > 1000 ? '1k%+' : formatPercent(delta, delta > 100 ? 0 : 1)}
                                                 </span>
                                             </div>
                                         </td>
@@ -243,20 +249,23 @@ export function BreakdownSection({
                 barColor="#f59e0b"
                 barGlow="rgba(245, 158, 11, 0.2)"
                 isMobile={isMobile}
+                labelPeriodo={labelB}
             />
             <TrendCard
                 title="Performance por Fabricante"
                 items={topMfrs}
                 barColor="var(--accent)"
-                barGlow="var(--accent-glow)"
+                barGlow="rgba(99, 102, 241, 0.25)"
                 isMobile={isMobile}
+                labelPeriodo={labelB}
             />
             <TrendCard
                 title="Performance por Categoria"
                 items={topDescs}
-                barColor="#ec4899"
-                barGlow="rgba(236, 72, 153, 0.2)"
+                barColor="#34d399"
+                barGlow="rgba(52, 211, 153, 0.25)"
                 isMobile={isMobile}
+                labelPeriodo={labelB}
             />
         </div>
     );

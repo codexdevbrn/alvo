@@ -170,6 +170,8 @@ interface CutoffDisplay {
     chartLabel: string;
 }
 
+type ChartPhase = 'idle' | 'exiting' | 'entering';
+
 interface AnimatedCutoffGroupProps {
     x1?: number;
     y1?: number;
@@ -179,15 +181,20 @@ interface AnimatedCutoffGroupProps {
     animKey: number;
     chartLabel: string;
     isMobile: boolean;
+    /** Fase do gráfico pai — quando entering/exiting, o corte acompanha o wipe/fade sem animação própria. */
+    chartPhase: ChartPhase;
 }
 
-const ENTER_LINE_MS = 720;
-const ENTER_LABEL_MS = 480;
-const EXIT_LABEL_MS = 480;
-const EXIT_LINE_MS = 600;
-/** Texto só começa depois da barra subir por completo. */
+/** Durações alinhadas a `.chart-phase-exiting` / `chart-redraw-in` em index.css. */
+const CHART_ENTER_MS = 980;
+
+const ENTER_LINE_MS = 520;
+const ENTER_LABEL_MS = 420;
+const EXIT_LABEL_MS = 360;
+const EXIT_LINE_MS = 420;
+/** Texto só começa depois da barra subir (toggle de meses fechados, gráfico idle). */
 const ENTER_LABEL_DELAY_MS = ENTER_LINE_MS;
-/** Barra só desce depois do texto sumir na barra. */
+/** Barra só desce depois do texto sumir (toggle de meses fechados, gráfico idle). */
 const EXIT_LINE_DELAY_MS = EXIT_LABEL_MS;
 
 /** cubic-bezier equivalente ao easeOutCubic. */
@@ -201,17 +208,42 @@ const EASE_IN_OUT = 'cubic-bezier(0.65, 0, 0.35, 1)';
  * o toggle do corte dispara um re-render pesado do gráfico que trava a main
  * thread por centenas de ms, e qualquer loop de rAF (ou stroke-dasharray/
  * clip-path, que ainda por cima repintam o blur do `.glass-card`) congela ou
- * pula junto com a thread. A transição CSS segue fluida mesmo com JS bloqueado. */
+ * pula junto com a thread. A transição CSS segue fluida mesmo com JS bloqueado.
+ *
+ * Quando o gráfico inteiro está em entering/exiting, NÃO rodamos essa sequência:
+ * o wipe/fade do `.chart-area` já revela/esconde barra+texto juntos. */
 function AnimatedCutoffGroup({
-    x1, y1, x2, y2, exiting, animKey, chartLabel, isMobile,
+    x1, y1, x2, y2, exiting, animKey, chartLabel, isMobile, chartPhase,
 }: AnimatedCutoffGroupProps) {
     const lineRef = useRef<SVGLineElement>(null);
     const labelRef = useRef<SVGTextElement>(null);
     const exitRunningRef = useRef(false);
+    const chartDriven = chartPhase === 'entering' || chartPhase === 'exiting';
 
-    // Entrada — só quando animKey muda ou monta visível
+    // Gráfico pai animando: estado final estático — entra/sai com o wipe/fade.
     useLayoutEffect(() => {
-        if (exiting) return;
+        if (!chartDriven) return;
+        if (x1 == null || y1 == null || x2 == null || y2 == null) return;
+        const line = lineRef.current;
+        const label = labelRef.current;
+        if (line == null || label == null) return;
+
+        exitRunningRef.current = false;
+        const x = x1;
+        const yBottom = Math.max(y1, y2);
+
+        line.style.transition = 'none';
+        line.style.transformBox = 'view-box';
+        line.style.transformOrigin = `${x}px ${yBottom}px`;
+        line.style.transform = 'scaleY(1)';
+        label.style.transition = 'none';
+        label.style.transform = 'translateX(0)';
+        label.style.opacity = '1';
+    }, [x1, y1, x2, y2, chartDriven, animKey]);
+
+    // Entrada — só no toggle do corte com gráfico idle
+    useLayoutEffect(() => {
+        if (chartDriven || exiting) return;
         if (x1 == null || y1 == null || x2 == null || y2 == null) return;
         const line = lineRef.current;
         const label = labelRef.current;
@@ -223,7 +255,6 @@ function AnimatedCutoffGroup({
         const yBottom = Math.max(y1, y2);
         const slideIntoBar = isMobile ? 18 : 24;
 
-        // Estado inicial sem transição…
         line.style.transition = 'none';
         line.style.transformBox = 'view-box';
         line.style.transformOrigin = `${x}px ${yBottom}px`;
@@ -232,20 +263,18 @@ function AnimatedCutoffGroup({
         label.style.transform = `translateX(${slideIntoBar}px)`;
         label.style.opacity = '0';
 
-        // …flush síncrono do estilo para a transição partir do estado inicial…
         void line.getBoundingClientRect();
 
-        // …e então os alvos, com o texto atrasado até a barra subir inteira.
         line.style.transition = `transform ${ENTER_LINE_MS}ms ${EASE_OUT}`;
         line.style.transform = 'scaleY(1)';
         label.style.transition = `transform ${ENTER_LABEL_MS}ms ${EASE_OUT} ${ENTER_LABEL_DELAY_MS}ms, opacity ${ENTER_LABEL_MS}ms ${EASE_OUT} ${ENTER_LABEL_DELAY_MS}ms`;
         label.style.transform = 'translateX(0)';
         label.style.opacity = '1';
-    }, [x1, y1, x2, y2, animKey, isMobile, exiting]);
+    }, [x1, y1, x2, y2, animKey, isMobile, exiting, chartDriven]);
 
-    // Saída — transição suave, sem remontar estado visual
+    // Saída — só no toggle do corte com gráfico idle
     useLayoutEffect(() => {
-        if (!exiting) return;
+        if (chartDriven || !exiting) return;
         if (exitRunningRef.current) return;
         if (x1 == null || y1 == null || x2 == null || y2 == null) return;
         const line = lineRef.current;
@@ -258,11 +287,8 @@ function AnimatedCutoffGroup({
         const yBottom = Math.max(y1, y2);
         const slideIntoBar = isMobile ? 18 : 24;
 
-        // Parte do estado visível pleno (interrompe a entrada onde estiver)…
         line.style.transition = 'none';
         line.style.transformBox = 'view-box';
-        // Mesma âncora da entrada (yBottom): o topo desce até a base — a
-        // barra "afunda" pra baixo em vez de encolher subindo.
         line.style.transformOrigin = `${x}px ${yBottom}px`;
         line.style.transform = 'scaleY(1)';
         label.style.transition = 'none';
@@ -271,7 +297,6 @@ function AnimatedCutoffGroup({
 
         void line.getBoundingClientRect();
 
-        // …texto desliza de volta pra barra; barra só desce depois dele sumir.
         label.style.transition = `transform ${EXIT_LABEL_MS}ms ${EASE_IN_OUT}, opacity ${EXIT_LABEL_MS}ms ${EASE_IN_OUT}`;
         label.style.transform = `translateX(${slideIntoBar}px)`;
         label.style.opacity = '0';
@@ -279,13 +304,9 @@ function AnimatedCutoffGroup({
         line.style.transform = 'scaleY(0)';
 
         return () => {
-            // Sem isso, o StrictMode do React (monta → cleanup → monta de novo
-            // em dev) deixaria a flag travada em `true` e a 2ª montagem nunca
-            // iniciaria a saída de verdade — o grupo sumiria de uma vez quando
-            // o timeout em HistoryChartInner desmonta tudo.
             exitRunningRef.current = false;
         };
-    }, [x1, y1, x2, y2, exiting, animKey, isMobile]);
+    }, [x1, y1, x2, y2, exiting, animKey, isMobile, chartDriven]);
 
     if (x1 == null || y1 == null || x2 == null || y2 == null) return null;
 
@@ -331,14 +352,12 @@ function chartDataEqual(a: ChartPoint[], b: ChartPoint[]): boolean {
     });
 }
 
-type ChartPhase = 'idle' | 'exiting' | 'entering';
-
 /** Nome do @keyframes em index.css — usado pra filtrar o evento de término
  * (o elemento é pai do SVG inteiro do recharts, então `animationend`/
  * `transitionend` de qualquer coisa lá dentro borbulha até aqui). */
 const CHART_REDRAW_ANIMATION_NAME = 'chart-redraw-in';
 /** Duração do keyframe em index.css. Rede de segurança — ver comentário no efeito abaixo. */
-const CHART_ENTER_MS = 980;
+const CHART_ENTER_MS_SAFE = CHART_ENTER_MS;
 
 function HistoryChartInner({
     chartData, labelA, labelB, showA, showB, isCurrency = true, style,
@@ -375,7 +394,7 @@ function HistoryChartInner({
 
     useEffect(() => {
         if (chartPhase !== 'entering') return;
-        const t = window.setTimeout(endChartEntering, CHART_ENTER_MS + 150);
+        const t = window.setTimeout(endChartEntering, CHART_ENTER_MS_SAFE + 150);
         return () => window.clearTimeout(t);
     }, [chartPhase, endChartEntering]);
 
@@ -585,6 +604,7 @@ function HistoryChartInner({
                                             animKey={cutoffAnimKey}
                                             chartLabel={displayCorte.chartLabel}
                                             isMobile={isMobile}
+                                            chartPhase={chartPhase}
                                         />
                                     )}
                                 />

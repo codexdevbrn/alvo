@@ -31,6 +31,26 @@ function parseGranularidade(raw: string | null): GranularidadeDash {
   return 'Mensal';
 }
 
+/** Lê IDs de filtro do localStorage; [] = todos. Aceita legado (número único ou "-1"). */
+function lerIdsFiltro(chave: string): number[] {
+  const v = localStorage.getItem(chave);
+  if (v == null || v === '' || v === '-1') return [];
+  try {
+    const parsed = JSON.parse(v);
+    if (Array.isArray(parsed)) {
+      return parsed.map(Number).filter(n => Number.isFinite(n) && n >= 0);
+    }
+  } catch { /* legado: número único */ }
+  const n = Number(v);
+  return Number.isFinite(n) && n >= 0 ? [n] : [];
+}
+
+function rotuloFiltroIds(ids: number[], nomes: string[], plural: string): string | undefined {
+  if (ids.length === 0) return undefined;
+  if (ids.length === 1) return nomes[ids[0]];
+  return `${ids.length} ${plural}`;
+}
+
 // ==========================================
 // Period window helpers
 // ==========================================
@@ -94,15 +114,18 @@ export default function DashboardPage() {
   const [empresa, setEmpresa] = useState<string>(() => localStorage.getItem('alvo_empresa') || '');
   const [empresaLoading, setEmpresaLoading] = useState(false);
   const [empresaError, setEmpresaError] = useState<string | null>(null);
+  /** Incrementado após regenerar Base.csv para forçar reload sem trocar a empresa. */
+  const [empresaReloadKey, setEmpresaReloadKey] = useState(0);
   /** null = modal fechado; string (incl. '') = empresa pendente de confirmação */
   const [empresaPendenteConfirmacao, setEmpresaPendenteConfirmacao] = useState<string | null>(null);
 
   // Filter States with Persistence (atualizam na hora — a UI responde imediatamente)
-  const [client, setClient] = useState<number>(() => { const v = localStorage.getItem('alvo_client'); return v !== null ? Number(v) : -1; });
-  const [mfr, setMfr] = useState<number>(() => { const v = localStorage.getItem('alvo_mfr'); return v !== null ? Number(v) : -1; });
-  const [desc, setDesc] = useState<number>(() => { const v = localStorage.getItem('alvo_desc'); return v !== null ? Number(v) : -1; });
-  const [store, setStore] = useState<number>(() => { const v = localStorage.getItem('alvo_store'); return v !== null ? Number(v) : -1; });
-  const [severity, setSeverity] = useState<number>(() => { const v = localStorage.getItem('alvo_severity'); return v !== null ? Number(v) : -1; });
+  // number[] vazio = todos (mesmo padrão do período)
+  const [client, setClient] = useState<number[]>(() => lerIdsFiltro('alvo_client'));
+  const [mfr, setMfr] = useState<number[]>(() => lerIdsFiltro('alvo_mfr'));
+  const [desc, setDesc] = useState<number[]>(() => lerIdsFiltro('alvo_desc'));
+  const [store, setStore] = useState<number[]>(() => lerIdsFiltro('alvo_store'));
+  const [severity, setSeverity] = useState<number[]>(() => lerIdsFiltro('alvo_severity'));
   const [period, setPeriod] = useState<number[]>(() => JSON.parse(localStorage.getItem('alvo_period') || '[]'));
   const [modalPeriod, setModalPeriod] = useState<number[]>(() => JSON.parse(localStorage.getItem('alvo_period_modal') || '[]'));
   const [usarMesesFechados, setUsarMesesFechados] = useState(() => {
@@ -188,11 +211,11 @@ export default function DashboardPage() {
 
   // Sync to LocalStorage
   useEffect(() => {
-    localStorage.setItem('alvo_client', client.toString());
-    localStorage.setItem('alvo_mfr', mfr.toString());
-    localStorage.setItem('alvo_desc', desc.toString());
-    localStorage.setItem('alvo_store', store.toString());
-    localStorage.setItem('alvo_severity', severity.toString());
+    localStorage.setItem('alvo_client', JSON.stringify(client));
+    localStorage.setItem('alvo_mfr', JSON.stringify(mfr));
+    localStorage.setItem('alvo_desc', JSON.stringify(desc));
+    localStorage.setItem('alvo_store', JSON.stringify(store));
+    localStorage.setItem('alvo_severity', JSON.stringify(severity));
     localStorage.setItem('alvo_period', JSON.stringify(period));
     localStorage.setItem('alvo_period_modal', JSON.stringify(modalPeriod));
     localStorage.setItem('alvo_meses_fechados', String(usarMesesFechados));
@@ -253,7 +276,11 @@ export default function DashboardPage() {
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [empresa]);
+  }, [empresa, empresaReloadKey]);
+
+  const recarregarEmpresaAtual = (_nome?: string) => {
+    setEmpresaReloadKey((k) => k + 1);
+  };
 
   const handleEmpresaChange = (nova: string) => {
     // Os filtros são índices nos maps do dataset atual — não valem para outro
@@ -331,7 +358,7 @@ export default function DashboardPage() {
   // ==========================================
 
   const clearFilters = () => {
-    setClient(-1); setMfr(-1); setDesc(-1); setStore(-1); setPeriod([]); setSeverity(-1);
+    setClient([]); setMfr([]); setDesc([]); setStore([]); setPeriod([]); setSeverity([]);
     setUsarMesesFechados(true);
     setGranularidade('Mensal');
     setVisaoDetalhada(false);
@@ -382,15 +409,20 @@ export default function DashboardPage() {
 
     // Severity Calculation Setup (Needs to happen before client filter to populate client options correctly)
     let validClients: Set<number> | null = null;
+    const clientSet = client.length ? new Set(client) : null;
+    const mfrSet = mfr.length ? new Set(mfr) : null;
+    const descSet = desc.length ? new Set(desc) : null;
+    const storeSet = store.length ? new Set(store) : null;
+    const severitySet = severity.length ? new Set(severity) : null;
 
-    if (severity !== -1) {
+    if (severitySet) {
       // Calculate validity based on Context (Mfr, Desc, Store) but IGNORING Client filter
       // This ensures the Client Filter Options list correctly reflects clients that match the severity
       let rowsForSev = baseRows;
       // Severity should be based on GLOBAL client performance (per store), 
       // NOT restricted by the specific product/mfr being viewed.
       // mfr/desc filters are removed here so "Critical" means "Critical Overall".
-      if (store !== -1) rowsForSev = rowsForSev.filter(r => r[1] === store);
+      if (storeSet) rowsForSev = rowsForSev.filter(r => storeSet.has(r[1]));
 
       // Fixed Reference Logic: Use Global Year vs Previous Year
       // Find the two most recent years in the dataset (e.g. 2025 and 2024)
@@ -433,7 +465,7 @@ export default function DashboardPage() {
           else if (diff <= -35 && diff > -60) cSev = 2;
           else if (diff <= -60) cSev = 3;
 
-          if (cSev === severity) vClients.add(Number(cId));
+          if (severitySet.has(cSev)) vClients.add(Number(cId));
         });
         validClients = vClients;
       } else {
@@ -443,11 +475,11 @@ export default function DashboardPage() {
     }
 
     let populationRows = baseRows;
-    // Apply filters
-    if (client !== -1) populationRows = populationRows.filter(r => r[2] === client);
-    if (mfr !== -1) populationRows = populationRows.filter(r => r[3] === mfr);
-    if (desc !== -1) populationRows = populationRows.filter(r => r[4] === desc);
-    if (store !== -1) populationRows = populationRows.filter(r => r[1] === store);
+    // Apply filters (OR dentro da dimensão; AND entre dimensões)
+    if (clientSet) populationRows = populationRows.filter(r => clientSet.has(r[2]));
+    if (mfrSet) populationRows = populationRows.filter(r => mfrSet.has(r[3]));
+    if (descSet) populationRows = populationRows.filter(r => descSet.has(r[4]));
+    if (storeSet) populationRows = populationRows.filter(r => storeSet.has(r[1]));
 
     // Apply Severity Filter (Intersection)
     if (validClients !== null) {
@@ -551,49 +583,58 @@ export default function DashboardPage() {
 
     // For clients: ignore current client filter
     let rowsC = baseRows;
-    if (mfr !== -1) rowsC = rowsC.filter(r => r[3] === mfr);
-    if (desc !== -1) rowsC = rowsC.filter(r => r[4] === desc);
-    if (store !== -1) rowsC = rowsC.filter(r => r[1] === store);
+    if (mfrSet) rowsC = rowsC.filter(r => mfrSet.has(r[3]));
+    if (descSet) rowsC = rowsC.filter(r => descSet.has(r[4]));
+    if (storeSet) rowsC = rowsC.filter(r => storeSet.has(r[1]));
     // Apply Severity Filter to Client Options
     if (validClients !== null) rowsC = rowsC.filter(r => validClients!.has(r[2]));
     rowsC.forEach(r => clientOpts.add(r[2]));
 
     // For manufacturers: ignore current mfr filter
     let rowsM = baseRows;
-    if (client !== -1) rowsM = rowsM.filter(r => r[2] === client);
-    if (desc !== -1) rowsM = rowsM.filter(r => r[4] === desc);
-    if (store !== -1) rowsM = rowsM.filter(r => r[1] === store);
+    if (clientSet) rowsM = rowsM.filter(r => clientSet.has(r[2]));
+    if (descSet) rowsM = rowsM.filter(r => descSet.has(r[4]));
+    if (storeSet) rowsM = rowsM.filter(r => storeSet.has(r[1]));
     // Apply Severity Filter to Mfr Options
     if (validClients !== null) rowsM = rowsM.filter(r => validClients!.has(r[2]));
     rowsM.forEach(r => mfrOpts.add(r[3]));
 
     // For descriptions: ignore current desc filter
     let rowsD = baseRows;
-    if (client !== -1) rowsD = rowsD.filter(r => r[2] === client);
-    if (mfr !== -1) rowsD = rowsD.filter(r => r[3] === mfr);
-    if (store !== -1) rowsD = rowsD.filter(r => r[1] === store);
+    if (clientSet) rowsD = rowsD.filter(r => clientSet.has(r[2]));
+    if (mfrSet) rowsD = rowsD.filter(r => mfrSet.has(r[3]));
+    if (storeSet) rowsD = rowsD.filter(r => storeSet.has(r[1]));
     // Apply Severity Filter to Desc Options
     if (validClients !== null) rowsD = rowsD.filter(r => validClients!.has(r[2]));
     rowsD.forEach(r => descOpts.add(r[4]));
 
     // For stores: ignore current store filter
     let rowsS = baseRows;
-    if (client !== -1) rowsS = rowsS.filter(r => r[2] === client);
-    if (mfr !== -1) rowsS = rowsS.filter(r => r[3] === mfr);
-    if (desc !== -1) rowsS = rowsS.filter(r => r[4] === desc);
+    if (clientSet) rowsS = rowsS.filter(r => clientSet.has(r[2]));
+    if (mfrSet) rowsS = rowsS.filter(r => mfrSet.has(r[3]));
+    if (descSet) rowsS = rowsS.filter(r => descSet.has(r[4]));
     // Apply Severity Filter to Store Options
     if (validClients !== null) rowsS = rowsS.filter(r => validClients!.has(r[2]));
     rowsS.forEach(r => storeOpts.add(r[1]));
 
-    // 7. Rankings and Charts based on rowsDisplay
-    // Single pass over populationRows accumulating client/mfr/desc trend sums
-    // together (instead of one full pass per dimension), using Sets for O(1)
-    // period membership instead of Array.includes.
+    // 7. Rankings: total do ÚLTIMO mês do período B (e o mesmo mês no ano A),
+    // para bater com o BI/mês que o usuário está conferindo (ex.: jun/26 =
+    // 90.681), em vez da média do YTD (ex.: 81.998).
+    const pBSorted = [...pB].sort((a, b) => a - b);
+    const rankBIdx = pBSorted.length > 0 ? pBSorted[pBSorted.length - 1] : -1;
+    const mesRank = rankBIdx >= 0 ? mesDeRotulo(data.monthly[rankBIdx]?.name ?? '') : 0;
+    const rankAIdx = mesRank > 0
+      ? (pA.find((i) => mesDeRotulo(data.monthly[i]?.name ?? '') === mesRank) ?? -1)
+      : -1;
+    const rankBSet = rankBIdx >= 0 ? new Set([rankBIdx]) : pBSet;
+    const rankASet = rankAIdx >= 0 ? new Set([rankAIdx]) : new Set<number>();
+    const rankLabel = rankBIdx >= 0 ? (data.monthly[rankBIdx]?.name ?? labelB) : labelB;
+
     const trendSums: Record<'c' | 'm' | 'd', Record<number, { vA: number, vB: number }>> = { c: {}, m: {}, d: {} };
     populationRows.forEach(r => {
       const pid = r[0], rev = r[6];
-      const inA = pASet.has(pid);
-      const inB = pBSet.has(pid);
+      const inA = rankASet.has(pid);
+      const inB = rankBSet.has(pid);
       if (!inA && !inB) return;
       const ids = { c: r[2], m: r[3], d: r[4] } as const;
       (Object.keys(trendSums) as Array<'c' | 'm' | 'd'>).forEach(key => {
@@ -606,12 +647,9 @@ export default function DashboardPage() {
     });
 
     const buildTrend = (mapType: 'c' | 'm' | 'd'): TrendItem[] => {
-      const divA = bucketsA || 1;
-      const divB = bucketsB || 1;
       return Object.entries(trendSums[mapType]).map(([id, v]): TrendItem | null => {
-        // Sempre média por bucket da grain — assim os R$ mudam ao trocar granularidade.
-        const valA = v.vA / divA;
-        const valB = v.vB / divB;
+        const valA = v.vA;
+        const valB = v.vB;
         if (valA === 0 && valB === 0) return null;
         return {
           id: Number(id),
@@ -621,7 +659,7 @@ export default function DashboardPage() {
           diff: valB - valA,
           up: valB >= valA
         };
-      }).filter((x): x is TrendItem => x !== null).sort((a, b) => (b.rev24 + b.rev25) - (a.rev24 + a.rev25));
+      }).filter((x): x is TrendItem => x !== null).sort((a, b) => b.rev25 - a.rev25);
     };
 
     // Clientes é uma dimensão bem maior que fabricante/categoria (~1300 vs
@@ -632,7 +670,7 @@ export default function DashboardPage() {
     const topDescs = buildTrend('d');
 
     let topProducts: ProductStats[] = [];
-    const showProductView = visaoDetalhada || desc !== -1;
+    const showProductView = visaoDetalhada || desc.length > 0;
     if (showProductView) {
       const prodStats: Record<number, { vA: number; vB: number; descRev: Record<number, number> }> = {};
       populationRows.forEach(r => {
@@ -702,6 +740,7 @@ export default function DashboardPage() {
         statsA, statsB, statsTotal, topClients, topMfrs, topDescs, topProducts,
         chartData: stableChart.chartData,
         labelA, labelB,
+        rankLabel,
         chartLabelA: stableChart.chartLabelA,
         chartLabelB: stableChart.chartLabelB,
         yearLabel, singleYearMode: isTrendMode,
@@ -775,6 +814,7 @@ export default function DashboardPage() {
           empresa={empresa}
           onEmpresaChange={solicitarTrocaEmpresa}
           empresaLoading={empresaLoading}
+          onRecarregarEmpresa={recarregarEmpresaAtual}
         />
         {modalConfirmacaoEmpresa}
         <div className="glass-card" style={{ padding: '4rem', textAlign: 'center' }}>
@@ -792,11 +832,12 @@ export default function DashboardPage() {
     <div className="dashboard-container">
       <DashboardHeader
         updatedAt={data?.updated_at}
-        clientName={client !== -1 ? data?.maps.c[client] : undefined}
+        clientName={data ? rotuloFiltroIds(client, data.maps.c, 'clientes') : undefined}
         isFiltering={isFilterPending}
         empresa={empresa}
         onEmpresaChange={solicitarTrocaEmpresa}
         empresaLoading={empresaLoading}
+        onRecarregarEmpresa={recarregarEmpresaAtual}
       />
 
       {modalConfirmacaoEmpresa}
@@ -908,10 +949,10 @@ export default function DashboardPage() {
               topMfrs={processed.stats?.topMfrs || []}
               topDescs={processed.stats?.topDescs || []}
               topProducts={processed.stats?.topProducts || []}
-              showProductView={visaoDetalhada || desc !== -1}
-              selectedDescName={desc !== -1 ? data?.maps.d[desc] : undefined}
+              showProductView={visaoDetalhada || desc.length > 0}
+              selectedDescName={data ? rotuloFiltroIds(desc, data.maps.d, 'descrições') : undefined}
               labelA={processed.stats?.labelA || ""}
-              labelB={processed.stats?.labelB || ""}
+              labelB={processed.stats?.rankLabel || processed.stats?.labelB || ""}
             />
           </div>
         </div>

@@ -25,7 +25,7 @@ CATALOGO_RELATORIOS = [
         ("top_produtos", "Venda por Produto (Top Produtos)"),
     ]),
     ("Segmentação e Poder de Compra", [
-        ("abc", "Faturamento e Segmentação de Clientes (ABC)"),
+        ("abc", "Concentrado / Faturamento e Segmentação de Clientes (ABC)"),
         ("poder_compra_clientes", "Poder de Compra por Cliente (3 maiores meses)"),
         ("migracao_abc", "Migração de Grupo (inclui resumo e score por cliente)"),
     ]),
@@ -41,6 +41,10 @@ CATALOGO_RELATORIOS = [
         ("clientes_queda_qtd", "Boletim: Clientes em Queda de Quantidade"),
         ("correlacao_produto_cliente", "Boletim: Correlação Produto x Cliente"),
         ("impacto_financeiro_churn", "Boletim: Impacto Financeiro do Churn"),
+    ]),
+    ("Alvos", [
+        ("mais_atacado", "Mais Atacado"),
+        ("liquidez", "Liquidez (Estoque + Vendas)"),
     ]),
 ]
 
@@ -62,6 +66,9 @@ NOMES_ANALISE = {
     "clientes_queda_qtd": "Clientes_Queda_Qtd",
     "correlacao_produto_cliente": "Correlacao_Prod_Cliente",
     "impacto_financeiro_churn": "Impacto_Financeiro_Churn",
+    "mais_atacado": "Mais_Atacado",
+    "liquidez_estoque": "Liquidez_Estoque",
+    "liquidez_vendas": "Liquidez_Vendas",
 }
 
 COLUNAS_MOEDA_POR_ANALISE = {
@@ -82,7 +89,15 @@ COLUNAS_MOEDA_POR_ANALISE = {
     "clientes_queda_qtd": ["Perda_Receita"],
     "correlacao_produto_cliente": ["Reducao_Receita"],
     "impacto_financeiro_churn": ["Receita_Sob_Risco"],
+    "mais_atacado": ["Receita Acumulada 11 Meses"],
+    "liquidez_estoque": ["Preço_médio_de_venda", "Preço_médio_cmv", "Último_custo"],
+    "liquidez_vendas": [],
 }
+
+
+def _eh_coluna_percentual(nome_coluna):
+    """Colunas em escala 0–100 do motor (Reducao_Percentual, Tendencia_Pct...)."""
+    return "Percentual" in str(nome_coluna) or str(nome_coluna).endswith("_Pct")
 
 
 def _ajustar_largura_colunas(planilha):
@@ -135,6 +150,11 @@ def _escrever_dataframe(workbook, nome_aba, df, colunas_moeda=None):
         if nome_coluna in colunas_moeda:
             for linha in range(2, planilha.max_row + 1):
                 planilha.cell(row=linha, column=indice_coluna).number_format = 'R$ #,##0.00'
+        elif _eh_coluna_percentual(nome_coluna):
+            # Valores já vêm em escala 0–100 — o "%" é literal (não o formato
+            # percentual do Excel, que multiplicaria por 100 de novo).
+            for linha in range(2, planilha.max_row + 1):
+                planilha.cell(row=linha, column=indice_coluna).number_format = '0.00"%"'
 
     _formatar_cabecalho(planilha)
     _ajustar_largura_colunas(planilha)
@@ -198,7 +218,10 @@ def exportar_relatorio_excel(caminho_saida, resultados_analise, relatorios_perso
     for granularidade, analises in resultados_analise.items():
         for chave_analise, df_analise in analises.items():
             nome_base = NOMES_ANALISE.get(chave_analise, chave_analise)
-            nome_aba = f"{nome_base}_{granularidade}"[:31]  # limite do Excel
+            if granularidade == "Alvos":
+                nome_aba = str(nome_base)[:31]
+            else:
+                nome_aba = f"{nome_base}_{granularidade}"[:31]  # limite do Excel
             if df_analise is None or df_analise.empty:
                 planilha = workbook.create_sheet(nome_aba)
                 planilha.append(["Sem dados para esta análise/granularidade."])

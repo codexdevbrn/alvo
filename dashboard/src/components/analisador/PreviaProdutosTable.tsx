@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import type { ItemProdutoPrevia } from '../../api/client';
+import { formatCurrency, rotuloGrupoCurto } from '../../utils/formatters';
 
 interface PreviaProdutosTableProps {
   itens: ItemProdutoPrevia[];
@@ -8,13 +9,9 @@ interface PreviaProdutosTableProps {
   carregando?: boolean;
 }
 
-function formatarMoeda(valor: number): string {
-  return valor.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
-}
-
 function formatarPct(valor: number | null): string {
   if (valor == null || Number.isNaN(valor)) return '—';
-  return `${valor.toFixed(2)}%`;
+  return `${valor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 }
 
 export function PreviaProdutosTable({ itens, excluidos, onToggle, carregando }: PreviaProdutosTableProps) {
@@ -78,7 +75,7 @@ export function PreviaProdutosTable({ itens, excluidos, onToggle, carregando }: 
           >
             <option value="">Todos</option>
             {gruposDisponiveis.map((grupo) => (
-              <option key={grupo} value={grupo}>{grupo}</option>
+              <option key={grupo} value={grupo}>{rotuloGrupoCurto(grupo)}</option>
             ))}
           </select>
         </label>
@@ -91,8 +88,8 @@ export function PreviaProdutosTable({ itens, excluidos, onToggle, carregando }: 
               <th className="col-check">Incluir?</th>
               <th className="col-nome">Produto</th>
               <th className="col-num">Receita</th>
-              <th className="col-pct">% Receita</th>
-              <th className="col-pct-acum">% Acumulada</th>
+              <th className="col-pct">% Rec.</th>
+              <th className="col-pct-acum">% Acum.</th>
               <th className="col-grupo">Grupo</th>
             </tr>
           </thead>
@@ -116,10 +113,10 @@ export function PreviaProdutosTable({ itens, excluidos, onToggle, carregando }: 
                     </label>
                   </td>
                   <td className="col-nome" title={item.produto}>{item.produto}</td>
-                  <td className="col-num">{formatarMoeda(item.receita)}</td>
+                  <td className="col-num">{formatCurrency(item.receita)}</td>
                   <td className="col-pct">{formatarPct(item.percentual_receita)}</td>
                   <td className="col-pct-acum">{formatarPct(item.percentual_acumulado)}</td>
-                  <td className="col-grupo">{item.grupo}</td>
+                  <td className="col-grupo" title={item.grupo}>{rotuloGrupoCurto(item.grupo)}</td>
                 </tr>
               );
             })}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Download, FolderOpen, LogOut, Save, Settings } from 'lucide-react';
 import {
@@ -15,18 +15,24 @@ import {
   obterPreviaGrupos,
   obterPreviaProdutos,
   obterTagsClientes,
+  regenerarBaseEmpresa,
   salvarConfiguracaoEmpresa,
+  salvarCatalogoTags,
+  salvarGruposManuais,
   salvarTagsUmCliente,
-  sugerirCortesGrupos,
+  escolherPasta,
   tentarCarregarConfiguracaoEmpresa,
+  TAGS_CATALOGO_PADRAO,
   type CategoriaCatalogo,
   type ConfigEmpresaSalva,
   type Grupo,
+  type GrupoManualClientes,
   type ItemClientePrevia,
   type ItemProdutoPrevia,
   type ParametrosAnalise,
   type PreviaBase,
   type ResultadoAnalise,
+  type TagCatalogoItem,
   type TagCliente,
 } from '../api/client';
 import { PreviaClientesTable } from '../components/analisador/PreviaClientesTable';
@@ -35,8 +41,20 @@ import { ConfigModal } from '../components/analisador/ConfigModal';
 import { NumberStepper } from '../components/analisador/NumberStepper';
 import { ResultTable } from '../components/analisador/ResultTable';
 import { ExportarModal } from '../components/analisador/ExportarModal';
+import { ExplorarBuilder } from '../components/analisador/ExplorarBuilder';
+import { ClientesGruposPanel } from '../components/analisador/ClientesGruposPanel';
+import { slugId } from '../utils/slug';
+import { rotuloGrupoCurto } from '../utils/formatters';
 
 type Etapa = 'carregando-base' | 'config' | 'resultados';
+type AbaWorkspace = 'relatorios' | 'graficos' | 'tabelas' | 'clientes';
+
+const ABAS_WORKSPACE: { id: AbaWorkspace; rotulo: string }[] = [
+  { id: 'relatorios', rotulo: 'Relatórios' },
+  { id: 'graficos', rotulo: 'Gráficos' },
+  { id: 'tabelas', rotulo: 'Tabelas' },
+  { id: 'clientes', rotulo: 'Clientes' },
+];
 
 type OverridePrevia = {
   clientesExcluidos: string[];
@@ -50,6 +68,21 @@ type OverridePrevia = {
 const CORTES_CLIENTES_PADRAO: [number, number, number] = [30, 50, 60];
 const CORTE_PRODUTOS_PADRAO = 80;
 const MAX_POR_GRUPO_PADRAO = 20;
+
+function chaveStorageLoja(empresa: string): string {
+  return `analisador_loja_${empresa}`;
+}
+
+function lerLojaSalva(empresa: string): string {
+  if (!empresa) return '';
+  return localStorage.getItem(chaveStorageLoja(empresa)) || '';
+}
+
+function persistirLoja(empresa: string, loja: string): void {
+  if (!empresa) return;
+  if (loja) localStorage.setItem(chaveStorageLoja(empresa), loja);
+  else localStorage.removeItem(chaveStorageLoja(empresa));
+}
 
 function resumirRegrasConfig(dados: ConfigEmpresaSalva): string[] {
   const cortes = dados.cortesClientes ?? CORTES_CLIENTES_PADRAO;
@@ -106,6 +139,10 @@ export default function AnalisadorPage() {
   const [grupos, setGrupos] = useState<Grupo[] | null>(null);
   const [itensClientes, setItensClientes] = useState<ItemClientePrevia[]>([]);
   const [tagsPorCliente, setTagsPorCliente] = useState<Record<string, TagCliente[]>>({});
+  const [tagsCatalogo, setTagsCatalogo] = useState<TagCatalogoItem[]>(TAGS_CATALOGO_PADRAO);
+  const [gruposManuais, setGruposManuais] = useState<GrupoManualClientes[]>([]);
+  const [salvandoTagsCatalogo, setSalvandoTagsCatalogo] = useState(false);
+  const [regenerandoBase, setRegenerandoBase] = useState(false);
   const [carregandoGrupos, setCarregandoGrupos] = useState(false);
   const [produtosGrupos, setProdutosGrupos] = useState<Grupo[] | null>(null);
   const [itensProdutos, setItensProdutos] = useState<ItemProdutoPrevia[]>([]);
@@ -113,9 +150,26 @@ export default function AnalisadorPage() {
   const [produtosNaoHarmCompletos, setProdutosNaoHarmCompletos] = useState<string[]>([]);
   const [carregandoProdutos, setCarregandoProdutos] = useState(false);
 
+  const [abaWorkspace, setAbaWorkspace] = useState<AbaWorkspace>('relatorios');
+  const [salvandoGrupos, setSalvandoGrupos] = useState(false);
+  const [clientesBalcao, setClientesBalcao] = useState<string[]>([]);
+  /** Serializa saves de grupos (painel + modal) para não sobrescrever no disco. */
+  const gruposSaveChainRef = useRef(Promise.resolve());
+  const gruposManuaisRef = useRef(gruposManuais);
+  gruposManuaisRef.current = gruposManuais;
+  /** Invalida cargas async antigas ao trocar empresa/loja rapidamente. */
+  const cargaSeqRef = useRef(0);
+  /** Debounce da prévia após saves de grupos (último empresa/loja vence). */
+  const gruposPreviaDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const gruposPreviaCtxRef = useRef<{ empresa: string; loja: string | null } | null>(null);
+
   const [empresas, setEmpresas] = useState<string[]>([]);
   const [empresaSelecionada, setEmpresaSelecionada] = useState(
     () => localStorage.getItem('alvo_empresa') || '',
+  );
+  /** '' = Todas as lojas; demais = nome da loja (escopo de config/tags). */
+  const [lojaSelecionada, setLojaSelecionada] = useState(
+    () => lerLojaSalva(localStorage.getItem('alvo_empresa') || ''),
   );
 
   const [caminhoFonte, setCaminhoFonte] = useState<string | null>(null);
@@ -126,10 +180,16 @@ export default function AnalisadorPage() {
   const [configPendente, setConfigPendente] = useState<{
     empresa: string;
     dados: ConfigEmpresaSalva;
+    loja?: string | null;
   } | null>(null);
 
   const nomeEmpresaEfetivo = empresaSelecionada || nomeEmpresaManual.trim();
   const empresaBase = empresaSelecionada || null;
+  /** null/omitido nas APIs = todas as lojas. */
+  const lojaApi = lojaSelecionada || null;
+  const lojasDisponiveis = previa?.lojas ?? [];
+  const mostrarSeletorLoja = lojasDisponiveis.length > 1;
+  const rotuloEscopoLoja = lojaSelecionada || 'Todas as lojas';
 
   useEffect(() => {
     obterCatalogo()
@@ -144,6 +204,23 @@ export default function AnalisadorPage() {
         setCaminhoTrabalhoInput(trabalho || '');
       })
       .catch(() => {});
+  }, []);
+
+  // Recarrega o catálogo ao entrar na aba Relatórios (pega categorias novas sem F5).
+  useEffect(() => {
+    if (abaWorkspace !== 'relatorios') return;
+    obterCatalogo()
+      .then(setCatalogo)
+      .catch(() => {});
+  }, [abaWorkspace]);
+
+  useEffect(() => {
+    return () => {
+      if (gruposPreviaDebounceRef.current !== null) {
+        clearTimeout(gruposPreviaDebounceRef.current);
+        gruposPreviaDebounceRef.current = null;
+      }
+    };
   }, []);
 
   const aplicarDadosConfig = (dados: ConfigEmpresaSalva): OverridePrevia => {
@@ -213,14 +290,21 @@ export default function AnalisadorPage() {
 
   const carregarBaseAtual = async (
     empresa: string | null,
-    opcoes?: { ajustarCortes?: boolean; override?: OverridePrevia },
+    opcoes?: { ajustarCortes?: boolean; override?: OverridePrevia; loja?: string | null },
   ) => {
+    const seq = ++cargaSeqRef.current;
     const ajustarCortes = opcoes?.ajustarCortes ?? true;
+    const loja = opcoes?.loja !== undefined ? opcoes.loja : lojaApi;
     setErro(null);
     setEtapa('carregando-base');
     try {
-      const resultado = await obterBase(empresa);
+      const resultado = await obterBase(empresa, loja);
+      if (seq !== cargaSeqRef.current) return;
       setPrevia(resultado);
+      if (loja && resultado.lojas && resultado.lojas.length > 0 && !resultado.lojas.includes(loja)) {
+        setLojaSelecionada('');
+        if (empresa) persistirLoja(empresa, '');
+      }
       if (resultado.granularidades.length > 0) {
         if (opcoes?.ajustarCortes === false) {
           setGranularidade((atual) =>
@@ -231,55 +315,88 @@ export default function AnalisadorPage() {
         }
       }
       setEtapa('config');
-      await carregarPrevias(empresa, { ajustarCortes, override: opcoes?.override });
+      if (seq !== cargaSeqRef.current) return;
+      await carregarPrevias(empresa, { ajustarCortes, override: opcoes?.override, loja });
+      if (seq !== cargaSeqRef.current) return;
     } catch (e) {
+      if (seq !== cargaSeqRef.current) return;
       setErro(e instanceof Error ? e.message : 'Falha ao carregar a base de dados.');
       setEtapa('config');
     }
   };
 
-  /** Antes de puxar dados: se há config.json, pergunta; senão usa o padrão (autoajuste max). */
-  const iniciarEmpresa = async (nome: string | null) => {
+  /** Antes de puxar dados: se há config.json no escopo, pergunta; senão usa o padrão (autoajuste max). */
+  const iniciarEmpresa = async (nome: string | null, loja?: string | null) => {
+    const seq = ++cargaSeqRef.current;
     setConfigPendente(null);
+    const lojaEfetiva = loja !== undefined ? loja : lojaApi;
     if (!nome) {
+      setLojaSelecionada('');
       const override = resetarParaPadrao();
-      await carregarBaseAtual(null, { ajustarCortes: true, override });
+      if (seq !== cargaSeqRef.current) return;
+      await carregarBaseAtual(null, { ajustarCortes: true, override, loja: null });
       return;
     }
     setEtapa('carregando-base');
     try {
-      const dados = await tentarCarregarConfiguracaoEmpresa(nome);
+      const dados = await tentarCarregarConfiguracaoEmpresa(nome, lojaEfetiva);
+      if (seq !== cargaSeqRef.current) return;
       if (dados) {
-        setConfigPendente({ empresa: nome, dados });
+        setConfigPendente({ empresa: nome, dados, loja: lojaEfetiva });
         return;
       }
       const override = resetarParaPadrao();
-      await carregarBaseAtual(nome, { ajustarCortes: true, override });
+      await carregarBaseAtual(nome, { ajustarCortes: true, override, loja: lojaEfetiva });
     } catch (e) {
+      if (seq !== cargaSeqRef.current) return;
       setErro(e instanceof Error ? e.message : 'Falha ao verificar configuração da empresa.');
       const override = resetarParaPadrao();
-      await carregarBaseAtual(nome, { ajustarCortes: true, override });
+      await carregarBaseAtual(nome, { ajustarCortes: true, override, loja: lojaEfetiva });
+    }
+  };
+
+  /** Troca de escopo de loja: aplica config salva do escopo ou padrão, sem modal. */
+  const trocarEscopoLoja = async (loja: string | null) => {
+    if (!empresaSelecionada) return;
+    const seq = ++cargaSeqRef.current;
+    setConfigPendente(null);
+    setEtapa('carregando-base');
+    try {
+      const dados = await tentarCarregarConfiguracaoEmpresa(empresaSelecionada, loja);
+      if (seq !== cargaSeqRef.current) return;
+      if (dados) {
+        const override = aplicarDadosConfig(dados);
+        await carregarBaseAtual(empresaSelecionada, { ajustarCortes: false, override, loja });
+        return;
+      }
+      const override = resetarParaPadrao();
+      await carregarBaseAtual(empresaSelecionada, { ajustarCortes: true, override, loja });
+    } catch (e) {
+      if (seq !== cargaSeqRef.current) return;
+      setErro(e instanceof Error ? e.message : 'Falha ao carregar configuração do escopo de loja.');
+      const override = resetarParaPadrao();
+      await carregarBaseAtual(empresaSelecionada, { ajustarCortes: true, override, loja });
     }
   };
 
   const confirmarAplicarConfig = () => {
     if (!configPendente) return;
-    const { empresa, dados } = configPendente;
+    const { empresa, dados, loja } = configPendente;
     setConfigPendente(null);
     const override = aplicarDadosConfig(dados);
-    void carregarBaseAtual(empresa, { ajustarCortes: false, override });
+    void carregarBaseAtual(empresa, { ajustarCortes: false, override, loja: loja ?? lojaApi });
   };
 
   const recusarConfig = () => {
     if (!configPendente) return;
-    const empresa = configPendente.empresa;
+    const { empresa, loja } = configPendente;
     setConfigPendente(null);
     const override = resetarParaPadrao();
-    void carregarBaseAtual(empresa, { ajustarCortes: true, override });
+    void carregarBaseAtual(empresa, { ajustarCortes: true, override, loja: loja ?? lojaApi });
   };
 
   useEffect(() => {
-    void iniciarEmpresa(empresaSelecionada || null);
+    void iniciarEmpresa(empresaSelecionada || null, lojaSelecionada || null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -312,6 +429,7 @@ export default function AnalisadorPage() {
     nome_empresa: nomeEmpresaEfetivo,
     nome_usuario: '',
     empresa: empresaBase,
+    loja: lojaApi,
   });
 
   const atualizarPreviaGrupos = async (parametros?: {
@@ -319,6 +437,7 @@ export default function AnalisadorPage() {
     cortes?: [number, number, number];
     balcao?: boolean;
     empresa?: string | null;
+    loja?: string | null;
     maxPorGrupo?: number;
     ajustarCortes?: boolean;
   }) => {
@@ -332,6 +451,7 @@ export default function AnalisadorPage() {
         max_itens_por_grupo: parametros?.maxPorGrupo ?? maxPorGrupo,
         ajustar_cortes: parametros?.ajustarCortes ?? true,
         empresa: parametros?.empresa !== undefined ? parametros.empresa : empresaBase,
+        loja: parametros?.loja !== undefined ? parametros.loja : lojaApi,
       });
       if (Array.isArray(resultado.cortes_clientes) && resultado.cortes_clientes.length === 3) {
         setCortesClientes(resultado.cortes_clientes as [number, number, number]);
@@ -352,36 +472,13 @@ export default function AnalisadorPage() {
 
   const handleAtualizarPreviaGrupos = () => atualizarPreviaGrupos({ ajustarCortes: false });
 
-  const handleSugerirCortes = async () => {
-    setErro(null);
-    setCarregandoGrupos(true);
-    try {
-      const resultado = await sugerirCortesGrupos({
-        clientes_excluidos: Array.from(clientesExcluidos),
-        cortes_clientes: cortesClientes,
-        desconsiderar_balcao: desconsiderarBalcao,
-        max_por_grupo: maxPorGrupo,
-        empresa: empresaBase,
-      });
-      setCortesClientes(resultado.cortes_clientes);
-      setGrupos(resultado.grupos);
-      if (!Array.isArray(resultado.itens)) {
-        setItensClientes([]);
-        setErro('Backend desatualizado: a prévia não retornou a lista de clientes. Reinicie o uvicorn.');
-      } else {
-        setItensClientes(resultado.itens);
-      }
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Falha ao sugerir cortes.');
-    } finally {
-      setCarregandoGrupos(false);
-    }
-  };
+  const handleSugerirCortes = () => atualizarPreviaGrupos({ ajustarCortes: true });
 
   const atualizarPreviaProdutos = async (parametros?: {
     produtosExcluidos?: string[];
     corte?: number;
     empresa?: string | null;
+    loja?: string | null;
     maxPorGrupo?: number;
     ajustarCortes?: boolean;
   }) => {
@@ -394,6 +491,7 @@ export default function AnalisadorPage() {
         max_itens_por_grupo: parametros?.maxPorGrupo ?? maxPorGrupo,
         ajustar_cortes: parametros?.ajustarCortes ?? true,
         empresa: parametros?.empresa !== undefined ? parametros.empresa : empresaBase,
+        loja: parametros?.loja !== undefined ? parametros.loja : lojaApi,
       });
       if (typeof resultado.corte_produtos === 'number') {
         setCorteProdutos(resultado.corte_produtos);
@@ -454,17 +552,145 @@ export default function AnalisadorPage() {
     });
   };
 
-  const carregarTagsClientes = async (empresa: string | null) => {
+  const carregarTagsClientes = async (empresa: string | null, loja?: string | null) => {
     if (!empresa) {
       setTagsPorCliente({});
+      setTagsCatalogo(TAGS_CATALOGO_PADRAO);
+      setGruposManuais([]);
+      setClientesBalcao([]);
       return;
     }
     try {
-      const dados = await obterTagsClientes(empresa);
+      const dados = await obterTagsClientes(empresa, loja !== undefined ? loja : lojaApi);
       setTagsPorCliente(dados.tags ?? {});
-    } catch {
-      setTagsPorCliente({});
+      setTagsCatalogo(dados.catalogo ?? TAGS_CATALOGO_PADRAO);
+      setGruposManuais(dados.grupos ?? []);
+      setClientesBalcao(dados.clientes_balcao ?? []);
+    } catch (e) {
+      // Não zera gruposManuais: a prévia pode ter aplicado grupos do disco;
+      // limpar aqui deixaria o painel Clientes inconsistente com a prévia.
+      setErro(e instanceof Error ? e.message : 'Falha ao carregar tags/grupos da empresa.');
     }
+  };
+
+  const handleSalvarTagsCatalogo = async () => {
+    if (!empresaBase) {
+      setErro('Selecione uma empresa para salvar o catálogo de tags.');
+      return;
+    }
+    setSalvandoTagsCatalogo(true);
+    setErro(null);
+    try {
+      const dados = await salvarCatalogoTags(empresaBase, tagsCatalogo, lojaApi);
+      setTagsCatalogo(dados.catalogo ?? tagsCatalogo);
+      setTagsPorCliente(dados.tags ?? tagsPorCliente);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Falha ao salvar catálogo de tags.');
+    } finally {
+      setSalvandoTagsCatalogo(false);
+    }
+  };
+
+  const persistirGruposManuais = (proximos: GrupoManualClientes[]) => {
+    if (!empresaBase) {
+      return Promise.reject(new Error('Selecione uma empresa.'));
+    }
+    const empresa = empresaBase;
+    const loja = lojaApi;
+    const job = gruposSaveChainRef.current.catch(() => undefined).then(async () => {
+      const dados = await salvarGruposManuais(empresa, proximos, loja);
+      setGruposManuais(dados.grupos ?? proximos);
+      // Prévia fora da fila de disco: N saves rápidos → 1 refresh após idle.
+      gruposPreviaCtxRef.current = { empresa, loja };
+      if (gruposPreviaDebounceRef.current !== null) {
+        clearTimeout(gruposPreviaDebounceRef.current);
+      }
+      gruposPreviaDebounceRef.current = setTimeout(() => {
+        gruposPreviaDebounceRef.current = null;
+        const ctx = gruposPreviaCtxRef.current;
+        gruposPreviaCtxRef.current = null;
+        if (!ctx) return;
+        void atualizarPreviaGrupos({
+          ajustarCortes: false,
+          empresa: ctx.empresa,
+          loja: ctx.loja,
+        });
+      }, 450);
+      return dados;
+    });
+    gruposSaveChainRef.current = job.then(
+      () => undefined,
+      () => undefined,
+    );
+    return job;
+  };
+
+  const handleToggleGrupoManual = async (cliente: string, grupoId: string) => {
+    if (!empresaBase) return;
+    const atual = gruposManuaisRef.current;
+    const proximos = atual.map((g) => ({
+      ...g,
+      clientes: g.clientes.filter((c) => c !== cliente),
+    }));
+    const alvo = proximos.find((g) => g.id === grupoId);
+    const estavaNoGrupo = atual.some(
+      (g) => g.id === grupoId && g.clientes.includes(cliente),
+    );
+    if (!estavaNoGrupo && alvo) {
+      alvo.clientes.push(cliente);
+    }
+    gruposManuaisRef.current = proximos;
+    setGruposManuais(proximos);
+    try {
+      await persistirGruposManuais(proximos);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Falha ao salvar grupo manual.');
+    }
+  };
+
+  const handleCriarGrupoManual = async (cliente: string, nome: string) => {
+    if (!empresaBase) return;
+    const rotulo = nome.trim();
+    if (!rotulo) return;
+    const atual = gruposManuaisRef.current;
+    const baseId = slugId(rotulo);
+    const ids = new Set(atual.map((g) => g.id));
+    let grupoId = baseId;
+    let n = 2;
+    while (ids.has(grupoId)) {
+      grupoId = `${baseId}_${n}`;
+      n += 1;
+    }
+    const semCliente = atual.map((g) => ({
+      ...g,
+      clientes: g.clientes.filter((c) => c !== cliente),
+    }));
+    const proximos = [...semCliente, { id: grupoId, nome: rotulo, clientes: [cliente] }];
+    gruposManuaisRef.current = proximos;
+    setGruposManuais(proximos);
+    try {
+      await persistirGruposManuais(proximos);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Falha ao criar grupo manual.');
+    }
+  };
+
+  const handleSalvarGruposManuais = async () => {
+    if (!empresaBase) throw new Error('Selecione uma empresa.');
+    setSalvandoGrupos(true);
+    setErro(null);
+    try {
+      await persistirGruposManuais(gruposManuaisRef.current);
+    } finally {
+      setSalvandoGrupos(false);
+    }
+  };
+
+  const handleBuscarPasta = async (campo: 'fonte' | 'trabalho') => {
+    const titulo = campo === 'fonte'
+      ? 'Pasta fonte de dados (BI, somente leitura)'
+      : 'Pasta de trabalho (Base.csv, config.json)';
+    return escolherPasta(titulo, true);
   };
 
   const handleTagsClienteChange = async (cliente: string, tags: TagCliente[]) => {
@@ -472,41 +698,49 @@ export default function AnalisadorPage() {
     const tinhaBalcao = (tagsPorCliente[cliente] ?? []).includes('cliente_balcao');
     const temBalcao = tags.includes('cliente_balcao');
     try {
-      const dados = await salvarTagsUmCliente(empresaBase, cliente, tags);
+      const dados = await salvarTagsUmCliente(empresaBase, cliente, tags, lojaApi);
       setTagsPorCliente(dados.tags ?? {});
       // Tag só cadastra o nome; o filtro só muda a prévia se o checkbox estiver ligado.
       if (desconsiderarBalcao && tinhaBalcao !== temBalcao) {
-        await atualizarPreviaGrupos({ ajustarCortes: false, empresa: empresaBase });
+        await atualizarPreviaGrupos({ ajustarCortes: false, empresa: empresaBase, loja: lojaApi });
       }
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Falha ao salvar tags do cliente.');
     }
   };
 
-  // Carrega em sequência para não estourar memória com a base grande.
   const carregarPrevias = async (
     empresa?: string | null,
-    opcoes?: { ajustarCortes?: boolean; override?: OverridePrevia },
+    opcoes?: { ajustarCortes?: boolean; override?: OverridePrevia; loja?: string | null },
   ) => {
     const emp = empresa !== undefined ? empresa : empresaBase;
+    const loja = opcoes?.loja !== undefined ? opcoes.loja : lojaApi;
     const ajustarCortes = opcoes?.ajustarCortes ?? true;
     const o = opcoes?.override;
-    await carregarTagsClientes(emp ?? null);
-    await atualizarPreviaGrupos({
-      empresa: emp,
-      ajustarCortes,
-      clientesExcluidos: o?.clientesExcluidos,
-      cortes: o?.cortes,
-      balcao: o?.balcao,
-      maxPorGrupo: o?.maxPorGrupo,
-    });
-    await atualizarPreviaProdutos({
-      empresa: emp,
-      ajustarCortes,
-      produtosExcluidos: o?.produtosExcluidos,
-      corte: o?.corte,
-      maxPorGrupo: o?.maxPorGrupo,
-    });
+    // Tags (I/O leve) em paralelo com a 1ª prévia; a 2ª prévia sequencial
+    // evita dois groupbys pesados competindo no worker único do uvicorn.
+    await Promise.all([
+      carregarTagsClientes(emp ?? null, loja),
+      (async () => {
+        await atualizarPreviaGrupos({
+          empresa: emp,
+          loja,
+          ajustarCortes,
+          clientesExcluidos: o?.clientesExcluidos,
+          cortes: o?.cortes,
+          balcao: o?.balcao,
+          maxPorGrupo: o?.maxPorGrupo,
+        });
+        await atualizarPreviaProdutos({
+          empresa: emp,
+          loja,
+          ajustarCortes,
+          produtosExcluidos: o?.produtosExcluidos,
+          corte: o?.corte,
+          maxPorGrupo: o?.maxPorGrupo,
+        });
+      })(),
+    ]);
   };
 
   const configAtual = () => ({
@@ -535,9 +769,10 @@ export default function AnalisadorPage() {
     setSucesso(null);
     setSalvandoConfig(true);
     try {
-      const resultado = await salvarConfiguracaoEmpresa(nomeEmpresaEfetivo, configAtual());
+      const resultado = await salvarConfiguracaoEmpresa(nomeEmpresaEfetivo, configAtual(), lojaApi);
       const caminho = resultado.caminho || `${caminhoTrabalho}/${nomeEmpresaEfetivo}/config.json`;
-      setSucesso(`Configuração salva em ${caminho}`);
+      const escopo = rotuloEscopoLoja;
+      setSucesso(`Configuração salva (${escopo}) em ${caminho}`);
       setEmpresaSelecionada(nomeEmpresaEfetivo);
       setNomeEmpresaManual('');
       localStorage.setItem('alvo_empresa', nomeEmpresaEfetivo);
@@ -558,13 +793,21 @@ export default function AnalisadorPage() {
 
   const handleSelecionarEmpresa = (nome: string) => {
     setEmpresaSelecionada(nome);
+    const lojaSalva = nome ? lerLojaSalva(nome) : '';
+    setLojaSelecionada(lojaSalva);
     if (nome) {
       setNomeEmpresaManual('');
       localStorage.setItem('alvo_empresa', nome);
     } else {
       localStorage.removeItem('alvo_empresa');
     }
-    void iniciarEmpresa(nome || null);
+    void iniciarEmpresa(nome || null, lojaSalva || null);
+  };
+
+  const handleSelecionarLoja = (loja: string) => {
+    setLojaSelecionada(loja);
+    if (empresaSelecionada) persistirLoja(empresaSelecionada, loja);
+    void trocarEscopoLoja(loja || null);
   };
 
   const handleCarregarConfiguracaoEmpresa = async () => {
@@ -574,9 +817,9 @@ export default function AnalisadorPage() {
     }
     setErro(null);
     try {
-      const dados = await tentarCarregarConfiguracaoEmpresa(empresaSelecionada);
+      const dados = await tentarCarregarConfiguracaoEmpresa(empresaSelecionada, lojaApi);
       if (!dados) {
-        setErro('Configuração não encontrada para esta empresa.');
+        setErro(`Configuração não encontrada para ${rotuloEscopoLoja}.`);
         return;
       }
       setNomeEmpresaManual('');
@@ -588,6 +831,7 @@ export default function AnalisadorPage() {
         maxPorGrupo: override.maxPorGrupo,
         ajustarCortes: false,
         empresa: empresaSelecionada,
+        loja: lojaApi,
       });
       await atualizarPreviaProdutos({
         produtosExcluidos: override.produtosExcluidos,
@@ -595,6 +839,7 @@ export default function AnalisadorPage() {
         maxPorGrupo: override.maxPorGrupo,
         ajustarCortes: false,
         empresa: empresaSelecionada,
+        loja: lojaApi,
       });
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Falha ao carregar configuração da empresa.');
@@ -618,6 +863,25 @@ export default function AnalisadorPage() {
       setEmpresas(nomes);
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Falha ao salvar os caminhos.');
+    }
+  };
+
+  const handleRegenerarBase = async () => {
+    if (!empresaSelecionada) {
+      setErro('Selecione uma empresa na tela principal para regenerar a base.');
+      return;
+    }
+    setErro(null);
+    setSucesso(null);
+    setRegenerandoBase(true);
+    try {
+      await regenerarBaseEmpresa(empresaSelecionada, true);
+      setSucesso(`Base de ${empresaSelecionada} regenerada. Recarregando…`);
+      await iniciarEmpresa(empresaSelecionada, lojaSelecionada || null);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : 'Falha ao regenerar a base.');
+    } finally {
+      setRegenerandoBase(false);
     }
   };
 
@@ -667,7 +931,10 @@ export default function AnalisadorPage() {
   };
 
   const nomesRelatorios = useMemo(() => {
-    const mapa: Record<string, string> = {};
+    const mapa: Record<string, string> = {
+      liquidez_estoque: 'Liquidez — Estoque',
+      liquidez_vendas: 'Liquidez — Vendas',
+    };
     catalogo.forEach((c) => c.itens.forEach((i) => { mapa[i.chave] = i.titulo; }));
     return mapa;
   }, [catalogo]);
@@ -682,10 +949,14 @@ export default function AnalisadorPage() {
     const lista: { chaveAba: string; chave: string; rotulo: string; tabela: ResultadoAnalise[string][string] }[] = [];
     Object.entries(resultados).forEach(([granularidadeResultado, analises]) => {
       Object.entries(analises).forEach(([chave, tabela]) => {
+        const titulo = nomesRelatorios[chave] || chave;
+        const rotulo = granularidadeResultado === 'Alvos'
+          ? titulo
+          : `${titulo} (${granularidadeResultado})`;
         lista.push({
           chaveAba: `${granularidadeResultado}::${chave}`,
           chave,
-          rotulo: `${nomesRelatorios[chave] || chave} (${granularidadeResultado})`,
+          rotulo,
           tabela,
         });
       });
@@ -751,9 +1022,10 @@ export default function AnalisadorPage() {
           );
           const excluidosNoGrupo = chaveCorrespondente ? excluidosPorGrupo[chaveCorrespondente] : 0;
           const quantidadeReal = Math.max(0, g.quantidade - excluidosNoGrupo);
+          const rotuloCurto = rotuloGrupoCurto(g.nome);
           const texto = g.ate_percentual != null
-            ? `${g.nome} (até ${g.ate_percentual.toFixed(1)}%): ${quantidadeReal} ${rotulo}`
-            : `${g.nome}: ${quantidadeReal} ${rotulo}`;
+            ? `${rotuloCurto} (até ${g.ate_percentual.toFixed(1)}%): ${quantidadeReal} ${rotulo}`
+            : `${rotuloCurto}: ${quantidadeReal} ${rotulo}`;
           return excluidosNoGrupo > 0 ? `${texto} (${excluidosNoGrupo} excluído(s))` : texto;
         }).join(' | ')}
       </p>
@@ -772,7 +1044,18 @@ export default function AnalisadorPage() {
           <button type="button" onClick={() => navigate('/')} className="analisador-btn analisador-btn-sec">
             <ArrowLeft size={16} /> Dashboard
           </button>
-          <h1>Analisador de Monitoria</h1>
+          <h1>
+            Analisador de Monitoria
+            {nomeEmpresaEfetivo && (
+              <span className="analisador-header-empresa">
+                <span className="analisador-header-empresa-sep" aria-hidden="true">·</span>
+                <span className="analisador-header-empresa-nome">{nomeEmpresaEfetivo}</span>
+                {lojaSelecionada && (
+                  <span className="analisador-header-empresa-loja"> · {lojaSelecionada}</span>
+                )}
+              </span>
+            )}
+          </h1>
         </div>
         <div className="analisador-header-actions">
           <button
@@ -807,6 +1090,8 @@ export default function AnalisadorPage() {
           caminhoFonte,
           caminhoTrabalhoInput,
           caminhoTrabalho,
+          empresa: empresaBase,
+          tagsCatalogo,
         }}
         onChange={(patch) => {
           if (patch.granularidade !== undefined) setGranularidade(patch.granularidade);
@@ -820,8 +1105,14 @@ export default function AnalisadorPage() {
           if (patch.excluirPeriodoAtual !== undefined) setExcluirPeriodoAtual(patch.excluirPeriodoAtual);
           if (patch.caminhoFonteInput !== undefined) setCaminhoFonteInput(patch.caminhoFonteInput);
           if (patch.caminhoTrabalhoInput !== undefined) setCaminhoTrabalhoInput(patch.caminhoTrabalhoInput);
+          if (patch.tagsCatalogo !== undefined) setTagsCatalogo(patch.tagsCatalogo);
         }}
         onSalvarCaminho={handleSalvarCaminhos}
+        onBuscarPasta={handleBuscarPasta}
+        onSalvarTagsCatalogo={handleSalvarTagsCatalogo}
+        salvandoTagsCatalogo={salvandoTagsCatalogo}
+        onRegenerarBase={handleRegenerarBase}
+        regenerandoBase={regenerandoBase}
       />
 
       <ExportarModal
@@ -864,8 +1155,13 @@ export default function AnalisadorPage() {
             </div>
             <div className="config-modal-body" style={{ padding: '1.25rem' }}>
               <p style={{ margin: '0 0 1rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                A empresa <strong>{configPendente.empresa}</strong> tem um <code>config.json</code>.
-                Deseja aplicar essas regras antes de carregar os dados?
+                A empresa <strong>{configPendente.empresa}</strong> tem configuração salva
+                {configPendente.loja ? (
+                  <> para a loja <strong>{configPendente.loja}</strong></>
+                ) : (
+                  <> para <strong>Todas as lojas</strong></>
+                )}
+                . Deseja aplicar essas regras antes de carregar os dados?
               </p>
               <ul
                 style={{
@@ -913,6 +1209,8 @@ export default function AnalisadorPage() {
           <div className="glass-card glass-card-flat">
             <p className="analisador-hint" style={{ margin: 0 }}>
               {previa.linhas.toLocaleString('pt-BR')} linhas carregadas
+              {mostrarSeletorLoja && lojaSelecionada && ` · loja ${lojaSelecionada}`}
+              {!mostrarSeletorLoja && lojasDisponiveis.length === 1 && ` · loja ${lojasDisponiveis[0]}`}
               {previa.linhas_ignoradas > 0 && ` (${previa.linhas_ignoradas} ignoradas por Ano/Mês vazio)`}
               {previa.qtd_nao_harmonizados > 0 && ` · ${previa.qtd_nao_harmonizados} lançamentos sem descrição de produto`}
             </p>
@@ -947,6 +1245,21 @@ export default function AnalisadorPage() {
                 />
               </label>
             )}
+            {mostrarSeletorLoja && (
+              <label className="analisador-campo">
+                <span>Loja</span>
+                <select
+                  className="custom-select analisador-select"
+                  value={lojaSelecionada}
+                  onChange={(e) => handleSelecionarLoja(e.target.value)}
+                >
+                  <option value="">Todas as lojas</option>
+                  {lojasDisponiveis.map((nome) => (
+                    <option key={nome} value={nome}>{nome}</option>
+                  ))}
+                </select>
+              </label>
+            )}
             <div className="analisador-acoes">
               <button type="button" onClick={handleCarregarConfiguracaoEmpresa} className="analisador-btn analisador-btn-sec">
                 <FolderOpen size={16} /> Carregar configuração
@@ -968,11 +1281,31 @@ export default function AnalisadorPage() {
             )}
             <p className="analisador-hint" style={{ width: '100%' }}>
               {empresaSelecionada
-                ? `Lê Base.csv em ${caminhoTrabalho || 'pasta de trabalho'}/${empresaSelecionada}/; se não existir, normaliza o BI da fonte e cria a pasta no trabalho. Ao salvar, grava config.json nessa pasta de trabalho.`
+                ? `Configuração, tags e grupos são salvos por escopo de loja em ${caminhoTrabalho || 'pasta de trabalho'}/${empresaSelecionada}/ (config.json e clientes_tags.json). Escopo atual: ${rotuloEscopoLoja}.`
                 : 'Sem empresa: usa base_de_dados.xlsx da raiz. Selecione uma empresa (ou abra o Analisador com uma já escolhida no Dashboard).'}
             </p>
           </div>
 
+          <div className="analisador-tabs custom-scrollbar" role="tablist" aria-label="Áreas do analisador">
+            {ABAS_WORKSPACE.map((aba) => (
+              <button
+                key={aba.id}
+                type="button"
+                role="tab"
+                aria-selected={abaWorkspace === aba.id}
+                className={`analisador-tab${abaWorkspace === aba.id ? ' is-ativa' : ''}`}
+                onClick={(e) => {
+                  setAbaWorkspace(aba.id);
+                  e.currentTarget.scrollIntoView({ behavior: 'smooth', inline: 'nearest', block: 'nearest' });
+                }}
+              >
+                {aba.rotulo}
+              </button>
+            ))}
+          </div>
+
+          {abaWorkspace === 'relatorios' && (
+          <>
           <div className="analisador-previas-grid">
             <div className="glass-card glass-card-flat analisador-stack-inner">
               <h2 className="analisador-titulo">Grupos de clientes</h2>
@@ -1028,7 +1361,11 @@ export default function AnalisadorPage() {
                 carregando={carregandoGrupos}
                 empresa={empresaBase}
                 tagsPorCliente={tagsPorCliente}
+                tagsCatalogo={tagsCatalogo}
+                gruposManuais={gruposManuais}
                 onTagsChange={handleTagsClienteChange}
+                onToggleGrupoManual={handleToggleGrupoManual}
+                onCriarGrupoManual={handleCriarGrupoManual}
                 desconsiderarBalcao={desconsiderarBalcao}
               />
               <p className="analisador-hint" style={{ width: '100%', marginTop: '0.5rem' }}>
@@ -1161,6 +1498,37 @@ export default function AnalisadorPage() {
           <button type="button" onClick={handleGerar} disabled={carregando} className="analisador-btn analisador-btn-pri analisador-btn-gerar">
             {carregando ? 'Gerando...' : 'Gerar relatório'}
           </button>
+          </>
+          )}
+
+          {abaWorkspace === 'graficos' && (
+            <div className="glass-card glass-card-flat analisador-explorar-card">
+              <h2 className="analisador-titulo">Gráficos personalizados</h2>
+              <p className="analisador-hint">Agregações em tempo real a partir das colunas da base da empresa.</p>
+              <ExplorarBuilder empresa={empresaBase} loja={lojaApi} modo="grafico" />
+            </div>
+          )}
+          {abaWorkspace === 'tabelas' && (
+            <div className="glass-card glass-card-flat analisador-explorar-card">
+              <h2 className="analisador-titulo">Tabelas dinâmicas</h2>
+              <p className="analisador-hint">Tabela pivô/agregada em tempo real. Marque dimensões e métricas.</p>
+              <ExplorarBuilder empresa={empresaBase} loja={lojaApi} modo="tabela" />
+            </div>
+          )}
+          {abaWorkspace === 'clientes' && (
+            <ClientesGruposPanel
+              empresa={empresaBase}
+              loja={lojaApi}
+              itensClientes={itensClientes}
+              tagsPorCliente={tagsPorCliente}
+              tagsCatalogo={tagsCatalogo}
+              clientesBalcao={clientesBalcao}
+              grupos={gruposManuais}
+              onChangeGrupos={setGruposManuais}
+              onSalvarGrupos={handleSalvarGruposManuais}
+              salvando={salvandoGrupos}
+            />
+          )}
         </div>
       )}
 

@@ -83,9 +83,10 @@ def process_data():
     # Pre-calculate YoY KPIs (Total 2024 vs Total 2025)
     yoy_stats = df.groupby('year')['rev'].sum().to_dict()
 
-    import datetime
-    mtime = os.path.getmtime('base_de_dados.xlsx')
-    file_date = datetime.datetime.fromtimestamp(mtime).strftime("%d/%m/%Y %H:%M")
+    # "Atualizado" no dashboard = último movimento da base (Ano/Mês), não o mtime do arquivo.
+    meses_nome = {v: k for k, v in month_map.items()}
+    ultimo_pid = int(df['p_p_id'].max())
+    file_date = f"{meses_nome[ultimo_pid % 100]}/{ultimo_pid // 100}"
 
     result = {
         "maps": maps,

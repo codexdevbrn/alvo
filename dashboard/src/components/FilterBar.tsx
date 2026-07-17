@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-    Users, Package, Store, LayoutDashboard, AlertTriangle, X, Filter, SlidersHorizontal, RefreshCw, CalendarClock
+    Users, Package, Store, LayoutDashboard, AlertTriangle, X, Filter, SlidersHorizontal, RefreshCw, CalendarClock, Check
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PeriodSelector } from './PeriodSelector';
@@ -12,79 +12,63 @@ import type { DashboardData, GranularidadeDash } from '../types/dashboard';
 // Types & Interfaces
 // ==========================================
 
+type IdFilters = {
+    client: number[];
+    mfr: number[];
+    desc: number[];
+    store: number[];
+    severity: number[];
+    period: number[];
+    usarMesesFechados: boolean;
+    visaoDetalhada: boolean;
+    granularidade: GranularidadeDash;
+};
+
+type IdFilterSetters = {
+    setClient: (v: number[]) => void;
+    setMfr: (v: number[]) => void;
+    setDesc: (v: number[]) => void;
+    setStore: (v: number[]) => void;
+    setSeverity: (v: number[]) => void;
+    setPeriod: (v: number[]) => void;
+    setUsarMesesFechados: (v: boolean) => void;
+    setVisaoDetalhada: (v: boolean) => void;
+    setGranularidade: (v: GranularidadeDash) => void;
+};
+
 interface FilterContentProps {
     data: DashboardData;
-    filters: {
-        client: number;
-        mfr: number;
-        desc: number;
-        store: number;
-        severity: number;
-        period: number[];
-        usarMesesFechados: boolean;
-        visaoDetalhada: boolean;
-        granularidade: GranularidadeDash;
-    };
+    filters: IdFilters;
     filterOptions: {
         clientOpts: Set<number>;
         mfrOpts: Set<number>;
         descOpts: Set<number>;
         storeOpts: Set<number>;
     } | null;
-    setters: {
-        setClient: (v: number) => void;
-        setMfr: (v: number) => void;
-        setDesc: (v: number) => void;
-        setStore: (v: number) => void;
-        setSeverity: (v: number) => void;
-        setPeriod: (v: number[]) => void;
-        setUsarMesesFechados: (v: boolean) => void;
-        setVisaoDetalhada: (v: boolean) => void;
-        setGranularidade: (v: GranularidadeDash) => void;
-    };
+    setters: IdFilterSetters;
     onClear: () => void;
 }
 
 interface CustomDropdownProps {
     label: string;
     icon: LucideIcon;
-    value: number;
+    value: number[];
     options: { id: number; name: string }[];
-    onChange: (id: number) => void;
+    onChange: (ids: number[]) => void;
     onClear: () => void;
     placeholder: string;
 }
 
 interface FilterBarProps {
     data: DashboardData;
-    filters: {
-        client: number;
-        mfr: number;
-        desc: number;
-        store: number;
-        severity: number;
-        period: number[];
-        usarMesesFechados: boolean;
-        visaoDetalhada: boolean;
-        granularidade: GranularidadeDash;
-    };
+    filters: IdFilters;
     filterOptions: {
         clientOpts: Set<number>;
         mfrOpts: Set<number>;
         descOpts: Set<number>;
         storeOpts: Set<number>;
     } | null;
-    setters: {
-        setClient: (v: number) => void;
-        setMfr: (v: number) => void;
-        setDesc: (v: number) => void;
-        setStore: (v: number) => void;
-        setSeverity: (v: number) => void;
-        setPeriod: (v: number[]) => void;
-        setUsarMesesFechados: (v: boolean) => void;
-        setVisaoDetalhada: (v: boolean) => void;
-        setGranularidade: (v: GranularidadeDash) => void;
-    };
+    setters: IdFilterSetters;
     onClear: () => void;
 }
 
@@ -92,22 +76,34 @@ interface FilterBarProps {
 // Helper Components
 // ==========================================
 
+function rotuloSelecao(value: number[], options: { id: number; name: string }[], placeholder: string) {
+    if (value.length === 0) return placeholder;
+    if (value.length === 1) {
+        return options.find(o => o.id === value[0])?.name || placeholder;
+    }
+    return `${value.length} selecionados`;
+}
+
 function CustomDropdown({ label, icon: Icon, value, options, onChange, onClear, placeholder }: CustomDropdownProps) {
     const [isOpen, setIsOpen] = useState(false);
     const [search, setSearch] = useState('');
 
-    const selectedName = options.find(o => o.id === value)?.name || placeholder;
+    const selectedName = rotuloSelecao(value, options, placeholder);
     const filteredOptions = options.filter(o => o.name.toLowerCase().includes(search.toLowerCase()));
+    const selectedSet = new Set(value);
+
+    const toggle = (id: number) => {
+        if (selectedSet.has(id)) onChange(value.filter(v => v !== id));
+        else onChange([...value, id]);
+    };
 
     return (
         <div className="filter-group" style={{ position: 'relative' }}>
-            {/* Label & Clear Button */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <label style={{ marginBottom: 0 }}><Icon size={12} style={{ marginRight: 4 }} /> {label}</label>
-                {value !== -1 && <button onClick={(e) => { e.stopPropagation(); onClear(); }} className="mini-clear-btn"><X size={10} /></button>}
+                {value.length > 0 && <button onClick={(e) => { e.stopPropagation(); onClear(); }} className="mini-clear-btn"><X size={10} /></button>}
             </div>
 
-            {/* Selected Value Display */}
             <div
                 className="custom-select"
                 onClick={() => setIsOpen(!isOpen)}
@@ -116,14 +112,12 @@ function CustomDropdown({ label, icon: Icon, value, options, onChange, onClear, 
                 <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selectedName}</span>
             </div>
 
-            {/* Dropdown Menu */}
             {isOpen && (
                 <>
                     <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={() => setIsOpen(false)} />
-                    <div style={{
+                    <div className="dropdown-menu-panel" style={{
                         position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 1000,
-                        background: '#1a1a1e', border: '1px solid var(--border)', borderRadius: '12px',
-                        marginTop: '8px', padding: '8px', boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
+                        marginTop: '8px', padding: '8px',
                         maxHeight: '300px', display: 'flex', flexDirection: 'column', gap: '8px'
                     }}>
                         <input
@@ -138,30 +132,31 @@ function CustomDropdown({ label, icon: Icon, value, options, onChange, onClear, 
                                 borderRadius: '8px', padding: '8px 12px', color: 'white', fontSize: '0.85rem', outline: 'none'
                             }}
                         />
-                        <div className="custom-scrollbar" style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column' }}>
+                        <div className="custom-scrollbar" style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '2px' }}>
                             <div
-                                onClick={() => { onChange(-1); setIsOpen(false); }}
-                                style={{
-                                    padding: '8px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem',
-                                    color: value === -1 ? 'var(--accent)' : 'var(--text-secondary)',
-                                    background: value === -1 ? 'rgba(99, 102, 241, 0.1)' : 'transparent'
-                                }}
+                                role="option"
+                                aria-selected={value.length === 0}
+                                className={`dropdown-menu-item is-muted${value.length === 0 ? ' is-selected' : ''}`}
+                                onClick={() => { onChange([]); setIsOpen(false); }}
                             >
                                 {placeholder}
                             </div>
-                            {filteredOptions.map(opt => (
-                                <div
-                                    key={opt.id}
-                                    onClick={() => { onChange(opt.id); setIsOpen(false); }}
-                                    style={{
-                                        padding: '8px 12px', borderRadius: '8px', cursor: 'pointer', fontSize: '0.85rem',
-                                        color: value === opt.id ? 'var(--accent)' : 'white',
-                                        background: value === opt.id ? 'rgba(99, 102, 241, 0.1)' : 'transparent'
-                                    }}
-                                >
-                                    {opt.name}
-                                </div>
-                            ))}
+                            {filteredOptions.map(opt => {
+                                const ativo = selectedSet.has(opt.id);
+                                return (
+                                    <div
+                                        key={opt.id}
+                                        role="option"
+                                        aria-selected={ativo}
+                                        className={`dropdown-menu-item${ativo ? ' is-selected' : ''}`}
+                                        onClick={() => toggle(opt.id)}
+                                        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}
+                                    >
+                                        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{opt.name}</span>
+                                        {ativo && <Check size={14} color="var(--accent)" strokeWidth={3} style={{ flexShrink: 0 }} />}
+                                    </div>
+                                );
+                            })}
                             {filteredOptions.length === 0 && (
                                 <div style={{ padding: '8px 12px', fontSize: '0.85rem', color: 'var(--text-secondary)', textAlign: 'center' }}>
                                     Nenhuma opção encontrada
@@ -246,7 +241,7 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
     ];
 
     const unidade = rotuloUnidade(granularidade);
-    const hasFilters = client !== -1 || mfr !== -1 || desc !== -1 || store !== -1 || severity !== -1
+    const hasFilters = client.length > 0 || mfr.length > 0 || desc.length > 0 || store.length > 0 || severity.length > 0
       || period.length > 0 || !usarMesesFechados || visaoDetalhada || granularidade !== 'Mensal';
 
     return (
@@ -257,8 +252,8 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
                 icon={AlertTriangle}
                 value={severity}
                 options={severityOpts}
-                onChange={v => { setSeverity(v); setClient(-1); }}
-                onClear={() => setSeverity(-1)}
+                onChange={v => { setSeverity(v); setClient([]); }}
+                onClear={() => setSeverity([])}
                 placeholder="Todos os Cenários"
             />
 
@@ -269,9 +264,9 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
                 options={data.maps.c
                     .map((name, id) => ({ id, name }))
                     .filter(o => o.name !== "Consumidor Final")
-                    .filter(o => client === o.id || (filterOptions?.clientOpts.has(o.id)))}
+                    .filter(o => client.includes(o.id) || (filterOptions?.clientOpts.has(o.id)))}
                 onChange={setClient}
-                onClear={() => setClient(-1)}
+                onClear={() => setClient([])}
                 placeholder="Todos os Clientes"
             />
 
@@ -279,9 +274,9 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
                 label="Loja"
                 icon={Store}
                 value={store}
-                options={data.maps.s.map((name, id) => ({ id, name })).filter(o => store === o.id || (filterOptions?.storeOpts.has(o.id)))}
+                options={data.maps.s.map((name, id) => ({ id, name })).filter(o => store.includes(o.id) || (filterOptions?.storeOpts.has(o.id)))}
                 onChange={setStore}
-                onClear={() => setStore(-1)}
+                onClear={() => setStore([])}
                 placeholder="Todas as Lojas"
             />
 
@@ -289,9 +284,9 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
                 label="Fabricante"
                 icon={Package}
                 value={mfr}
-                options={data.maps.m.map((name, id) => ({ id, name })).filter(o => mfr === o.id || (filterOptions?.mfrOpts.has(o.id)))}
+                options={data.maps.m.map((name, id) => ({ id, name })).filter(o => mfr.includes(o.id) || (filterOptions?.mfrOpts.has(o.id)))}
                 onChange={setMfr}
-                onClear={() => setMfr(-1)}
+                onClear={() => setMfr([])}
                 placeholder="Todos os Fabricantes"
             />
 
@@ -299,9 +294,9 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
                 label="Descrição"
                 icon={LayoutDashboard}
                 value={desc}
-                options={data.maps.d.map((name, id) => ({ id, name })).filter(o => desc === o.id || (filterOptions?.descOpts.has(o.id)))}
+                options={data.maps.d.map((name, id) => ({ id, name })).filter(o => desc.includes(o.id) || (filterOptions?.descOpts.has(o.id)))}
                 onChange={setDesc}
-                onClear={() => setDesc(-1)}
+                onClear={() => setDesc([])}
                 placeholder="Todas as Descrições"
             />
 
@@ -395,7 +390,7 @@ export function FilterBar({ data, filters, filterOptions, setters, onClear }: Fi
     }, []);
 
     const { client, mfr, desc, store, severity, period, usarMesesFechados, visaoDetalhada, granularidade } = filters;
-    const hasActiveFilters = client !== -1 || mfr !== -1 || desc !== -1 || store !== -1 || severity !== -1
+    const hasActiveFilters = client.length > 0 || mfr.length > 0 || desc.length > 0 || store.length > 0 || severity.length > 0
       || period.length > 0 || !usarMesesFechados || visaoDetalhada || granularidade !== 'Mensal';
 
     // Mobile View

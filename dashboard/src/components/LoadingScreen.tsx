@@ -1,14 +1,11 @@
 import { RefreshCw } from 'lucide-react';
 
-// ==========================================
-// Main Component
-// ==========================================
-
 export function LoadingScreen() {
-    return (
-        <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'var(--bg-main)' }}>
-            <RefreshCw className="animate-spin" size={48} color="var(--accent)" />
-            <p style={{ marginTop: '1.5rem', color: 'var(--text-secondary)' }}>Carregando dados...</p>
-        </div>
-    );
+  return (
+    <div className="loading-screen" role="status" aria-live="polite" aria-busy="true">
+      <div className="loading-screen-orb" aria-hidden="true" />
+      <RefreshCw className="loading-screen-icon" size={48} strokeWidth={2.25} aria-hidden="true" />
+      <p className="loading-screen-text">Carregando dados...</p>
+    </div>
+  );
 }

@@ -267,19 +267,15 @@ export function PeriodSelector({
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 999 }} onClick={handleOutsideClick} />
           <div
-            className="custom-scrollbar"
+            className="custom-scrollbar dropdown-menu-panel"
             style={{
               position: 'absolute',
               top: '100%',
               left: 0,
               right: 0,
               zIndex: 1000,
-              background: '#1a1a1e',
-              border: '1px solid var(--border)',
-              borderRadius: '12px',
               marginTop: '8px',
               padding: '8px',
-              boxShadow: '0 10px 25px rgba(0,0,0,0.5)',
               maxHeight: '400px',
               overflowY: 'auto',
             }}
@@ -288,6 +284,7 @@ export function PeriodSelector({
               <div style={{ display: 'flex', gap: '6px' }}>
                 <button
                   type="button"
+                  className="period-dropdown-action"
                   onClick={selectFechados}
                   title={`Só ${unidade.plural} fechados, mesmo corte nos dois anos`}
                   style={{
@@ -311,6 +308,7 @@ export function PeriodSelector({
                 </button>
                 <button
                   type="button"
+                  className="period-dropdown-action"
                   onClick={selectAteAgora}
                   title={`${unidade.plural} até o período corrente (incluso)`}
                   style={{
@@ -336,6 +334,7 @@ export function PeriodSelector({
               <div style={{ display: 'flex', gap: '6px' }}>
                 <button
                   type="button"
+                  className="period-dropdown-action"
                   onClick={verPeriodoAtual}
                   title={`Filtra apenas o ${unidade.singular} corrente em todos os anos`}
                   style={{
@@ -355,6 +354,7 @@ export function PeriodSelector({
                 </button>
                 <button
                   type="button"
+                  className="period-dropdown-action"
                   onClick={selectTodos}
                   title={`${unidade.todos}, incl. corrente`}
                   style={{
@@ -414,6 +414,7 @@ export function PeriodSelector({
                   }}
                 >
                   <div
+                    className="period-dropdown-year-row"
                     style={{
                       padding: '8px 12px',
                       borderRadius: '10px',
@@ -505,6 +506,7 @@ export function PeriodSelector({
                                 <button
                                   key={idx}
                                   type="button"
+                                  className="period-dropdown-chip"
                                   onClick={() => handleMonthClick(idx)}
                                   style={{
                                     padding: '8px 4px',
@@ -536,6 +538,7 @@ export function PeriodSelector({
                               <button
                                 key={bucket.key}
                                 type="button"
+                                className="period-dropdown-chip"
                                 onClick={() => toggleBucket(bucket)}
                                 style={{
                                   padding: '8px 4px',

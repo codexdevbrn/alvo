@@ -3,20 +3,28 @@ Backend do Analisador de Monitoria (versão web) — reaproveita o motor
 analise_funil.py do app desktop original via FastAPI.
 """
 
+import asyncio
 import json
 import logging
 import os
 import re
+import unicodedata
+import subprocess
 import sys
 import tempfile
+import threading
 import traceback
 import unicodedata
+from collections import OrderedDict
+from datetime import date
+from pathlib import Path
 from typing import Dict, List, Optional
 
 logger = logging.getLogger("uvicorn.error")
 
 import pandas as pd
-from fastapi import Depends, FastAPI, HTTPException
+import numpy as np
+from fastapi import Body, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -24,7 +32,7 @@ from starlette.background import BackgroundTask
 
 import db
 from auth import criar_token, exigir_login
-from dashboard_summary import formatar_data_arquivo, gerar_summary
+from dashboard_summary import gerar_summary
 from engine import analise_funil as af
 from engine.exportadores_pdf_word import exportar_relatorio_pdf
 from exportar_excel import (
@@ -42,7 +50,12 @@ if RAIZ_PROJETO not in sys.path:
     sys.path.insert(0, RAIZ_PROJETO)
 
 from harmonizar_descricoes import ErroHarmonizacao  # noqa: E402
-from normalizar_base import ErroNormalizacao, normalizar_pasta_empresa  # noqa: E402
+from normalizar_base import (  # noqa: E402
+    ErroNormalizacao,
+    normalizar_pasta_empresa,
+    obter_data_ultimo_movimento,
+    resolver_arquivos_bi,
+)
 
 CAMINHO_BASE_PADRAO = os.path.join(RAIZ_PROJETO, "base_de_dados.xlsx")
 
@@ -109,6 +122,48 @@ CHAVE_CAMINHO_EMPRESAS = "caminho_empresas"
 NOME_PASTA_INVALIDO = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 CAMINHO_BASE_CLIENTES_PADRAO = os.path.join(RAIZ_PROJETO, "base-clientes")
 NOME_ARQUIVO_TAGS_CLIENTES = "clientes_tags.json"
+NOME_ARQUIVO_CONFIG = "config.json"
+# Escopo "" = "Todas as lojas"; demais chaves = nome da loja.
+FORMATO_POR_LOJA = "por_loja"
+CHAVE_FORMATO = "_formato"
+CHAVE_SCOPES = "scopes"
+_CAMPOS_CONFIG_FLAT = frozenset({
+    "cortesClientes", "corteProdutos", "periodosQueda", "desconsiderarBalcao",
+    "desconsiderarDemaisProdutos", "desconsiderarNaoHarmonizados", "excluirPeriodoAtual",
+    "nomeEmpresa", "topNProdutos", "reducaoMinimaErosao", "maxPorGrupo",
+    "quedaMinimaAlertaRs", "quedaMinimaErosaoRs", "reducaoMinimaSemVenda",
+    "topNPoderCompra", "clientesExcluidos", "produtosExcluidos",
+    "chavesSelecionadas", "granularidade",
+})
+_CAMPOS_TAGS_FLAT = frozenset({"tags", "catalogo", "grupos", "clientes_balcao"})
+
+TAGS_CATALOGO_PADRAO: list[dict] = [
+    {"id": "inadimplente", "rotulo": "Inadimplente", "ativa": True, "cor": "#f43f5e"},
+    {"id": "cliente_balcao", "rotulo": "Cliente Balcão", "ativa": True, "cor": "#f59e0b"},
+    {"id": "encerrou_operacao", "rotulo": "Encerrou operação", "ativa": True, "cor": "#64748b"},
+]
+
+_REGEX_ID_TAG = re.compile(r"^[a-z][a-z0-9_]{0,47}$")
+_COR_TAG_PADRAO = "#64748b"
+
+
+def _slug_de_rotulo(rotulo: str) -> str:
+    texto = unicodedata.normalize("NFKD", rotulo.strip().lower())
+    texto = "".join(c for c in texto if not unicodedata.combining(c))
+    texto = re.sub(r"[^a-z0-9]+", "_", texto).strip("_")
+    return (texto[:48] or "tag")
+
+
+def _normalizar_id_tag(bruto, rotulo_fallback: str = "") -> str:
+    tag_id = str(bruto or "").strip().lower()
+    if tag_id and _REGEX_ID_TAG.match(tag_id):
+        return tag_id
+    candidato = _slug_de_rotulo(rotulo_fallback)
+    return candidato if _REGEX_ID_TAG.match(candidato) else "tag"
+
+
+def _ids_do_catalogo(catalogo: list[dict]) -> set[str]:
+    return {item["id"] for item in catalogo if isinstance(item, dict) and item.get("id")}
 
 
 def _normpath(caminho: str) -> str:
@@ -259,7 +314,105 @@ def _caminho_tags_clientes(empresa: str) -> str:
     return os.path.join(_pasta_trabalho_empresa(empresa), NOME_ARQUIVO_TAGS_CLIENTES)
 
 
-def _normalizar_mapa_tags(tags_bruto) -> dict[str, list[str]]:
+def _caminho_config_empresa(empresa: str) -> str:
+    return os.path.join(_pasta_trabalho_empresa(empresa), NOME_ARQUIVO_CONFIG)
+
+
+def _chave_escopo_loja(loja: Optional[str]) -> str:
+    """Chave de escopo: '' = todas as lojas; senão o nome da loja."""
+    if loja is None:
+        return ""
+    return str(loja).strip()
+
+
+def _scopes_de_arquivo_generico(bruto: dict, campos_flat: frozenset[str]) -> dict[str, dict]:
+    """Normaliza arquivo flat legado ou `{_formato, scopes}` para mapa chave→slice."""
+    if not isinstance(bruto, dict) or not bruto:
+        return {}
+    if bruto.get(CHAVE_FORMATO) == FORMATO_POR_LOJA:
+        scopes = bruto.get(CHAVE_SCOPES)
+        if not isinstance(scopes, dict):
+            return {}
+        saida: dict[str, dict] = {}
+        for chave, slice_ in scopes.items():
+            if isinstance(slice_, dict):
+                saida[str(chave)] = dict(slice_)
+        return saida
+    if campos_flat.intersection(bruto.keys()):
+        return {"": dict(bruto)}
+    # Mapa já no formato chave→slice (sem marcador), sem campos flat no topo.
+    if all(isinstance(v, dict) for v in bruto.values()):
+        return {str(k): dict(v) for k, v in bruto.items()}
+    return {"": dict(bruto)}
+
+
+def _payload_arquivo_por_loja(scopes: dict[str, dict]) -> dict:
+    return {CHAVE_FORMATO: FORMATO_POR_LOJA, CHAVE_SCOPES: scopes}
+
+
+def _ler_json_trabalho(caminho: str) -> dict:
+    if not os.path.isfile(caminho):
+        return {}
+    try:
+        with open(caminho, "r", encoding="utf-8") as arquivo:
+            bruto = json.load(arquivo)
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return bruto if isinstance(bruto, dict) else {}
+
+
+def _gravar_json_trabalho(caminho: str, payload: dict) -> None:
+    _assert_escrita_fora_da_fonte(caminho)
+    try:
+        with open(caminho, "w", encoding="utf-8") as arquivo:
+            json.dump(payload, arquivo, ensure_ascii=False, indent=2)
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Não foi possível gravar {os.path.basename(caminho)}: {exc}")
+
+
+def _ler_scopes_config(empresa: str) -> dict[str, dict]:
+    return _scopes_de_arquivo_generico(
+        _ler_json_trabalho(_caminho_config_empresa(empresa)),
+        _CAMPOS_CONFIG_FLAT,
+    )
+
+
+def _gravar_scopes_config(empresa: str, scopes: dict[str, dict]) -> str:
+    caminho = _caminho_config_empresa(empresa)
+    _gravar_json_trabalho(caminho, _payload_arquivo_por_loja(scopes))
+    return caminho
+
+
+def _ler_config_escopo(empresa: str, loja: Optional[str] = None) -> Optional[dict]:
+    scopes = _ler_scopes_config(empresa)
+    chave = _chave_escopo_loja(loja)
+    if chave not in scopes:
+        return None
+    return dict(scopes[chave])
+
+
+def _gravar_config_escopo(empresa: str, loja: Optional[str], dados: dict) -> str:
+    scopes = _ler_scopes_config(empresa)
+    scopes[_chave_escopo_loja(loja)] = dict(dados) if isinstance(dados, dict) else {}
+    return _gravar_scopes_config(empresa, scopes)
+
+
+def _ler_scopes_tags(empresa: str) -> dict[str, dict]:
+    return _scopes_de_arquivo_generico(
+        _ler_arquivo_tags_clientes_bruto(empresa),
+        _CAMPOS_TAGS_FLAT,
+    )
+
+
+def _gravar_scopes_tags(empresa: str, scopes: dict[str, dict]) -> str:
+    caminho = _caminho_tags_clientes(empresa)
+    _gravar_json_trabalho(caminho, _payload_arquivo_por_loja(scopes))
+    return caminho
+
+
+def _normalizar_mapa_tags(tags_bruto, ids_validos: set[str] | None = None) -> dict[str, list[str]]:
+    if ids_validos is None:
+        ids_validos = _ids_do_catalogo(TAGS_CATALOGO_PADRAO)
     if not isinstance(tags_bruto, dict):
         return {}
     saida: dict[str, list[str]] = {}
@@ -272,11 +425,47 @@ def _normalizar_mapa_tags(tags_bruto) -> dict[str, list[str]]:
         limpas = []
         for tag in lista:
             t = str(tag).strip().lower()
-            if t in af.TAGS_CLIENTE_VALIDAS and t not in limpas:
+            if t in ids_validos and t not in limpas:
                 limpas.append(t)
         if limpas:
             saida[cliente] = limpas
     return saida
+
+
+def _normalizar_catalogo_tags(catalogo_bruto) -> list[dict]:
+    """Catálogo dinâmico por empresa; sem catálogo salvo, usa o padrão de 3 tags."""
+    if not isinstance(catalogo_bruto, list) or not catalogo_bruto:
+        return [dict(item) for item in TAGS_CATALOGO_PADRAO]
+
+    saida: list[dict] = []
+    vistos: set[str] = set()
+    for item in catalogo_bruto:
+        if not isinstance(item, dict):
+            continue
+        rotulo = str(item.get("rotulo", "")).strip()
+        tag_id = _normalizar_id_tag(item.get("id"), rotulo)
+        if tag_id in vistos:
+            base = _slug_de_rotulo(rotulo or tag_id)
+            sufixo = 2
+            candidato = f"{base}_{sufixo}"
+            while candidato in vistos:
+                sufixo += 1
+                candidato = f"{base}_{sufixo}"
+            tag_id = candidato
+        vistos.add(tag_id)
+        if not rotulo:
+            rotulo = tag_id.replace("_", " ").title()
+        cor = str(item.get("cor", "")).strip()
+        if not (cor.startswith("#") and len(cor) in (4, 7)):
+            cor = _COR_TAG_PADRAO
+        saida.append({
+            "id": tag_id,
+            "rotulo": rotulo,
+            "ativa": bool(item.get("ativa", True)),
+            "cor": cor,
+        })
+
+    return saida if saida else [dict(item) for item in TAGS_CATALOGO_PADRAO]
 
 
 def _sincronizar_lista_balcao(tags: dict[str, list[str]]) -> list[str]:
@@ -286,50 +475,201 @@ def _sincronizar_lista_balcao(tags: dict[str, list[str]]) -> list[str]:
     )
 
 
-def _ler_tags_clientes(empresa: str) -> dict:
+def _ler_arquivo_tags_clientes_bruto(empresa: str) -> dict:
     caminho = os.path.join(_exigir_caminho_trabalho(), _validar_nome_empresa(empresa), NOME_ARQUIVO_TAGS_CLIENTES)
-    if not os.path.isfile(caminho):
-        return {"tags": {}, "clientes_balcao": []}
-    try:
-        with open(caminho, "r", encoding="utf-8") as arquivo:
-            bruto = json.load(arquivo)
-    except (OSError, json.JSONDecodeError):
-        return {"tags": {}, "clientes_balcao": []}
-    tags = _normalizar_mapa_tags(bruto.get("tags") if isinstance(bruto, dict) else {})
-    return {"tags": tags, "clientes_balcao": _sincronizar_lista_balcao(tags)}
+    return _ler_json_trabalho(caminho)
 
 
-def _gravar_tags_clientes(empresa: str, tags: dict[str, list[str]]) -> dict:
-    tags_norm = _normalizar_mapa_tags(tags)
-    balcao = _sincronizar_lista_balcao(tags_norm)
-    payload = {"tags": tags_norm, "clientes_balcao": balcao}
-    caminho = _caminho_tags_clientes(empresa)
-    _assert_escrita_fora_da_fonte(caminho)
-    try:
-        with open(caminho, "w", encoding="utf-8") as arquivo:
-            json.dump(payload, arquivo, ensure_ascii=False, indent=2)
-    except OSError as exc:
-        raise HTTPException(status_code=400, detail=f"Não foi possível gravar {NOME_ARQUIVO_TAGS_CLIENTES}: {exc}")
-    return {**payload, "caminho": caminho}
+def _montar_resposta_tags_clientes(
+    empresa: str,
+    bruto: dict,
+    tags: dict[str, list[str]],
+    catalogo: list[dict] | None = None,
+    grupos: list[dict] | None = None,
+    loja: Optional[str] = None,
+) -> dict:
+    catalogo_norm = catalogo if catalogo is not None else _normalizar_catalogo_tags(bruto.get("catalogo"))
+    balcao = _sincronizar_lista_balcao(tags)
+    grupos_norm = grupos if grupos is not None else _normalizar_grupos_manuais(bruto.get("grupos"))
+    return {
+        "tags": tags,
+        "clientes_balcao": balcao,
+        "catalogo": catalogo_norm,
+        "grupos": grupos_norm,
+        "loja": _chave_escopo_loja(loja) or None,
+    }
 
 
-def _clientes_balcao_extra(empresa: Optional[str]) -> list[str]:
+def _normalizar_grupos_manuais(grupos_bruto) -> list[dict]:
+    """Grupos manuais: nome + lista de clientes. Um cliente só em um grupo (primeiro vence)."""
+    if not isinstance(grupos_bruto, list):
+        return []
+    saida: list[dict] = []
+    vistos_id: set[str] = set()
+    clientes_em_grupo: set[str] = set()
+    for item in grupos_bruto:
+        if not isinstance(item, dict):
+            continue
+        nome = str(item.get("nome") or "").strip()
+        if not nome:
+            continue
+        grupo_id = _normalizar_id_tag(item.get("id"), nome)
+        if grupo_id in vistos_id:
+            base = _slug_de_rotulo(nome)
+            sufixo = 2
+            candidato = f"{base}_{sufixo}"
+            while candidato in vistos_id:
+                sufixo += 1
+                candidato = f"{base}_{sufixo}"
+            grupo_id = candidato
+        vistos_id.add(grupo_id)
+        membros: list[str] = []
+        for cliente in item.get("clientes") or []:
+            chave = str(cliente).strip()
+            if not chave or chave in clientes_em_grupo:
+                continue
+            clientes_em_grupo.add(chave)
+            membros.append(chave)
+        saida.append({"id": grupo_id, "nome": nome, "clientes": membros})
+    return saida
+
+
+def _payload_tags_completo(
+    catalogo: list[dict],
+    tags: dict[str, list[str]],
+    grupos: list[dict] | None = None,
+    bruto_atual: dict | None = None,
+) -> dict:
+    grupos_norm = (
+        grupos if grupos is not None
+        else _normalizar_grupos_manuais((bruto_atual or {}).get("grupos"))
+    )
+    return {
+        "catalogo": catalogo,
+        "tags": tags,
+        "clientes_balcao": _sincronizar_lista_balcao(tags),
+        "grupos": grupos_norm,
+    }
+
+
+def _slice_tags_do_escopo(empresa: str, loja: Optional[str] = None) -> dict:
+    scopes = _ler_scopes_tags(empresa)
+    return dict(scopes.get(_chave_escopo_loja(loja), {}))
+
+
+def _gravar_arquivo_tags_clientes(
+    empresa: str,
+    payload: dict,
+    loja: Optional[str] = None,
+) -> dict:
+    scopes = _ler_scopes_tags(empresa)
+    chave = _chave_escopo_loja(loja)
+    catalogo = _normalizar_catalogo_tags(payload.get("catalogo"))
+    tags = _normalizar_mapa_tags(payload.get("tags"), _ids_do_catalogo(catalogo))
+    grupos = _normalizar_grupos_manuais(payload.get("grupos"))
+    slice_norm = _payload_tags_completo(catalogo, tags, grupos=grupos)
+    scopes[chave] = slice_norm
+    caminho = _gravar_scopes_tags(empresa, scopes)
+    return {
+        **_montar_resposta_tags_clientes(empresa, slice_norm, tags, catalogo, grupos, loja=loja),
+        "caminho": caminho,
+    }
+
+
+def _ler_tags_clientes(empresa: str, loja: Optional[str] = None) -> dict:
+    bruto = _slice_tags_do_escopo(empresa, loja)
+    catalogo = _normalizar_catalogo_tags(bruto.get("catalogo"))
+    ids_catalogo = _ids_do_catalogo(catalogo)
+    tags = _normalizar_mapa_tags(bruto.get("tags") if bruto else {}, ids_catalogo)
+    grupos = _normalizar_grupos_manuais(bruto.get("grupos") if bruto else [])
+    return _montar_resposta_tags_clientes(empresa, bruto, tags, catalogo, grupos, loja=loja)
+
+
+def _gravar_tags_clientes(
+    empresa: str,
+    tags: dict[str, list[str]],
+    loja: Optional[str] = None,
+) -> dict:
+    bruto = _slice_tags_do_escopo(empresa, loja)
+    catalogo = _normalizar_catalogo_tags(bruto.get("catalogo"))
+    ids_catalogo = _ids_do_catalogo(catalogo)
+    tags_norm = _normalizar_mapa_tags(tags, ids_catalogo)
+    return _gravar_arquivo_tags_clientes(
+        empresa,
+        _payload_tags_completo(catalogo, tags_norm, bruto_atual=bruto),
+        loja=loja,
+    )
+
+
+def _gravar_catalogo_tags(empresa: str, catalogo_bruto, loja: Optional[str] = None) -> dict:
+    bruto = _slice_tags_do_escopo(empresa, loja)
+    catalogo = _normalizar_catalogo_tags(catalogo_bruto)
+    ids_catalogo = _ids_do_catalogo(catalogo)
+    tags = _normalizar_mapa_tags(bruto.get("tags") if bruto else {}, ids_catalogo)
+    return _gravar_arquivo_tags_clientes(
+        empresa,
+        _payload_tags_completo(catalogo, tags, bruto_atual=bruto),
+        loja=loja,
+    )
+
+
+def _gravar_grupos_manuais(empresa: str, grupos_bruto, loja: Optional[str] = None) -> dict:
+    bruto = _slice_tags_do_escopo(empresa, loja)
+    catalogo = _normalizar_catalogo_tags(bruto.get("catalogo"))
+    ids_catalogo = _ids_do_catalogo(catalogo)
+    tags = _normalizar_mapa_tags(bruto.get("tags") if bruto else {}, ids_catalogo)
+    grupos = _normalizar_grupos_manuais(grupos_bruto)
+    return _gravar_arquivo_tags_clientes(
+        empresa,
+        _payload_tags_completo(catalogo, tags, grupos=grupos),
+        loja=loja,
+    )
+
+
+def _clientes_balcao_extra(empresa: Optional[str], loja: Optional[str] = None) -> list[str]:
     if not empresa or not str(empresa).strip():
         return []
     try:
-        return list(_ler_tags_clientes(empresa.strip())["clientes_balcao"])
+        return list(_ler_tags_clientes(empresa.strip(), loja=loja)["clientes_balcao"])
     except HTTPException:
         return []
 
 
-# Cache por empresa do Base.csv no trabalho (mtime -> df).
-_cache_base_empresa: dict[str, dict] = {}
+def _grupos_manuais_empresa(empresa: Optional[str], loja: Optional[str] = None) -> list[dict]:
+    if not empresa or not str(empresa).strip():
+        return []
+    try:
+        return list(_ler_tags_clientes(empresa.strip(), loja=loja).get("grupos") or [])
+    except HTTPException:
+        return []
+
+
+# Máximo de empresas em cache (cada DF/summary pode ser grande).
+_CACHE_EMPRESA_MAX = 3
+
+# Cache por empresa do Base.csv no trabalho (mtime -> df). LRU via OrderedDict.
+_cache_base_empresa: OrderedDict[str, dict] = OrderedDict()
 
 # Cache do Excel padrão (sem empresa selecionada).
 _cache_base: dict = {"mtime": None, "df": None, "linhas_vazias": 0}
 
-# Cache do summary do dashboard por empresa.
-_cache_summary_dashboard: dict[str, dict] = {}
+# Cache do summary do dashboard por empresa. LRU via OrderedDict.
+_cache_summary_dashboard: OrderedDict[str, dict] = OrderedDict()
+
+
+def _lru_touch(cache: OrderedDict, key: str) -> None:
+    """Marca key como mais recentemente usada (hit)."""
+    if key in cache:
+        cache.move_to_end(key)
+
+
+def _lru_set(cache: OrderedDict, key: str, value: dict, max_size: int = _CACHE_EMPRESA_MAX) -> None:
+    """Insere/atualiza e evicta a entrada mais antiga se passar do limite."""
+    if key in cache:
+        cache.move_to_end(key)
+    cache[key] = value
+    while len(cache) > max_size:
+        cache.popitem(last=False)
 
 
 def _arquivos_origem_mais_recentes(
@@ -350,8 +690,30 @@ def _arquivos_origem_mais_recentes(
     return any(os.path.getmtime(c) > mtime_base_csv for c in candidatos if os.path.isfile(c))
 
 
-def _ensure_base_csv(pasta_fonte: str, pasta_trabalho: str, empresa: str) -> str:
+def _data_ultimo_movimento_bi(pasta_fonte: str) -> Optional[date]:
+    """Lê a data exata do último movimento de VENDA no BI da fonte (somente leitura)."""
+    try:
+        caminho_mov, _ = resolver_arquivos_bi(Path(pasta_fonte))
+        return obter_data_ultimo_movimento(caminho_mov)
+    except ErroNormalizacao as exc:
+        logger.warning("BI indisponível para data do último movimento em %s: %s", pasta_fonte, exc)
+        return None
+    except Exception as exc:
+        logger.warning("Falha ao ler data do último movimento em %s: %s", pasta_fonte, exc)
+        return None
+
+
+def _ensure_base_csv(
+    pasta_fonte: str,
+    pasta_trabalho: str,
+    empresa: str,
+    *,
+    forcar: bool = False,
+) -> str:
     """Garante Base.csv no trabalho, regenerando a partir do BI da fonte se preciso.
+
+    Com forcar=True, renormaliza mesmo se o Base.csv existir e estiver mais novo
+    que os arquivos de origem (útil após correção de regra de normalização).
 
     Nunca escreve sob pasta_fonte. Recusa se fonte == trabalho.
     """
@@ -370,12 +732,20 @@ def _ensure_base_csv(pasta_fonte: str, pasta_trabalho: str, empresa: str) -> str
 
     mtime_atual = os.path.getmtime(caminho_csv) if os.path.exists(caminho_csv) else None
 
-    if mtime_atual is not None and not _arquivos_origem_mais_recentes(
-        pasta_fonte, pasta_trabalho, mtime_atual,
+    if (
+        not forcar
+        and mtime_atual is not None
+        and not _arquivos_origem_mais_recentes(
+            pasta_fonte, pasta_trabalho, mtime_atual,
+        )
+        and os.path.exists(os.path.join(pasta_trabalho, "Liquidez_Estoque.csv"))
+        and os.path.exists(os.path.join(pasta_trabalho, "Liquidez_Vendas.csv"))
     ):
         return caminho_csv
 
-    if mtime_atual is None:
+    if forcar:
+        logger.info("Regeneração forçada da Base.csv para %s (BI fonte -> trabalho).", empresa)
+    elif mtime_atual is None:
         logger.info("Base.csv ausente para %s — normalizando BI da fonte -> trabalho.", empresa)
     else:
         logger.info("Origem mais recente para %s — renormalizando no trabalho.", empresa)
@@ -383,10 +753,11 @@ def _ensure_base_csv(pasta_fonte: str, pasta_trabalho: str, empresa: str) -> str
     try:
         normalizar_pasta_empresa(pasta_fonte, pasta_trabalho=pasta_trabalho)
     except ErroNormalizacao as exc:
-        if mtime_atual is not None:
-            logger.warning("Falha ao renormalizar %s, mantendo Base.csv existente: %s", empresa, exc)
-            return caminho_csv
-        raise HTTPException(status_code=400, detail=str(exc))
+        # Regeneração forçada: não mascara falha mantendo Base antiga.
+        if forcar or mtime_atual is None:
+            raise HTTPException(status_code=400, detail=str(exc))
+        logger.warning("Falha ao renormalizar %s, mantendo Base.csv existente: %s", empresa, exc)
+        return caminho_csv
     except ErroHarmonizacao as exc:
         raise HTTPException(status_code=400, detail=f"Falha ao harmonizar descrições: {exc}")
     except HTTPException:
@@ -398,6 +769,13 @@ def _ensure_base_csv(pasta_fonte: str, pasta_trabalho: str, empresa: str) -> str
     _cache_summary_dashboard.pop(empresa, None)
     _cache_base_empresa.pop(empresa, None)
     return caminho_csv
+
+
+def _regenerar_base_empresa(empresa: str) -> dict:
+    """Força renormalização BI→Base.csv e limpa caches da empresa."""
+    pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
+    caminho_csv = _ensure_base_csv(pasta_fonte, pasta_trabalho, empresa, forcar=True)
+    return {"ok": True, "empresa": empresa, "caminho": caminho_csv}
 
 
 def _carregar_base_padrao() -> tuple[pd.DataFrame, int]:
@@ -416,6 +794,7 @@ def _carregar_base_padrao() -> tuple[pd.DataFrame, int]:
         except Exception as exc:
             logger.error("Falha inesperada ao carregar a base padrão:\n%s", traceback.format_exc())
             raise HTTPException(status_code=400, detail=f"Falha inesperada ao carregar a base: {exc}")
+        df = _normalizar_coluna_loja_inplace(df)
         _cache_base.update(mtime=mtime, df=df, linhas_vazias=linhas_vazias)
 
     return _cache_base["df"], _cache_base["linhas_vazias"]
@@ -427,6 +806,7 @@ def _carregar_base_empresa(empresa: str) -> tuple[pd.DataFrame, int]:
     mtime = os.path.getmtime(caminho_csv)
     em_cache = _cache_base_empresa.get(empresa)
     if em_cache and em_cache["mtime"] == mtime:
+        _lru_touch(_cache_base_empresa, empresa)
         return em_cache["df"], em_cache["linhas_vazias"]
 
     try:
@@ -437,20 +817,91 @@ def _carregar_base_empresa(empresa: str) -> tuple[pd.DataFrame, int]:
         logger.error("Falha inesperada ao carregar Base.csv de %s:\n%s", empresa, traceback.format_exc())
         raise HTTPException(status_code=400, detail=f"Falha inesperada ao carregar a base: {exc}")
 
-    _cache_base_empresa[empresa] = {"mtime": mtime, "df": df, "linhas_vazias": linhas_vazias}
+    df = _normalizar_coluna_loja_inplace(df)
+    # Master DF no cache (não cópia descartável); callers via _carregar_base recebem cópia.
+    _lru_set(_cache_base_empresa, empresa, {"mtime": mtime, "df": df, "linhas_vazias": linhas_vazias})
     return df, linhas_vazias
 
 
-def _carregar_base(empresa: Optional[str] = None) -> tuple[pd.DataFrame, int]:
-    """Com empresa: Base.csv do trabalho (após ensure). Sem empresa: Excel padrão da raiz."""
+def _normalizar_loja(loja: Optional[str]) -> Optional[str]:
+    if loja is None:
+        return None
+    nome = str(loja).strip()
+    return nome or None
+
+
+def _normalizar_coluna_loja_inplace(df: pd.DataFrame) -> pd.DataFrame:
+    """Normaliza Loja uma vez ao entrar no cache (strip); evita astype/str por request."""
+    if df is None or df.empty or "Loja" not in df.columns:
+        return df
+    df["Loja"] = df["Loja"].fillna("").astype(str).str.strip()
+    return df
+
+
+def _listar_lojas(df: pd.DataFrame) -> list[str]:
+    """Nomes distintos da coluna Loja (já normalizada no cache)."""
+    if df is None or df.empty or "Loja" not in df.columns:
+        return []
+    nomes = [n for n in df["Loja"].unique().tolist() if n]
+    return sorted(nomes, key=lambda s: s.casefold())
+
+
+def _filtrar_loja(df: pd.DataFrame, loja: Optional[str]) -> pd.DataFrame:
+    """Filtra pela coluna Loja (já normalizada). loja vazia/None = todas.
+
+    Sempre devolve cópia quando filtra, para não expor view do DF em cache.
+    """
+    nome = _normalizar_loja(loja)
+    if not nome or df is None or df.empty or "Loja" not in df.columns:
+        return df
+    return df.loc[df["Loja"] == nome].copy()
+
+
+def _carregar_base(
+    empresa: Optional[str] = None,
+    loja: Optional[str] = None,
+) -> tuple[pd.DataFrame, int]:
+    """Com empresa: Base.csv do trabalho (após ensure). Sem empresa: Excel padrão da raiz.
+
+    loja opcional filtra a coluna Loja depois do cache (o cache guarda o DF completo
+    com Loja já normalizada).
+    """
     if empresa and empresa.strip():
-        return _carregar_base_empresa(empresa.strip())
-    return _carregar_base_padrao()
+        df, linhas_vazias = _carregar_base_empresa(empresa.strip())
+    else:
+        df, linhas_vazias = _carregar_base_padrao()
+    nome = _normalizar_loja(loja)
+    if nome:
+        if "Loja" not in df.columns:
+            raise HTTPException(status_code=400, detail=f"Loja '{nome}' não encontrada na base.")
+        mask = df["Loja"] == nome
+        if not bool(mask.any()):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Loja '{nome}' não encontrada na base.",
+            )
+        # Cópia: o cache guarda o DF completo; view filtrada não pode ser mutada
+        # por callers (aplicar_grupos / filtros) sem contaminar o cache.
+        return df.loc[mask].copy(), linhas_vazias
+    # Sem filtro de loja: cópia defensiva para callers nunca mutarem o DF em cache.
+    return df.copy(), linhas_vazias
 
 
 @app.get("/api/base")
-def obter_base(empresa: Optional[str] = None, usuario: str = Depends(exigir_login)):
-    df, linhas_vazias = _carregar_base(empresa)
+def obter_base(
+    empresa: Optional[str] = None,
+    loja: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
+    df_completo, linhas_vazias = _carregar_base(empresa)
+    lojas = _listar_lojas(df_completo)
+    loja_norm = _normalizar_loja(loja)
+    if loja_norm and loja_norm not in lojas:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Loja '{loja_norm}' não encontrada na base.",
+        )
+    df = _filtrar_loja(df_completo, loja_norm) if loja_norm else df_completo
 
     qtd_nao_harmonizados = af.contar_produtos_nao_harmonizados(df)
 
@@ -460,6 +911,8 @@ def obter_base(empresa: Optional[str] = None, usuario: str = Depends(exigir_logi
         "qtd_nao_harmonizados": qtd_nao_harmonizados,
         "granularidades": af.GRANULARIDADES,
         "empresa": empresa.strip() if empresa and empresa.strip() else None,
+        "lojas": lojas,
+        "loja": loja_norm,
     }
 
 
@@ -472,6 +925,7 @@ class ParametrosGrupos(BaseModel):
     cortes_clientes: tuple[float, float, float] = (30.0, 50.0, 60.0)
     desconsiderar_balcao: bool = False
     empresa: Optional[str] = None
+    loja: Optional[str] = None
     max_itens_por_grupo: int = 20
     # True = recalcula cortes como "sugerir"; False = usa os cortes informados (ex.: config.json).
     ajustar_cortes: bool = True
@@ -593,23 +1047,45 @@ def _previa_grupos_resposta(
     df: pd.DataFrame,
     clientes_excluidos: list[str],
     cortes_iniciais,
-    max_por_grupo: int,
+    max_itens_por_grupo: int,
     desconsiderar_balcao: bool,
     ajustar_cortes: bool = True,
     clientes_balcao_extra: Optional[List[str]] = None,
+    grupos_manuais: Optional[list] = None,
 ) -> dict:
+    # Grupos manuais substituem os indivíduos antes dos cortes ABC: a receita
+    # do grupo é a soma dos membros; % e Faixa são recalculados; membros
+    # deixam de aparecer como linhas próprias.
+    df = af.aplicar_grupos_manuais_em_cliente(df, grupos_manuais)
+    mapa = af.mapa_cliente_para_grupo_manual(grupos_manuais)
+    excluidos = [mapa.get(c, c) for c in (clientes_excluidos or [])]
+    balcao_extra = [
+        mapa.get(c, c) for c in (clientes_balcao_extra or [])
+    ]
+    # dedupe preservando ordem
+    def _uniq(seq):
+        vistos = set()
+        out = []
+        for x in seq:
+            if x not in vistos:
+                vistos.add(x)
+                out.append(x)
+        return out
+    excluidos = _uniq(excluidos)
+    balcao_extra = _uniq(balcao_extra)
+
     if ajustar_cortes:
         cortes, _ = af.sugerir_cortes_grupos(
-            df, clientes_excluidos, cortes_iniciais,
-            max_por_grupo=max_por_grupo, desconsiderar_balcao=desconsiderar_balcao,
-            clientes_balcao_extra=clientes_balcao_extra,
+            df, excluidos, cortes_iniciais,
+            max_por_grupo=max_itens_por_grupo, desconsiderar_balcao=desconsiderar_balcao,
+            clientes_balcao_extra=balcao_extra,
         )
     else:
         cortes = list(cortes_iniciais)
     classificado = af.classificar_clientes_agregado(
-        df, clientes_excluidos, cortes,
+        df, excluidos, cortes,
         desconsiderar_balcao=desconsiderar_balcao,
-        clientes_balcao_extra=clientes_balcao_extra,
+        clientes_balcao_extra=balcao_extra,
     )
     contagens = _contagens_de_classificado(classificado, cortes)
     return {
@@ -622,7 +1098,7 @@ def _previa_grupos_resposta(
 @app.post("/api/grupos/previa")
 def previa_grupos(parametros: ParametrosGrupos, usuario: str = Depends(exigir_login)):
     """Prévia de grupos; por padrão recalcula cortes para caber em max_itens_por_grupo."""
-    df, _ = _carregar_base(parametros.empresa)
+    df, _ = _carregar_base(parametros.empresa, loja=parametros.loja)
     return _previa_grupos_resposta(
         df,
         parametros.clientes_excluidos,
@@ -630,25 +1106,35 @@ def previa_grupos(parametros: ParametrosGrupos, usuario: str = Depends(exigir_lo
         parametros.max_itens_por_grupo,
         parametros.desconsiderar_balcao,
         ajustar_cortes=parametros.ajustar_cortes,
-        clientes_balcao_extra=_clientes_balcao_extra(parametros.empresa),
+        clientes_balcao_extra=_clientes_balcao_extra(parametros.empresa, loja=parametros.loja),
+        grupos_manuais=_grupos_manuais_empresa(parametros.empresa, loja=parametros.loja),
     )
 
 
 class ParametrosSugerirCortes(ParametrosGrupos):
-    max_por_grupo: int = 20
+    """Alias legado: aceita max_por_grupo e mapeia para max_itens_por_grupo."""
+    max_por_grupo: Optional[int] = None
 
 
 @app.post("/api/grupos/sugerir-cortes")
 def sugerir_cortes(parametros: ParametrosSugerirCortes, usuario: str = Depends(exigir_login)):
-    df, _ = _carregar_base(parametros.empresa)
-    return _previa_grupos_resposta(
-        df,
-        parametros.clientes_excluidos,
-        parametros.cortes_clientes,
-        parametros.max_por_grupo,
-        parametros.desconsiderar_balcao,
-        ajustar_cortes=True,
-        clientes_balcao_extra=_clientes_balcao_extra(parametros.empresa),
+    """Alias de /api/grupos/previa com ajustar_cortes=True."""
+    max_itens = (
+        parametros.max_por_grupo
+        if parametros.max_por_grupo is not None
+        else parametros.max_itens_por_grupo
+    )
+    return previa_grupos(
+        ParametrosGrupos(
+            clientes_excluidos=parametros.clientes_excluidos,
+            cortes_clientes=parametros.cortes_clientes,
+            desconsiderar_balcao=parametros.desconsiderar_balcao,
+            empresa=parametros.empresa,
+            loja=parametros.loja,
+            max_itens_por_grupo=max_itens,
+            ajustar_cortes=True,
+        ),
+        usuario,
     )
 
 
@@ -660,13 +1146,14 @@ class ParametrosProdutos(BaseModel):
     produtos_excluidos: list[str] = []
     corte_produtos: float = 80.0
     empresa: Optional[str] = None
+    loja: Optional[str] = None
     max_itens_por_grupo: int = 20
     ajustar_cortes: bool = True
 
 
 @app.post("/api/produtos/previa")
 def previa_produtos(parametros: ParametrosProdutos, usuario: str = Depends(exigir_login)):
-    df, _ = _carregar_base(parametros.empresa)
+    df, _ = _carregar_base(parametros.empresa, loja=parametros.loja)
     # Classifica todos os produtos (sem filtrar excluídos) para a tabela de
     # prévia poder marcar/desmarcar "Considerar?" como no app desktop.
     if parametros.ajustar_cortes:
@@ -701,6 +1188,153 @@ def previa_produtos(parametros: ParametrosProdutos, usuario: str = Depends(exigi
 
 class CaminhoPasta(BaseModel):
     caminho: str
+
+
+class EscolherPastaBody(BaseModel):
+    titulo: Optional[str] = None
+
+
+# Evita dois diálogos nativos abertos ao mesmo tempo.
+_escolher_pasta_lock = threading.Lock()
+
+_DIALOGO_PASTA_SCRIPT = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "escolher_pasta_dialog.py",
+)
+_DIALOGO_PASTA_PS1 = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "escolher_pasta_explorer.ps1",
+)
+
+
+def _mensagem_erro_dialogo_pasta(detalhe: str) -> str:
+    return (
+        "Não foi possível abrir o diálogo de pasta. "
+        "O backend precisa rodar na máquina local com interface gráfica "
+        f"(não em servidor headless). {detalhe}"
+    ).strip()
+
+
+def _escolher_pasta_powershell(titulo_dialogo: str) -> Optional[str]:
+    """Diálogo nativo estilo Explorer (IFileDialog / FOS_PICKFOLDERS) via PowerShell -STA."""
+    if not os.path.isfile(_DIALOGO_PASTA_PS1):
+        raise FileNotFoundError(_DIALOGO_PASTA_PS1)
+    kwargs: dict = {
+        "args": [
+            "powershell",
+            "-NoProfile",
+            "-STA",
+            "-ExecutionPolicy", "Bypass",
+            "-File", _DIALOGO_PASTA_PS1,
+            titulo_dialogo,
+        ],
+        "capture_output": True,
+        "timeout": 600,
+    }
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    proc = subprocess.run(**kwargs)
+    stderr = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
+    if proc.returncode == 3 or stderr.startswith("ERR_DIALOG:"):
+        raise RuntimeError(stderr or f"PowerShell saiu com código {proc.returncode}")
+    if proc.returncode != 0:
+        raise RuntimeError(stderr or f"PowerShell saiu com código {proc.returncode}")
+    caminho = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
+    return caminho or None
+
+
+def _escolher_pasta_subprocess_tk(titulo_dialogo: str) -> Optional[str]:
+    """Diálogo via processo filho com tkinter (nunca no worker do uvicorn)."""
+    if not os.path.isfile(_DIALOGO_PASTA_SCRIPT):
+        raise FileNotFoundError(_DIALOGO_PASTA_SCRIPT)
+    kwargs: dict = {
+        "args": [sys.executable, _DIALOGO_PASTA_SCRIPT, titulo_dialogo],
+        "capture_output": True,
+        "timeout": 600,
+    }
+    if sys.platform == "win32":
+        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    proc = subprocess.run(**kwargs)
+    stderr = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
+    if proc.returncode == 0:
+        caminho = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
+        return caminho or None
+    if proc.returncode == 2 or stderr.startswith("ERR_IMPORT:"):
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "Seleção de pasta indisponível: tkinter não está instalado neste Python. "
+                "Digite o caminho manualmente ou reinstale o Python com suporte a Tcl/Tk."
+            ),
+        )
+    if proc.returncode == 3 or stderr.startswith("ERR_DIALOG:"):
+        raise HTTPException(
+            status_code=503,
+            detail=_mensagem_erro_dialogo_pasta(
+                f"Detalhe: {stderr or f'código {proc.returncode}'}"
+            ),
+        )
+    raise RuntimeError(stderr or f"código {proc.returncode}")
+
+
+def _escolher_pasta_nativa(titulo: Optional[str] = None) -> Optional[str]:
+    """
+    Abre diálogo nativo de pasta em processo separado.
+
+    Nunca roda tkinter no processo do uvicorn (no Windows isso derruba o worker
+    e o proxy devolve 500 genérico sem JSON).
+    """
+    titulo_dialogo = (titulo or "").strip() or "Selecionar pasta"
+    erros: list[str] = []
+
+    with _escolher_pasta_lock:
+        if sys.platform == "win32":
+            try:
+                return _escolher_pasta_powershell(titulo_dialogo)
+            except subprocess.TimeoutExpired as exc:
+                raise HTTPException(
+                    status_code=504,
+                    detail="Tempo esgotado aguardando a seleção de pasta.",
+                ) from exc
+            except HTTPException:
+                raise
+            except Exception as exc:
+                logger.warning("Diálogo PowerShell falhou: %s", exc)
+                erros.append(f"PowerShell: {exc}")
+
+        try:
+            return _escolher_pasta_subprocess_tk(titulo_dialogo)
+        except subprocess.TimeoutExpired as exc:
+            raise HTTPException(
+                status_code=504,
+                detail="Tempo esgotado aguardando a seleção de pasta.",
+            ) from exc
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("Diálogo tkinter (subprocess) falhou: %s", exc)
+            erros.append(f"tkinter: {exc}")
+
+        detalhe = " | ".join(erros) if erros else "nenhum provedor disponível"
+        raise HTTPException(
+            status_code=503,
+            detail=_mensagem_erro_dialogo_pasta(
+                f"Digite o caminho manualmente. ({detalhe})"
+            ),
+        )
+
+
+async def _responder_escolher_pasta(titulo: Optional[str] = None) -> dict:
+    try:
+        caminho = await asyncio.to_thread(_escolher_pasta_nativa, titulo)
+        return {"caminho": caminho}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=_mensagem_erro_dialogo_pasta(f"Detalhe: {exc}"),
+        ) from exc
 
 
 def _salvar_caminho_fonte(caminho: str) -> str:
@@ -772,6 +1406,14 @@ def definir_caminho_trabalho(corpo: CaminhoPasta, usuario: str = Depends(exigir_
     return {"caminho": _salvar_caminho_trabalho(corpo.caminho)}
 
 
+@app.post("/api/config/escolher-pasta")
+async def escolher_pasta_config(
+    corpo: EscolherPastaBody = Body(default_factory=EscolherPastaBody),
+    usuario: str = Depends(exigir_login),
+):
+    return await _responder_escolher_pasta(corpo.titulo)
+
+
 # Aliases legados do Analisador (caminho-empresas -> trabalho)
 @app.get("/api/config/caminho-empresas")
 def obter_caminho_empresas(usuario: str = Depends(exigir_login)):
@@ -793,7 +1435,12 @@ class ConfiguracaoEmpresa(BaseModel):
 
 
 @app.post("/api/empresas/{nome}/configuracao")
-def salvar_configuracao_empresa(nome: str, corpo: ConfiguracaoEmpresa, usuario: str = Depends(exigir_login)):
+def salvar_configuracao_empresa(
+    nome: str,
+    corpo: ConfiguracaoEmpresa,
+    loja: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
     nome = _validar_nome_empresa(nome)
     trabalho_root = _exigir_caminho_trabalho()
     pasta_empresa = os.path.join(trabalho_root, nome)
@@ -802,24 +1449,29 @@ def salvar_configuracao_empresa(nome: str, corpo: ConfiguracaoEmpresa, usuario: 
         os.makedirs(pasta_empresa, exist_ok=True)
     except OSError as exc:
         raise HTTPException(status_code=400, detail=f"Não foi possível criar a pasta da empresa: {exc}")
-    caminho_arquivo = os.path.join(pasta_empresa, "config.json")
-    _assert_escrita_fora_da_fonte(caminho_arquivo)
-    try:
-        with open(caminho_arquivo, "w", encoding="utf-8") as arquivo:
-            json.dump(corpo.dados, arquivo, ensure_ascii=False, indent=2)
-    except OSError as exc:
-        raise HTTPException(status_code=400, detail=f"Não foi possível gravar config.json: {exc}")
-    return {"ok": True, "caminho": caminho_arquivo}
+    dados = corpo.dados if isinstance(corpo.dados, dict) else {}
+    caminho_arquivo = _gravar_config_escopo(nome, loja, dados)
+    return {
+        "ok": True,
+        "caminho": caminho_arquivo,
+        "loja": _chave_escopo_loja(loja) or None,
+    }
 
 
 @app.get("/api/empresas/{nome}/configuracao")
-def carregar_configuracao_empresa(nome: str, usuario: str = Depends(exigir_login)):
+def carregar_configuracao_empresa(
+    nome: str,
+    loja: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
     nome = _validar_nome_empresa(nome)
-    caminho_arquivo = os.path.join(_exigir_caminho_trabalho(), nome, "config.json")
-    if not os.path.exists(caminho_arquivo):
-        raise HTTPException(status_code=404, detail="Configuração não encontrada para esta empresa.")
-    with open(caminho_arquivo, "r", encoding="utf-8") as arquivo:
-        return json.load(arquivo)
+    dados = _ler_config_escopo(nome, loja)
+    if dados is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Configuração não encontrada para este escopo de loja.",
+        )
+    return dados
 
 
 class TagsClientesBody(BaseModel):
@@ -831,27 +1483,116 @@ class TagClienteBody(BaseModel):
     tags: list[str]
 
 
+class TagsCatalogoBody(BaseModel):
+    catalogo: list
+
+
 @app.get("/api/empresas/{nome}/clientes-tags")
-def obter_tags_clientes(nome: str, usuario: str = Depends(exigir_login)):
-    return _ler_tags_clientes(nome)
+def obter_tags_clientes(
+    nome: str,
+    loja: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
+    return _ler_tags_clientes(nome, loja=loja)
+
+
+@app.put("/api/empresas/{nome}/clientes-tags/catalogo")
+def salvar_catalogo_tags(
+    nome: str,
+    corpo: TagsCatalogoBody,
+    loja: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
+    return _gravar_catalogo_tags(
+        nome,
+        corpo.catalogo if isinstance(corpo.catalogo, list) else [],
+        loja=loja,
+    )
+
+
+class GruposManuaisBody(BaseModel):
+    grupos: list
+
+
+@app.put("/api/empresas/{nome}/clientes-grupos")
+def salvar_grupos_manuais(
+    nome: str,
+    corpo: GruposManuaisBody,
+    loja: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
+    """Persiste grupos manuais de clientes (agregados no concentrado ABC)."""
+    return _gravar_grupos_manuais(
+        nome,
+        corpo.grupos if isinstance(corpo.grupos, list) else [],
+        loja=loja,
+    )
+
+
+@app.get("/api/clientes/buscar")
+def buscar_clientes(
+    q: str = "",
+    empresa: Optional[str] = None,
+    loja: Optional[str] = None,
+    limite: int = 40,
+    usuario: str = Depends(exigir_login),
+):
+    """Busca clientes na base bruta (sem agregar grupos manuais) para o criador de grupos."""
+    df, _ = _carregar_base(empresa, loja=loja)
+    if "Cliente" not in df.columns or df.empty:
+        return {"itens": []}
+    agregado = (
+        df.groupby("Cliente", dropna=False, as_index=False)["Receita"]
+        .sum()
+        .sort_values("Receita", ascending=False)
+    )
+    termo = (q or "").strip().lower()
+    if termo:
+        nomes = agregado["Cliente"].astype(str)
+        mascara = nomes.str.lower().str.contains(re.escape(termo), na=False)
+        agregado = agregado[mascara]
+    limite = max(1, min(int(limite or 40), 100))
+    agregado = agregado.head(limite)
+    receita = pd.to_numeric(agregado["Receita"], errors="coerce").fillna(0.0)
+    return {
+        "itens": [
+            {"cliente": str(nome), "receita": float(rec)}
+            for nome, rec in zip(agregado["Cliente"].tolist(), receita.tolist())
+        ],
+    }
 
 
 @app.put("/api/empresas/{nome}/clientes-tags")
-def salvar_tags_clientes(nome: str, corpo: TagsClientesBody, usuario: str = Depends(exigir_login)):
-    return _gravar_tags_clientes(nome, corpo.tags if isinstance(corpo.tags, dict) else {})
+def salvar_tags_clientes(
+    nome: str,
+    corpo: TagsClientesBody,
+    loja: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
+    return _gravar_tags_clientes(
+        nome,
+        corpo.tags if isinstance(corpo.tags, dict) else {},
+        loja=loja,
+    )
 
 
 @app.put("/api/empresas/{nome}/clientes-tags/cliente")
-def salvar_tags_um_cliente(nome: str, corpo: TagClienteBody, usuario: str = Depends(exigir_login)):
+def salvar_tags_um_cliente(
+    nome: str,
+    corpo: TagClienteBody,
+    loja: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
     """Atualiza as tags de um único cliente e sincroniza clientes_balcao."""
-    atual = _ler_tags_clientes(nome)
+    atual = _ler_tags_clientes(nome, loja=loja)
     tags = dict(atual["tags"])
     cliente = corpo.cliente.strip()
     if not cliente:
         raise HTTPException(status_code=400, detail="Informe o nome do cliente.")
+    ids_catalogo = _ids_do_catalogo(atual["catalogo"])
     limpas = [
         t for t in (str(x).strip().lower() for x in corpo.tags)
-        if t in af.TAGS_CLIENTE_VALIDAS
+        if t in ids_catalogo
     ]
     # dedupe preserving order
     vistas = set()
@@ -864,15 +1605,30 @@ def salvar_tags_um_cliente(nome: str, corpo: TagClienteBody, usuario: str = Depe
         tags[cliente] = ordenadas
     else:
         tags.pop(cliente, None)
-    return _gravar_tags_clientes(nome, tags)
+    return _gravar_tags_clientes(nome, tags, loja=loja)
 
 
 @app.post("/api/empresas/{nome}/ensure-base")
-def ensure_base_empresa(nome: str, usuario: str = Depends(exigir_login)):
-    """Garante Base.csv no trabalho a partir do BI da fonte (Analisador / dash)."""
+def ensure_base_empresa(
+    nome: str,
+    forcar: bool = False,
+    usuario: str = Depends(exigir_login),
+):
+    """Garante Base.csv no trabalho a partir do BI da fonte (Analisador / dash).
+
+    Query ``forcar=true`` renormaliza mesmo se o Base.csv já estiver atualizado.
+    """
+    if forcar:
+        return _regenerar_base_empresa(nome)
     pasta_fonte, pasta_trabalho = _pastas_empresa(nome)
     caminho_csv = _ensure_base_csv(pasta_fonte, pasta_trabalho, nome)
-    return {"ok": True, "caminho": caminho_csv}
+    return {"ok": True, "caminho": caminho_csv, "empresa": nome}
+
+
+@app.post("/api/empresas/{nome}/regenerar-base")
+def regenerar_base_empresa(nome: str, usuario: str = Depends(exigir_login)):
+    """Força regenerar Base.csv a partir do BI e limpa cache (Analisador)."""
+    return _regenerar_base_empresa(nome)
 
 
 # ---------------------------------------------------------------------------
@@ -899,6 +1655,13 @@ def definir_caminho_trabalho_dashboard(corpo: CaminhoPasta):
     return {"caminho": _salvar_caminho_trabalho(corpo.caminho)}
 
 
+@app.post("/api/dashboard/escolher-pasta")
+async def escolher_pasta_dashboard(
+    corpo: EscolherPastaBody = Body(default_factory=EscolherPastaBody),
+):
+    return await _responder_escolher_pasta(corpo.titulo)
+
+
 # Alias legado: caminho-dados do dash = fonte (somente leitura)
 @app.get("/api/dashboard/caminho-dados")
 def obter_caminho_dados_dashboard():
@@ -915,6 +1678,12 @@ def listar_empresas_dashboard():
     return _listar_empresas_fonte()
 
 
+@app.post("/api/dashboard/empresas/{empresa}/regenerar-base")
+def regenerar_base_dashboard(empresa: str):
+    """Força regenerar Base.csv a partir do BI e limpa cache (Dashboard público)."""
+    return _regenerar_base_empresa(empresa)
+
+
 @app.get("/api/dashboard/summary/{empresa}")
 def obter_summary_dashboard(empresa: str):
     pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
@@ -923,19 +1692,392 @@ def obter_summary_dashboard(empresa: str):
     mtime = os.path.getmtime(caminho_csv)
     em_cache = _cache_summary_dashboard.get(empresa)
     if em_cache and em_cache["mtime"] == mtime:
+        _lru_touch(_cache_summary_dashboard, empresa)
         return em_cache["summary"]
 
     try:
         df, _linhas_vazias = af.carregar_csv(caminho_csv)
-        summary = gerar_summary(df, updated_at=formatar_data_arquivo(mtime))
+        data_ultimo = _data_ultimo_movimento_bi(pasta_fonte)
+        summary = gerar_summary(df, data_ultimo_movimento=data_ultimo)
     except af.ErroCarregamentoCSV as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
         logger.error("Falha inesperada ao gerar summary da empresa %s:\n%s", empresa, traceback.format_exc())
         raise HTTPException(status_code=400, detail=f"Falha inesperada ao processar a base: {exc}")
 
-    _cache_summary_dashboard[empresa] = {"mtime": mtime, "summary": summary}
+    _lru_set(_cache_summary_dashboard, empresa, {"mtime": mtime, "summary": summary})
     return summary
+
+
+# ---------------------------------------------------------------------------
+# Exploração livre (gráficos / tabelas dinâmicas) — agregação no servidor
+# ---------------------------------------------------------------------------
+
+DIMENSOES_EXPLORAR = (
+    "Loja", "NOME_FABRICANTE", "Cliente", "descricao",
+    "Código Interno", "Código de referêcia",
+    "Ano", "Mês",
+    "Periodo_Mensal", "Periodo_Trimestral", "Periodo_Semestral", "Periodo_Anual",
+)
+METRICAS_EXPLORAR = ("Receita", "QTD", "Clientes")
+LIMITE_EXPLORAR_MAX = 500
+
+
+class ParametrosExplorar(BaseModel):
+    empresa: Optional[str] = None
+    loja: Optional[str] = None
+    dimensoes: list[str] = []
+    metricas: list[str] = ["Receita"]
+    filtros: dict[str, list[str]] = {}
+    aplicar_grupos: bool = True
+    limite: int = 100
+    ordenar_por: Optional[str] = None
+    ordem: str = "desc"
+    # agregar (padrão) | histograma | boxplot | dispersao
+    modo_viz: str = "agregar"
+    bins: int = 20
+
+
+def _aplicar_filtros_explorar(df: pd.DataFrame, filtros: Optional[dict]) -> pd.DataFrame:
+    for coluna, valores in (filtros or {}).items():
+        if coluna not in df.columns or not valores:
+            continue
+        df = df[df[coluna].astype(str).isin([str(v) for v in valores])]
+    return df
+
+
+def _metrica_numerica_explorar(metricas: list[str]) -> str:
+    for m in metricas:
+        if m in ("Receita", "QTD"):
+            return m
+    raise HTTPException(
+        status_code=400,
+        detail="Histograma/boxplot/dispersão exigem métrica Receita ou QTD.",
+    )
+
+
+def _explorar_histograma(
+    df: pd.DataFrame,
+    metrica: str,
+    bins: int,
+    limite: int,
+    dimensoes: Optional[list[str]] = None,
+) -> dict:
+    """Histograma da distribuição da métrica por entidade (em geral Cliente).
+
+    Corrige a assimetria típica de vendas: ignora valores <= 0 (devoluções/
+    zeros), corta outliers acima do P99 e usa bins em escala log quando a
+    amplitude for grande — evita o efeito de "uma barra só".
+    """
+    entidade = "Cliente"
+    if dimensoes:
+        # Se a dimensão for uma entidade "fina", usa ela; períodos/ano viram
+        # agrupamento fraco demais para histograma de distribuição.
+        candidata = dimensoes[0]
+        if candidata in ("Cliente", "Loja", "NOME_FABRICANTE", "descricao", "Código Interno"):
+            entidade = candidata
+    if entidade not in df.columns:
+        if "Cliente" not in df.columns:
+            raise HTTPException(status_code=400, detail="Base sem coluna adequada para histograma.")
+        entidade = "Cliente"
+
+    serie = df.groupby(entidade, dropna=False)[metrica].sum()
+    serie = pd.to_numeric(serie, errors="coerce").dropna()
+    # Devoluções geram QTD/Receita líquida <= 0; histograma de distribuição
+    # de volume/receita positiva é o que o usuário espera ver.
+    serie = serie[serie > 0]
+    if serie.empty:
+        return {
+            "colunas": ["bin", "frequencia", "inicio", "fim", "centro", "faixa"],
+            "linhas": [],
+            "total_linhas": 0,
+            "limite": limite,
+            "dimensoes": ["bin"],
+            "metricas": ["frequencia"],
+            "modo_viz": "histograma",
+        }
+
+    valores = serie.to_numpy(dtype=float)
+    n_bins = max(5, min(int(bins or 20), 60))
+    p99 = float(np.quantile(valores, 0.99))
+    vmin = float(valores.min())
+    # Corta cauda extrema para as bordas dos bins (outliers vão no último bin).
+    vmax = max(p99, vmin * 1.01)
+    usar_log = vmax / max(vmin, 1e-9) >= 50 and vmin > 0
+
+    if usar_log:
+        edges = np.logspace(np.log10(vmin), np.log10(vmax), n_bins + 1)
+    else:
+        edges = np.linspace(vmin, vmax, n_bins + 1)
+
+    # Inclui valores acima de vmax no último bin
+    valores_clip = np.clip(valores, edges[0], edges[-1])
+    counts, edges = np.histogram(valores_clip, bins=edges)
+
+    def _fmt_eixo(v: float) -> str:
+        """Rótulo curto para o eixo X (só a borda esquerda do bin)."""
+        av = abs(v)
+        if av >= 1_000_000:
+            s = f"{v / 1_000_000:.1f}".rstrip("0").rstrip(".")
+            return f"{s}M"
+        if av >= 10_000:
+            return f"{v / 1_000:.0f}k"
+        if av >= 1_000:
+            s = f"{v / 1_000:.1f}".rstrip("0").rstrip(".")
+            return f"{s}k"
+        if av >= 10:
+            return f"{v:.0f}"
+        if av >= 1:
+            return f"{v:.1f}".rstrip("0").rstrip(".")
+        return f"{v:.2f}".rstrip("0").rstrip(".")
+
+    def _fmt_tooltip(v: float) -> str:
+        if abs(v) >= 1000:
+            return f"{v:,.0f}".replace(",", ".")
+        if abs(v) >= 10:
+            return f"{v:,.1f}".replace(",", ".")
+        return f"{v:,.2f}".replace(",", ".")
+
+    linhas = []
+    for i, freq in enumerate(counts):
+        inicio = float(edges[i])
+        fim = float(edges[i + 1])
+        centro = (inicio + fim) / 2 if not usar_log else float(np.sqrt(inicio * fim))
+        if i == len(counts) - 1 and float(valores.max()) > vmax:
+            rotulo = f"{_fmt_eixo(inicio)}+"
+            faixa = f"{_fmt_tooltip(inicio)}+"
+        else:
+            rotulo = _fmt_eixo(inicio)
+            faixa = f"{_fmt_tooltip(inicio)} – {_fmt_tooltip(fim)}"
+        linhas.append([rotulo, int(freq), inicio, fim, centro, faixa])
+
+    # Remove bins vazios nas pontas para não poluir o eixo (mantém internos).
+    while len(linhas) > 1 and linhas[0][1] == 0:
+        linhas.pop(0)
+    while len(linhas) > 1 and linhas[-1][1] == 0:
+        linhas.pop()
+
+    return {
+        "colunas": ["bin", "frequencia", "inicio", "fim", "centro", "faixa"],
+        "linhas": linhas[:limite],
+        "total_linhas": len(linhas),
+        "limite": limite,
+        "dimensoes": ["bin"],
+        "metricas": ["frequencia"],
+        "modo_viz": "histograma",
+        "entidade": entidade,
+        "observacoes": int(len(valores)),
+        "escala": "log" if usar_log else "linear",
+    }
+
+
+def _explorar_boxplot(df: pd.DataFrame, dimensoes: list[str], metrica: str, limite: int) -> dict:
+    """Boxplot: distribuição da métrica por entidade dentro de cada categoria (1ª dimensão)."""
+    if not dimensoes:
+        raise HTTPException(
+            status_code=400,
+            detail="Boxplot exige ao menos uma dimensão (categoria no eixo X).",
+        )
+    dim = dimensoes[0]
+    entidade = "Cliente" if dim != "Cliente" else (
+        "Periodo_Mensal" if "Periodo_Mensal" in df.columns else None
+    )
+    if entidade is None or entidade not in df.columns:
+        raise HTTPException(status_code=400, detail="Não foi possível montar observações para o boxplot.")
+
+    por_entidade = (
+        df.groupby([dim, entidade], dropna=False)[metrica]
+        .sum()
+        .reset_index()
+    )
+    por_entidade[metrica] = pd.to_numeric(por_entidade[metrica], errors="coerce")
+    por_entidade = por_entidade.dropna(subset=[metrica])
+
+    if por_entidade.empty:
+        return {
+            "colunas": [dim, "min", "q1", "median", "q3", "max", "n"],
+            "linhas": [],
+            "total_linhas": 0,
+            "limite": limite,
+            "dimensoes": [dim],
+            "metricas": [metrica],
+            "modo_viz": "boxplot",
+        }
+
+    linhas_stats = []
+    for nome, grupo in por_entidade.groupby(dim, dropna=False):
+        serie = grupo[metrica]
+        linhas_stats.append({
+            dim: nome,
+            "min": float(serie.min()),
+            "q1": float(serie.quantile(0.25)),
+            "median": float(serie.median()),
+            "q3": float(serie.quantile(0.75)),
+            "max": float(serie.max()),
+            "n": int(serie.count()),
+        })
+    stats = pd.DataFrame(linhas_stats).sort_values("median", ascending=False)
+    total = len(stats)
+    stats = stats.head(limite)
+    return {
+        **_df_para_json(stats),
+        "total_linhas": total,
+        "limite": limite,
+        "dimensoes": [dim],
+        "metricas": [metrica],
+        "modo_viz": "boxplot",
+    }
+
+
+def _explorar_dispersao(
+    df: pd.DataFrame, dimensoes: list[str], metricas: list[str], limite: int,
+) -> dict:
+    """Dispersão: pontos por combinação de dimensões com eixos X/Y numéricos."""
+    nums = [m for m in metricas if m in ("Receita", "QTD")]
+    if not nums:
+        raise HTTPException(status_code=400, detail="Dispersão exige Receita e/ou QTD.")
+
+    if len(nums) >= 2:
+        x_col, y_col = nums[0], nums[1]
+    else:
+        y_col = nums[0]
+        x_col = "QTD" if y_col == "Receita" and "QTD" in df.columns else (
+            "Receita" if y_col == "QTD" and "Receita" in df.columns else y_col
+        )
+
+    dims = [d for d in dimensoes if d in df.columns][:2]
+    group_cols = dims if dims else (["Cliente"] if "Cliente" in df.columns else [])
+    if not group_cols:
+        raise HTTPException(status_code=400, detail="Dispersão precisa de dimensão ou Cliente.")
+
+    if x_col == y_col:
+        agrupado = df.groupby(group_cols, dropna=False).agg(**{x_col: (x_col, "sum")}).reset_index()
+        agrupado["y"] = agrupado[x_col]
+        y_out = "y"
+    else:
+        agrupado = df.groupby(group_cols, dropna=False).agg(
+            **{x_col: (x_col, "sum"), y_col: (y_col, "sum")}
+        ).reset_index()
+        y_out = y_col
+
+    agrupado = agrupado.sort_values(y_out, ascending=False)
+    total = len(agrupado)
+    agrupado = agrupado.head(limite)
+    rotulo = agrupado[group_cols].astype(str).agg(" · ".join, axis=1)
+    out = pd.DataFrame({
+        "nome": rotulo,
+        "x": pd.to_numeric(agrupado[x_col], errors="coerce").fillna(0.0),
+        "y": pd.to_numeric(agrupado[y_out], errors="coerce").fillna(0.0),
+    })
+    return {
+        **_df_para_json(out),
+        "total_linhas": total,
+        "limite": limite,
+        "dimensoes": group_cols,
+        "metricas": [x_col, y_col],
+        "modo_viz": "dispersao",
+        "eixos": {"x": x_col, "y": y_col},
+    }
+
+
+@app.get("/api/explorar/schema")
+def explorar_schema(
+    empresa: Optional[str] = None,
+    loja: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
+    """Colunas e métricas disponíveis para o builder livre."""
+    df, _ = _carregar_base(empresa, loja=loja)
+    dimensoes = [c for c in DIMENSOES_EXPLORAR if c in df.columns]
+    return {
+        "dimensoes": dimensoes,
+        "metricas": list(METRICAS_EXPLORAR),
+        "linhas": len(df),
+        "empresa": empresa.strip() if empresa and empresa.strip() else None,
+        "loja": _normalizar_loja(loja),
+    }
+
+
+@app.post("/api/explorar/agregar")
+def explorar_agregar(parametros: ParametrosExplorar, usuario: str = Depends(exigir_login)):
+    """Agrega a base sob demanda para gráficos/tabelas personalizados."""
+    empresa = parametros.empresa.strip() if parametros.empresa and parametros.empresa.strip() else None
+    df, _ = _carregar_base(empresa, loja=parametros.loja)
+    if parametros.aplicar_grupos:
+        df = af.aplicar_grupos_manuais_em_cliente(
+            df, _grupos_manuais_empresa(empresa, loja=parametros.loja),
+        )
+
+    dimensoes = [d for d in parametros.dimensoes if d in DIMENSOES_EXPLORAR and d in df.columns]
+    metricas = [m for m in parametros.metricas if m in METRICAS_EXPLORAR]
+    if not metricas:
+        raise HTTPException(status_code=400, detail="Selecione ao menos uma métrica (Receita, QTD ou Clientes).")
+    if len(dimensoes) > 4:
+        raise HTTPException(status_code=400, detail="No máximo 4 dimensões por consulta.")
+
+    df = _aplicar_filtros_explorar(df, parametros.filtros)
+    limite = max(1, min(int(parametros.limite or 100), LIMITE_EXPLORAR_MAX))
+    modo = (parametros.modo_viz or "agregar").strip().lower()
+
+    if df.empty:
+        return {
+            "colunas": dimensoes + metricas,
+            "linhas": [],
+            "total_linhas": 0,
+            "limite": limite,
+            "dimensoes": dimensoes,
+            "metricas": metricas,
+            "modo_viz": modo,
+        }
+
+    if modo == "histograma":
+        return _explorar_histograma(
+            df, _metrica_numerica_explorar(metricas), parametros.bins, limite, dimensoes,
+        )
+    if modo == "boxplot":
+        return _explorar_boxplot(df, dimensoes, _metrica_numerica_explorar(metricas), limite)
+    if modo == "dispersao":
+        return _explorar_dispersao(df, dimensoes, metricas, limite)
+
+    agg: dict = {}
+    if "Receita" in metricas:
+        agg["Receita"] = ("Receita", "sum")
+    if "QTD" in metricas:
+        agg["QTD"] = ("QTD", "sum")
+    if "Clientes" in metricas:
+        agg["Clientes"] = ("Cliente", "nunique")
+
+    if dimensoes:
+        agrupado = df.groupby(dimensoes, dropna=False).agg(**agg).reset_index()
+    else:
+        linha = {nome: float(df[src].sum()) if fn == "sum" else int(df[src].nunique())
+                 for nome, (src, fn) in agg.items()}
+        agrupado = pd.DataFrame([linha])
+
+    ordenar = parametros.ordenar_por if parametros.ordenar_por in agrupado.columns else (
+        metricas[0] if metricas[0] in agrupado.columns else None
+    )
+    if ordenar:
+        ascending = str(parametros.ordem or "desc").lower() == "asc"
+        agrupado = agrupado.sort_values(ordenar, ascending=ascending)
+
+    total = len(agrupado)
+    agrupado = agrupado.head(limite)
+
+    for col in metricas:
+        if col in agrupado.columns and col != "Clientes":
+            agrupado[col] = pd.to_numeric(agrupado[col], errors="coerce").fillna(0.0)
+        elif col == "Clientes" and col in agrupado.columns:
+            agrupado[col] = pd.to_numeric(agrupado[col], errors="coerce").fillna(0).astype(int)
+
+    return {
+        **_df_para_json(agrupado),
+        "total_linhas": total,
+        "limite": limite,
+        "dimensoes": dimensoes,
+        "metricas": metricas,
+        "modo_viz": "agregar",
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -961,39 +2103,119 @@ class ParametrosAnalise(BaseModel):
     nome_empresa: str = ""
     nome_usuario: str = ""
     empresa: Optional[str] = None
+    loja: Optional[str] = None
 
 
-def _carregar_df_filtrado(produtos_excluidos: list[str], empresa: Optional[str] = None) -> pd.DataFrame:
-    df, _ = _carregar_base(empresa)
+def _carregar_df_filtrado(
+    produtos_excluidos: list[str],
+    empresa: Optional[str] = None,
+    loja: Optional[str] = None,
+) -> pd.DataFrame:
+    df, _ = _carregar_base(empresa, loja=loja)
     if produtos_excluidos:
         df = df[~df["descricao"].isin(produtos_excluidos)]
     return df
 
 
+CHAVES_ALVOS = frozenset({"mais_atacado", "liquidez"})
+
+
+def _parse_br_series(serie: pd.Series) -> pd.Series:
+    texto = serie.astype(str).str.strip()
+    texto = texto.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
+    return pd.to_numeric(texto, errors="coerce")
+
+
+def _ler_csv_alvos(pasta_trabalho: str, nome: str) -> pd.DataFrame:
+    caminho = os.path.join(pasta_trabalho, nome)
+    if not os.path.isfile(caminho):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Arquivo {nome} não encontrado em {pasta_trabalho}. "
+                "Regenere a base da empresa (os CSVs de Liquidez/Mais Atacado "
+                "são gerados junto com o Base.csv)."
+            ),
+        )
+    return pd.read_csv(caminho, sep=";", encoding="utf-8-sig", dtype=str)
+
+
+def _analises_alvos(empresa: Optional[str], chaves: set[str]) -> dict[str, pd.DataFrame]:
+    """Carrega CSVs da pasta de trabalho para a seção Alvos (sem granularidade)."""
+    if not empresa:
+        raise HTTPException(
+            status_code=400,
+            detail="Selecione uma empresa para gerar os relatórios Alvos (Mais Atacado / Liquidez).",
+        )
+    _, pasta_trabalho = _pastas_empresa(empresa)
+    analises: dict[str, pd.DataFrame] = {}
+
+    if "mais_atacado" in chaves:
+        df = _ler_csv_alvos(pasta_trabalho, "Base.csv")
+        if "Receita Acumulada 11 Meses" in df.columns:
+            df["Receita Acumulada 11 Meses"] = _parse_br_series(df["Receita Acumulada 11 Meses"])
+        if "QTD" in df.columns:
+            df["QTD"] = _parse_br_series(df["QTD"])
+        analises["mais_atacado"] = df
+
+    if "liquidez" in chaves:
+        estoque = _ler_csv_alvos(pasta_trabalho, "Liquidez_Estoque.csv")
+        for col in ("Qtd_estoque", "Preço_médio_de_venda", "Preço_médio_cmv", "Último_custo"):
+            if col in estoque.columns:
+                estoque[col] = _parse_br_series(estoque[col])
+        vendas = _ler_csv_alvos(pasta_trabalho, "Liquidez_Vendas.csv")
+        if "QTD" in vendas.columns:
+            vendas["QTD"] = _parse_br_series(vendas["QTD"])
+        analises["liquidez_estoque"] = estoque
+        analises["liquidez_vendas"] = vendas
+
+    return analises
+
+
 def _rodar_analises(parametros: ParametrosAnalise) -> dict:
     empresa = parametros.empresa.strip() if parametros.empresa and parametros.empresa.strip() else None
-    df_filtrado = _carregar_df_filtrado(parametros.produtos_excluidos, empresa)
-    if df_filtrado.empty:
-        raise HTTPException(status_code=400, detail="Nenhuma linha restante após excluir os produtos desmarcados.")
+    chaves = set(parametros.chaves_selecionadas or [])
+    chaves_alvos = chaves & CHAVES_ALVOS
+    chaves_motor = chaves - CHAVES_ALVOS
 
-    return af.gerar_analises_completas(
-        df_filtrado,
-        parametros.granularidades,
-        clientes_excluidos=parametros.clientes_excluidos,
-        cortes_clientes=parametros.cortes_clientes,
-        corte_produtos=parametros.corte_produtos,
-        periodos_queda_consecutiva=parametros.periodos_queda_consecutiva,
-        chaves_solicitadas=set(parametros.chaves_selecionadas),
-        desconsiderar_balcao=parametros.desconsiderar_balcao,
-        excluir_periodo_atual=parametros.excluir_periodo_atual,
-        top_n_produtos=parametros.top_n_produtos,
-        reducao_minima_erosao=parametros.reducao_minima_erosao,
-        queda_minima_alerta_rs=parametros.queda_minima_alerta_rs,
-        queda_minima_erosao_rs=parametros.queda_minima_erosao_rs,
-        reducao_minima_sem_venda=parametros.reducao_minima_sem_venda,
-        top_n_poder_compra=parametros.top_n_poder_compra,
-        clientes_balcao_extra=_clientes_balcao_extra(empresa),
-    )
+    resultados: dict = {}
+
+    if chaves_motor:
+        df_filtrado = _carregar_df_filtrado(
+            parametros.produtos_excluidos, empresa, loja=parametros.loja,
+        )
+        if df_filtrado.empty:
+            raise HTTPException(
+                status_code=400,
+                detail="Nenhuma linha restante após excluir os produtos desmarcados.",
+            )
+        resultados = af.gerar_analises_completas(
+            df_filtrado,
+            parametros.granularidades,
+            clientes_excluidos=parametros.clientes_excluidos,
+            cortes_clientes=parametros.cortes_clientes,
+            corte_produtos=parametros.corte_produtos,
+            periodos_queda_consecutiva=parametros.periodos_queda_consecutiva,
+            chaves_solicitadas=chaves_motor,
+            desconsiderar_balcao=parametros.desconsiderar_balcao,
+            excluir_periodo_atual=parametros.excluir_periodo_atual,
+            top_n_produtos=parametros.top_n_produtos,
+            reducao_minima_erosao=parametros.reducao_minima_erosao,
+            queda_minima_alerta_rs=parametros.queda_minima_alerta_rs,
+            queda_minima_erosao_rs=parametros.queda_minima_erosao_rs,
+            reducao_minima_sem_venda=parametros.reducao_minima_sem_venda,
+            top_n_poder_compra=parametros.top_n_poder_compra,
+            clientes_balcao_extra=_clientes_balcao_extra(empresa, loja=parametros.loja),
+            grupos_manuais=_grupos_manuais_empresa(empresa, loja=parametros.loja),
+        )
+
+    if chaves_alvos:
+        resultados["Alvos"] = _analises_alvos(empresa, chaves_alvos)
+
+    if not resultados:
+        raise HTTPException(status_code=400, detail="Nenhum relatório selecionado.")
+
+    return resultados
 
 
 def _df_para_json(df: pd.DataFrame) -> dict:

@@ -9,6 +9,7 @@ só faz sentido consultar em Excel. O relatório em PDF/Word avisa quando uma
 tabela foi cortada.
 """
 
+import math
 import os
 from datetime import datetime
 
@@ -43,6 +44,30 @@ def _formatar_moeda_br(valor):
 def _formatar_numero_br(valor):
     texto = f"{valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     return texto
+
+
+def _eh_coluna_percentual(nome_coluna):
+    """Colunas em escala 0–100 do motor (Reducao_Percentual, Tendencia_Pct...)."""
+    return "Percentual" in str(nome_coluna) or str(nome_coluna).endswith("_Pct")
+
+
+def _formatar_valor_celula(valor, coluna, colunas_moeda):
+    """Formatação compartilhada PDF/Word: moeda BR, percentual e booleano PT."""
+    if valor is None:
+        return "—"
+    # numpy.bool_ (padrão em colunas como Parou_De_Comprar) não é subclasse
+    # de bool nas versões novas do numpy — checa pelos dois caminhos.
+    if isinstance(valor, bool) or type(valor).__name__ == "bool_":
+        return "Sim" if valor else "Não"
+    if coluna in colunas_moeda:
+        return _formatar_moeda_br(valor)
+    if isinstance(valor, float):
+        if math.isnan(valor):
+            return "—"
+        if _eh_coluna_percentual(coluna):
+            return f"{_formatar_numero_br(valor)}%"
+        return _formatar_numero_br(valor)
+    return str(valor)
 
 
 def exportar_relatorio_pdf(caminho_saida, resultados_analise, nomes_analise, nome_usuario="", colunas_moeda_por_analise=None, nome_empresa=""):
@@ -181,16 +206,10 @@ def exportar_relatorio_pdf(caminho_saida, resultados_analise, nomes_analise, nom
 
             linhas_formatadas = []
             for _, linha in df_limitado.iterrows():
-                linha_fmt = []
-                for coluna, numerica in zip(colunas, eh_numerica):
-                    valor = linha[coluna]
-                    if coluna in colunas_moeda:
-                        linha_fmt.append(_formatar_moeda_br(valor))
-                    elif numerica and isinstance(valor, float):
-                        linha_fmt.append(_formatar_numero_br(valor))
-                    else:
-                        linha_fmt.append(str(valor))
-                linhas_formatadas.append(linha_fmt)
+                linhas_formatadas.append([
+                    _formatar_valor_celula(linha[coluna], coluna, colunas_moeda)
+                    for coluna in colunas
+                ])
             dados_tabela = [colunas] + linhas_formatadas
 
             n_numericas = sum(eh_numerica)
@@ -312,14 +331,7 @@ def exportar_relatorio_word(caminho_saida, resultados_analise, nomes_analise, no
             for _, linha in df_limitado.iterrows():
                 celulas = tabela.add_row().cells
                 for i, coluna in enumerate(colunas):
-                    valor = linha[coluna]
-                    if coluna in colunas_moeda:
-                        texto_valor = _formatar_moeda_br(valor)
-                    elif eh_numerica[i] and isinstance(valor, float):
-                        texto_valor = _formatar_numero_br(valor)
-                    else:
-                        texto_valor = str(valor)
-                    celulas[i].text = texto_valor
+                    celulas[i].text = _formatar_valor_celula(linha[coluna], coluna, colunas_moeda)
                     if eh_numerica[i]:
                         celulas[i].paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.RIGHT
 

@@ -22,14 +22,36 @@ colunas e vetorizada (o iterrows do script original seria lento com 647k
 linhas por requisição).
 """
 
-import datetime
+from datetime import date
 
 import pandas as pd
 
 from engine.analise_funil import MESES_ABREV
 
+MESES_NOME = {
+    1: "janeiro", 2: "fevereiro", 3: "março", 4: "abril", 5: "maio", 6: "junho",
+    7: "julho", 8: "agosto", 9: "setembro", 10: "outubro", 11: "novembro", 12: "dezembro",
+}
 
-def gerar_summary(df: pd.DataFrame, updated_at: str) -> dict:
+
+def formatar_ultimo_movimento(
+    df: pd.DataFrame,
+    data_exata: date | None = None,
+) -> str:
+    """Rótulo do último movimento — data exata (BI) ou mês/ano (fallback da Base.csv)."""
+    if data_exata is not None:
+        return data_exata.strftime("%d/%m/%Y")
+    ultimo = df["Data_Venda"].max()
+    if pd.isna(ultimo):
+        return "—"
+    return f"{MESES_NOME[int(ultimo.month)]}/{int(ultimo.year)}"
+
+
+def gerar_summary(
+    df: pd.DataFrame,
+    updated_at: str | None = None,
+    data_ultimo_movimento: date | None = None,
+) -> dict:
     """Gera o dict do summary do dashboard a partir do DataFrame limpo do motor.
 
     `df` deve ser a saída de analise_funil.carregar_csv()/carregar_excel_base()
@@ -107,7 +129,12 @@ def gerar_summary(df: pd.DataFrame, updated_at: str) -> dict:
         "rows": rows,
         "monthly": monthly,
         "yoy": yoy,
-        "updated_at": updated_at,
+        # "Atualizado" no dashboard = último movimento da base, não o mtime do arquivo.
+        "updated_at": (
+            updated_at
+            if updated_at is not None
+            else formatar_ultimo_movimento(df, data_ultimo_movimento)
+        ),
         "kpis": {
             "rev": round(float(base["rev"].sum()), 2),
             "qty": int(base["qty"].sum()),
@@ -115,7 +142,3 @@ def gerar_summary(df: pd.DataFrame, updated_at: str) -> dict:
             "cnt": int(len(base)),
         },
     }
-
-
-def formatar_data_arquivo(mtime: float) -> str:
-    return datetime.datetime.fromtimestamp(mtime).strftime("%d/%m/%Y %H:%M")

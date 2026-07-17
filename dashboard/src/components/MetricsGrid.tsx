@@ -1,6 +1,6 @@
 import { DollarSign, TrendingUp, TrendingDown } from 'lucide-react';
 import { StatCard } from './StatCard';
-import { formatCurrency } from '../utils/formatters';
+import { formatCurrency, formatPercent } from '../utils/formatters';
 import type { DashboardStats } from '../types/dashboard';
 
 // ==========================================
@@ -84,8 +84,8 @@ export function MetricsGrid({ stats, onRevenueClick }: MetricsGridProps) {
             />
 
             <StatCard
-                title={singleYearMode ? "Tendência" : "Performance (Geral)"}
-                value={!showTrend ? '-' : (trendPct > 1000 ? '1000%+' : `${trendPct >= 0 ? '+' : ''}${isFinite(trendPct) ? trendPct.toFixed(2) : '0.00'}%`)}
+                title={singleYearMode ? "Tendência" : "Performance (média da variação)"}
+                value={!showTrend ? '-' : (trendPct > 1000 ? '1000%+' : `${trendPct >= 0 ? '+' : ''}${formatPercent(trendPct)}`)}
                 icon={!showTrend ? TrendingUp : (trendPct >= 0 ? TrendingUp : TrendingDown)}
                 trendUp={trendPct >= 0}
                 useTrendColor={showTrend}

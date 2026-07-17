@@ -62,6 +62,11 @@ def carregar_harmonizacao(caminho_harm: str) -> dict[str, str]:
     Só entram no dicionário pares com código E descrição não vazios — códigos
     sem descrição harmonizada devem resultar em descricao vazia no Base.csv,
     o que já é o comportamento padrão de "sem match".
+
+    Se o mesmo código aparecer mais de uma vez com descrições diferentes, a
+    última linha da planilha prevalece (comportamento histórico) e um aviso
+    lista o conflito — isso já causou Coxim subcontado quando 01090028
+    terminava como \"Junta Tampa Válvula\".
     """
     with warnings.catch_warnings():
         # openpyxl emite um UserWarning inofensivo de "no default style"
@@ -76,13 +81,27 @@ def carregar_harmonizacao(caminho_harm: str) -> dict[str, str]:
         col_descricao = planilha.columns[1]
 
     mapa: dict[str, str] = {}
+    conflitos: list[tuple[str, str, str]] = []
     for codigo, descricao in zip(planilha[col_codigo], planilha[col_descricao]):
         if pd.isna(codigo) or pd.isna(descricao):
             continue
         codigo = str(codigo).strip()
         descricao = str(descricao).strip()
-        if codigo and descricao:
-            mapa[codigo] = descricao
+        if not codigo or not descricao:
+            continue
+        atual = mapa.get(codigo)
+        if atual is not None and atual != descricao:
+            conflitos.append((codigo, atual, descricao))
+        mapa[codigo] = descricao
+
+    if conflitos:
+        print(f"[AVISO] {len(conflitos)} código(s) com descrições conflitantes na harm "
+              f"— prevalece a última linha da planilha:")
+        for codigo, anterior, final in conflitos[:15]:
+            print(f"  {codigo}: '{anterior}' -> '{final}'")
+        if len(conflitos) > 15:
+            print(f"  … e mais {len(conflitos) - 15}.")
+
     return mapa
 
 
