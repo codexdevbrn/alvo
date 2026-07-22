@@ -33,12 +33,13 @@ import pandas as pd
 
 from normalizar_base import (
     ErroNormalizacao,
-    _normalizar_mes,
-    _parse_numero_flexivel,
-    _serie_texto_limpa,
     formatar_qtd,
     ler_csv_robusto,
+    normalizar_mes,
+    parse_numero_flexivel,
     resolver_arquivos_dados,
+    serie_texto_limpa,
+    validar_colunas,
 )
 
 NOME_ESTOQUE = "Liquidez_Estoque.csv"
@@ -116,25 +117,21 @@ def normalizar_estoque(caminho_estoque: Path) -> pd.DataFrame:
     """Lê Dados_Estoque_<empresa>.csv e monta a base de estoque da Liquidez."""
     df = ler_csv_robusto(caminho_estoque, sep=";", quotechar='"', dtype=str)
 
-    faltando = sorted(COLUNAS_ESTOQUE_ESPERADAS - set(df.columns))
-    if faltando:
-        raise ErroNormalizacao(
-            f"Arquivo {caminho_estoque.name} sem colunas: {', '.join(faltando)}."
-        )
+    validar_colunas(df, COLUNAS_ESTOQUE_ESPERADAS, caminho_estoque.name)
 
     df = df.rename(columns=RENAME_ESTOQUE)
     df = df.drop_duplicates(subset=["Loja", "CODIGO_INTERNO_PRODUTO"], keep="last")
 
     out = pd.DataFrame({
-        "Loja": _serie_texto_limpa(df["Loja"]),
-        "NOME_FABRICANTE": _serie_texto_limpa(df["NOME_FABRICANTE"]),
-        "descricao": _serie_texto_limpa(df["descricao"]),
-        "CODIGO_INTERNO_PRODUTO": _serie_texto_limpa(df["CODIGO_INTERNO_PRODUTO"]),
-        "CODIGO_REFERENCIA_PRODUTO": _serie_texto_limpa(df["CODIGO_REFERENCIA_PRODUTO"]).fillna(""),
-        "Qtd_estoque": _parse_numero_flexivel(df["Qtd_estoque"]).fillna(0.0),
-        "Preço_médio_de_venda": _parse_numero_flexivel(df["Preço_médio_de_venda"]).fillna(0.0),
-        "Preço_médio_cmv": _parse_numero_flexivel(df["Preço_médio_cmv"]).fillna(0.0),
-        "Último_custo": _parse_numero_flexivel(df["Último_custo"]).fillna(0.0),
+        "Loja": serie_texto_limpa(df["Loja"]),
+        "NOME_FABRICANTE": serie_texto_limpa(df["NOME_FABRICANTE"]),
+        "descricao": serie_texto_limpa(df["descricao"]),
+        "CODIGO_INTERNO_PRODUTO": serie_texto_limpa(df["CODIGO_INTERNO_PRODUTO"]),
+        "CODIGO_REFERENCIA_PRODUTO": serie_texto_limpa(df["CODIGO_REFERENCIA_PRODUTO"]).fillna(""),
+        "Qtd_estoque": parse_numero_flexivel(df["Qtd_estoque"]).fillna(0.0),
+        "Preço_médio_de_venda": parse_numero_flexivel(df["Preço_médio_de_venda"]).fillna(0.0),
+        "Preço_médio_cmv": parse_numero_flexivel(df["Preço_médio_cmv"]).fillna(0.0),
+        "Último_custo": parse_numero_flexivel(df["Último_custo"]).fillna(0.0),
     })
 
     for col in ("Qtd_estoque", "Preço_médio_de_venda", "Preço_médio_cmv", "Último_custo"):
@@ -150,22 +147,18 @@ def normalizar_vendas(caminho_vendas: Path) -> pd.DataFrame:
 
     df = ler_csv_robusto(caminho_vendas, sep=";", quotechar='"', dtype=str)
 
-    faltando = sorted(COLUNAS_VENDAS_ESPERADAS - set(df.columns))
-    if faltando:
-        raise ErroNormalizacao(
-            f"Arquivo {caminho_vendas.name} sem colunas: {', '.join(faltando)}."
-        )
+    validar_colunas(df, COLUNAS_VENDAS_ESPERADAS, caminho_vendas.name)
 
     df = df.rename(columns=RENAME_VENDAS)
 
     for col in ("Nome_Loja", "NOME_FABRICANTE", "descricao",
                 "CODIGO_INTERNO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO"):
-        df[col] = _serie_texto_limpa(df[col])
+        df[col] = serie_texto_limpa(df[col])
     df["CODIGO_REFERENCIA_PRODUTO"] = df["CODIGO_REFERENCIA_PRODUTO"].fillna("")
 
-    df["Ano"] = pd.to_numeric(_serie_texto_limpa(df["Ano"]), errors="coerce")
-    df["Mês"] = _normalizar_mes(df["Mês"])
-    df["QTD"] = _parse_numero_flexivel(df["QTD"]).fillna(0.0)
+    df["Ano"] = pd.to_numeric(serie_texto_limpa(df["Ano"]), errors="coerce")
+    df["Mês"] = normalizar_mes(df["Mês"])
+    df["QTD"] = parse_numero_flexivel(df["QTD"]).fillna(0.0)
 
     df = df.dropna(subset=["Ano", "Mês"])
     if df.empty:

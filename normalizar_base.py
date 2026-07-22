@@ -57,7 +57,7 @@ DECISÕES DE NEGÓCIO ASSUMIDAS (revisar/ajustar se necessário)
 
 2. Números (Receita, QTD) podem vir em formato BR (vírgula decimal) ou com
    ponto decimal — o formato exato ainda não estava confirmado quando este
-   script foi escrito, então o parser (`_parse_numero_flexivel`) decide por
+   script foi escrito, então o parser (`parse_numero_flexivel`) decide por
    valor, olhando qual separador aparece mais à direita no texto.
 
 3. JANELA DE ANÁLISE: somente o ano ATUAL e o ano ANTERIOR (relativos ao
@@ -137,29 +137,32 @@ def ler_csv_robusto(filepath_or_buffer, **kwargs):
 # Localização dos 3 arquivos de origem na pasta da empresa
 # ---------------------------------------------------------------------------
 
-def _buscar_arquivo_prefixo(pasta: Path, prefixo: str, nome_empresa: str) -> Path | None:
-    """Procura um arquivo cujo nome (sem extensão) seja "<prefixo>_<nome_empresa>"
-    - comparação case-insensitive, extensão livre (.csv etc.)."""
-    if not pasta.is_dir():
-        return None
-    alvo = f"{prefixo}_{nome_empresa}".lower()
-    for arquivo in pasta.iterdir():
-        if arquivo.is_file() and arquivo.stem.lower() == alvo:
-            return arquivo
-    return None
-
-
 def resolver_arquivos_dados(pasta_empresa: Path) -> tuple[Path, Path, Path]:
     """Localiza (Atacado, Estoque, Vendas) em <pasta_empresa>.
 
+    Um único `iterdir()` sobre a pasta, casando os três prefixos por nome
+    (sem extensão) - comparação case-insensitive, extensão livre (.csv etc.).
     Levanta ErroNormalizacao com mensagem amigável se algum dos três não for
     encontrado.
     """
     nome_empresa = pasta_empresa.name
+    alvos = {
+        f"dados_atacado_{nome_empresa}".lower(): "atacado",
+        f"dados_estoque_{nome_empresa}".lower(): "estoque",
+        f"dados_vendas_{nome_empresa}".lower(): "vendas",
+    }
+    encontrados: dict[str, Path] = {}
+    if pasta_empresa.is_dir():
+        for arquivo in pasta_empresa.iterdir():
+            if not arquivo.is_file():
+                continue
+            papel = alvos.get(arquivo.stem.lower())
+            if papel is not None:
+                encontrados[papel] = arquivo
 
-    caminho_atacado = _buscar_arquivo_prefixo(pasta_empresa, "Dados_Atacado", nome_empresa)
-    caminho_estoque = _buscar_arquivo_prefixo(pasta_empresa, "Dados_Estoque", nome_empresa)
-    caminho_vendas = _buscar_arquivo_prefixo(pasta_empresa, "Dados_Vendas", nome_empresa)
+    caminho_atacado = encontrados.get("atacado")
+    caminho_estoque = encontrados.get("estoque")
+    caminho_vendas = encontrados.get("vendas")
 
     faltando = []
     if caminho_atacado is None:
@@ -180,7 +183,7 @@ def resolver_arquivos_dados(pasta_empresa: Path) -> tuple[Path, Path, Path]:
 # Parsing numérico flexível (formato do CSV novo ainda não 100% confirmado)
 # ---------------------------------------------------------------------------
 
-def _parse_numero_flexivel(serie: pd.Series) -> pd.Series:
+def parse_numero_flexivel(serie: pd.Series) -> pd.Series:
     """Converte texto numérico para float, aceitando formato BR ('1.234,56')
     ou internacional ('1234.56') - decide por valor, olhando qual separador
     (',' ou '.') aparece mais à direita no texto (esse é o decimal; o outro,
@@ -205,16 +208,16 @@ def _parse_numero_flexivel(serie: pd.Series) -> pd.Series:
     return pd.to_numeric(saida, errors="coerce")
 
 
-def _serie_texto_limpa(serie: pd.Series) -> pd.Series:
+def serie_texto_limpa(serie: pd.Series) -> pd.Series:
     """Strip; '' / 'nan' viram NA."""
     texto = serie.fillna("").astype(str).str.strip()
     return texto.mask(texto.str.lower().isin(("", "nan", "none", "<na>")), other=pd.NA)
 
 
-def _normalizar_mes(serie: pd.Series) -> pd.Series:
+def normalizar_mes(serie: pd.Series) -> pd.Series:
     """Aceita Mês como número (1-12) ou já por extenso em PT-BR; sempre
     devolve o nome por extenso (o que `carregar_csv` espera)."""
-    texto = _serie_texto_limpa(serie)
+    texto = serie_texto_limpa(serie)
     numerico = pd.to_numeric(texto, errors="coerce")
     eh_numerico = numerico.notna()
     convertido = texto.copy()
@@ -240,6 +243,13 @@ def formatar_receita(valor: float) -> str:
     return f"{float(valor):.2f}".replace(".", ",")
 
 
+def validar_colunas(df: pd.DataFrame, esperadas: set[str], nome_arquivo: str) -> None:
+    """Levanta ErroNormalizacao se alguma coluna de `esperadas` não estiver em `df`."""
+    faltando = sorted(esperadas - set(df.columns))
+    if faltando:
+        raise ErroNormalizacao(f"Arquivo {nome_arquivo} sem colunas: {', '.join(faltando)}.")
+
+
 def _pct_vazio(serie: pd.Series) -> float:
     if serie.empty:
         return 100.0
@@ -260,22 +270,18 @@ def normalizar(caminho_atacado: Path) -> pd.DataFrame:
     print(f"Lendo {caminho_atacado.name}...")
     df = ler_csv_robusto(caminho_atacado, sep=";", quotechar='"', dtype=str)
 
-    faltando = sorted(COLUNAS_ATACADO_ESPERADAS - set(df.columns))
-    if faltando:
-        raise ErroNormalizacao(
-            f"Arquivo {caminho_atacado.name} sem colunas: {', '.join(faltando)}."
-        )
+    validar_colunas(df, COLUNAS_ATACADO_ESPERADAS, caminho_atacado.name)
 
     df = df.rename(columns=RENAME_ATACADO)
 
     for col in ("Loja", "NOME_FABRICANTE", "Cliente", "descricao",
                 "Código Interno", "Código de referêcia"):
-        df[col] = _serie_texto_limpa(df[col])
+        df[col] = serie_texto_limpa(df[col])
 
-    df["Ano"] = pd.to_numeric(_serie_texto_limpa(df["Ano"]), errors="coerce")
-    df["Mês"] = _normalizar_mes(df["Mês"])
-    df["Receita"] = _parse_numero_flexivel(df["Receita Acumulada 11 Meses"]).fillna(0.0)
-    df["QTD"] = _parse_numero_flexivel(df["QTD"]).fillna(0.0)
+    df["Ano"] = pd.to_numeric(serie_texto_limpa(df["Ano"]), errors="coerce")
+    df["Mês"] = normalizar_mes(df["Mês"])
+    df["Receita"] = parse_numero_flexivel(df["Receita Acumulada 11 Meses"]).fillna(0.0)
+    df["QTD"] = parse_numero_flexivel(df["QTD"]).fillna(0.0)
 
     antes = len(df)
     df = df.dropna(subset=["Ano", "Mês"])

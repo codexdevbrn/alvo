@@ -2,11 +2,12 @@
 normalizar_todas_empresas.py
 ============================
 
-Normaliza em lote todas as empresas da pasta fonte (subpastas com BI/)
-para a pasta de trabalho: Base.csv + Liquidez_*.csv via normalizar_pasta_empresa.
+Normaliza em lote todas as empresas da pasta fonte (subpastas com os 3 CSVs)
+para a pasta de trabalho: Base.csv + Liquidez_*.csv via normalizar_pasta_empresa,
+e gera summary_dashboard.json (cache do dashboard) a partir do Base.csv.
 
 Pensado para rodar de madrugada (Agendador de Tarefas). No horário comercial
-o app só lê o CSV pronto (_ensure_base_csv não regenera automaticamente;
+o app só lê o CSV/summary prontos (_ensure_base_csv não regenera automaticamente;
 só o botão Regenerar base ou este lote atualizam os arquivos).
 
 Uso:
@@ -29,7 +30,15 @@ import warnings
 from datetime import datetime
 from pathlib import Path
 
-from normalizar_base import ErroNormalizacao, normalizar_pasta_empresa
+from normalizar_base import ErroNormalizacao, normalizar_pasta_empresa, resolver_arquivos_dados
+
+# backend/ no path para gerar summary_dashboard.json (mesmo módulo do FastAPI).
+_BACKEND = Path(__file__).resolve().parent / "backend"
+if str(_BACKEND) not in sys.path:
+    sys.path.insert(0, str(_BACKEND))
+
+from dashboard_summary import gerar_e_gravar_summary_dashboard  # noqa: E402
+from engine import analise_funil as af  # noqa: E402
 
 # Defaults alinhados ao ambiente 2D (podem ser sobrescritos por CLI / env).
 FONTE_PADRAO = Path(
@@ -48,9 +57,17 @@ def listar_empresas(pasta_fonte: Path) -> list[str]:
     for entrada in sorted(pasta_fonte.iterdir()):
         if not entrada.is_dir():
             continue
-        if (entrada / "BI").is_dir():
-            nomes.append(entrada.name)
+        try:
+            resolver_arquivos_dados(entrada)
+        except ErroNormalizacao:
+            continue
+        nomes.append(entrada.name)
     return nomes
+
+
+def _gerar_summary_empresa(trab_emp: Path, caminho_base: Path) -> Path:
+    df, _linhas_vazias = af.carregar_csv(str(caminho_base))
+    return gerar_e_gravar_summary_dashboard(trab_emp, df)
 
 
 def normalizar_lote(
@@ -69,12 +86,12 @@ def normalizar_lote(
         desconhecidas = sorted(filtro - set(empresas))
         if desconhecidas:
             raise ErroNormalizacao(
-                "Empresa(s) sem BI/ na fonte: " + ", ".join(desconhecidas)
+                "Empresa(s) sem os 3 CSVs na fonte: " + ", ".join(desconhecidas)
             )
         empresas = [n for n in empresas if n in filtro]
 
     if not empresas:
-        raise ErroNormalizacao(f"Nenhuma empresa com BI/ em {pasta_fonte}")
+        raise ErroNormalizacao(f"Nenhuma empresa com os 3 CSVs em {pasta_fonte}")
 
     log_linhas: list[str] = []
     inicio_lote = time.time()
@@ -104,8 +121,12 @@ def normalizar_lote(
                 aplicar_harmonizacao=aplicar_harmonizacao,
                 validar_resultado=validar_resultado,
             )
+            caminho_summary = _gerar_summary_empresa(trab_emp, Path(caminho))
             elapsed = time.time() - t0
-            msg = f"OK  {marcador} em {elapsed:.1f}s → {caminho}"
+            msg = (
+                f"OK  {marcador} em {elapsed:.1f}s -> {caminho} "
+                f"(summary: {caminho_summary.name})"
+            )
             print(msg)
             log_linhas.append(msg)
             ok += 1
@@ -119,8 +140,8 @@ def normalizar_lote(
             falhas += 1
 
     resumo = (
-        f"\n=== Fim do lote ({time.time() - inicio_lote:.1f}s) — "
-        f"{ok} ok, {falhas} erro(s) ===\n"
+        f"\n=== Fim do lote ({time.time() - inicio_lote:.1f}s) - "
+        f"{ok} ok, {falhas} erro(s) ==="
     )
     print(resumo)
     log_linhas.append(resumo)
@@ -136,13 +157,16 @@ def normalizar_lote(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Normaliza todas as empresas (BI → Base.csv + Liquidez) na pasta de trabalho."
+        description=(
+            "Normaliza todas as empresas (fonte -> Base.csv + Liquidez) "
+            "e gera summary_dashboard.json na pasta de trabalho."
+        )
     )
     parser.add_argument(
         "--fonte",
         type=Path,
         default=Path(os.environ.get("PRISMA_FONTE", FONTE_PADRAO)),
-        help=f"Pasta fonte com subpastas/BI (padrão: {FONTE_PADRAO})",
+        help=f"Pasta fonte com subpastas com os 3 CSVs (padrão: {FONTE_PADRAO})",
     )
     parser.add_argument(
         "--trabalho",
