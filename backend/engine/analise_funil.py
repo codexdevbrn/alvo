@@ -121,7 +121,7 @@ def carregar_csv(caminho_arquivo):
 
     # No CSV a receita vem em formato BR (vírgula decimal, ponto de milhar),
     # ex: "1.234,56" — diferente do Excel padrão, onde a coluna já é numérica.
-    return _validar_e_limpar(df, receita_em_texto_br=True)
+    return validar_e_limpar(df, receita_em_texto_br=True)
 
 
 def carregar_excel_base(caminho_arquivo):
@@ -141,11 +141,13 @@ def carregar_excel_base(caminho_arquivo):
 
     # A receita nesta base já vem numérica (float), não precisa da conversão
     # de formato BR usada no CSV.
-    return _validar_e_limpar(df, receita_em_texto_br=False)
+    return validar_e_limpar(df, receita_em_texto_br=False)
 
 
-def _validar_e_limpar(df, receita_em_texto_br):
-    """Validação de colunas e limpeza compartilhada entre carregar_csv e carregar_excel_base."""
+def validar_e_limpar(df, receita_em_texto_br):
+    """Validação de colunas e limpeza compartilhada entre carregar_csv, carregar_excel_base
+    e qualquer chamador que já tenha um DataFrame em memória no schema canônico (ex.:
+    backend/main.py, ao ler a base direto da fonte sem passar por um CSV em disco)."""
     colunas_faltando = [c for c in COLUNAS_OBRIGATORIAS if c not in df.columns]
     if colunas_faltando:
         raise ErroCarregamentoCSV(
@@ -165,10 +167,14 @@ def _validar_e_limpar(df, receita_em_texto_br):
     # Tratamento de nulos em texto. Produtos sem descrição ficam agrupados sob
     # um rótulo próprio ("Não harmonizados") para que o usuário decida, na
     # interface, se quer considerá-los na análise ou não.
-    df["NOME_FABRICANTE"] = df["NOME_FABRICANTE"].fillna("Não informado")
-    df["Cliente"] = df["Cliente"].fillna("Não informado")
-    df["descricao"] = df["descricao"].fillna(DESCRICAO_NAO_HARMONIZADA)
-    df["Código de referêcia"] = df["Código de referêcia"].fillna("")
+    # Strip em Cliente/descrição evita chaves divergentes nas tags (ex.:
+    # "MARCIO GONCALVES " na prévia vs "MARCIO GONCALVES" no clientes_tags.json).
+    df["NOME_FABRICANTE"] = df["NOME_FABRICANTE"].fillna("Não informado").astype(str).str.strip()
+    df["Cliente"] = df["Cliente"].fillna("Não informado").astype(str).str.strip()
+    df["descricao"] = df["descricao"].fillna(DESCRICAO_NAO_HARMONIZADA).astype(str).str.strip()
+    df["Código de referêcia"] = df["Código de referêcia"].fillna("").astype(str).str.strip()
+    df.loc[df["Cliente"] == "", "Cliente"] = "Não informado"
+    df.loc[df["descricao"] == "", "descricao"] = DESCRICAO_NAO_HARMONIZADA
 
     if receita_em_texto_br:
         # Conversão da receita: formato BR com vírgula decimal.

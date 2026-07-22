@@ -320,6 +320,45 @@ def normalizar(caminho_atacado: Path) -> pd.DataFrame:
     return agregado[COLUNAS_SAIDA]
 
 
+MARCADOR_NAO_HARMONIZADO = "NÃO HARMONIZADO"
+
+
+def _eh_descricao_nao_harmonizada(serie_descricao: pd.Series) -> pd.Series:
+    """True onde `descricao` é o marcador "NÃO HARMONIZADO" da fonte (comparação
+    tolerante a maiúsculas/acentos/espaço nas pontas)."""
+    normalizado = (
+        serie_descricao.fillna("").astype(str).str.strip().str.upper()
+        .str.normalize("NFKD").str.encode("ascii", "ignore").str.decode("ascii")
+    )
+    return normalizado == "NAO HARMONIZADO"
+
+
+def aplicar_harmonizacao_em_memoria(df: pd.DataFrame, pasta_trabalho: Path) -> pd.DataFrame:
+    """Corrige, em memória, só as linhas marcadas como "NÃO HARMONIZADO" pela fonte.
+
+    A base já vem harmonizada por padrão (a fonte faz isso) — harm.xlsx aqui é só um
+    ajuste pontual por "Código Interno" para as linhas que a fonte não conseguiu
+    harmonizar sozinha. Sem harm.xlsx na pasta de trabalho, ou sem código com match na
+    planilha, a linha fica como veio (com o marcador). Nenhum CSV é lido/escrito em
+    disco — é o mesmo dicionário {codigo: descricao} de `harmonizar_descricoes`."""
+    caminho_harm = _localizar_planilha_harmonizacao(Path(pasta_trabalho))
+    if caminho_harm is None:
+        return df
+
+    alvo = _eh_descricao_nao_harmonizada(df["descricao"])
+    if not alvo.any():
+        return df
+
+    import harmonizar_descricoes
+
+    mapa = harmonizar_descricoes.carregar_harmonizacao(str(caminho_harm))
+    df = df.copy()
+    codigos = df.loc[alvo, "Código Interno"].astype(str).str.strip()
+    harmonizadas = codigos.map(mapa)
+    df.loc[alvo, "descricao"] = harmonizadas.where(harmonizadas.notna(), df.loc[alvo, "descricao"])
+    return df
+
+
 def validar(caminho_saida: Path, total_linhas_gravadas: int) -> None:
     """Sanity check leve do resultado gravado: leitura de volta e tipos.
 
