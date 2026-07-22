@@ -2,9 +2,14 @@
 normalizar_base.py
 ===================
 
-Script generalista de normalização de dados de empresas: lê os exports de
-movimento e produto de um PDV/ERP (pasta `BI/` dentro da pasta da empresa) e
-gera o `Base.csv` no schema que o motor de análise do projeto
+Script generalista de normalização de dados de empresas: lê os 3 CSVs
+exportados pelo PDV/ERP para a pasta da empresa na fonte —
+
+    Dados_Atacado_<empresa>.csv   (arquivo base — vendas já agregadas)
+    Dados_Estoque_<empresa>.csv
+    Dados_Vendas_<empresa>.csv
+
+— e gera o `Base.csv` no schema que o motor de análise do projeto
 (`backend/engine/analise_funil.py`, função `carregar_csv`) já espera:
 
     Loja;NOME_FABRICANTE;Cliente;descricao;Ano;Mês;Código Interno;
@@ -13,10 +18,10 @@ gera o `Base.csv` no schema que o motor de análise do projeto
 Layout de pastas — dois papéis (pastas distintas):
 
     <pasta_fonte>/                         (somente leitura)
-        BI/
-            <nome>_MOVIMENTO_ATUAL.<ext>   (preferido)
-            <nome>_MOVIMENTO.<ext>         (fallback, se não houver _ATUAL)
-            <nome>_PRODUTO.<ext>
+        <nome>/
+            Dados_Atacado_<nome>.<ext>
+            Dados_Estoque_<nome>.<ext>
+            Dados_Vendas_<nome>.<ext>
 
     <pasta_trabalho>/                      (escrita: Base.csv, harm, backups)
         harm.xlsx                          (opcional, aplicado automaticamente)
@@ -24,10 +29,12 @@ Layout de pastas — dois papéis (pastas distintas):
 
 A fonte nunca recebe escrita. `--trabalho` é obrigatório no CLI.
 
-Onde `<nome>` é o nome da pasta da empresa (ex.: pasta "teste" -> arquivos
-"teste_MOVIMENTO_ATUAL.dw_2d" e "teste_PRODUTO.dw_2d") e `<ext>` pode ser
-`.dw_2d` (export nativo do PDV) ou `.csv` (mesmo layout de colunas e
-separador) — a busca por arquivo é case-insensitive e não fixa a extensão.
+Onde `<nome>` é o nome da pasta da empresa (ex.: pasta "teste" -> arquivo
+"Dados_Atacado_teste.csv") e `<ext>` pode variar (`.csv` é o esperado, mas a
+busca é case-insensitive e não fixa a extensão).
+
+A ordem das colunas em cada CSV pode variar de empresa para empresa — os
+nomes de coluna, não. A leitura é sempre por nome, nunca por posição.
 
 Uso via linha de comando:
     python normalizar_base.py "C:/fonte/teste" --trabalho "C:/trabalho/teste"
@@ -40,54 +47,34 @@ Uso programático (ex.: backend/main.py, ao selecionar a empresa no dash):
         Path("fonte/teste"), pasta_trabalho=Path("trabalho/teste"),
     )
 
-DECISÕES DE NEGÓCIO ASSUMIDAS (revisar/ajustar se necessário) — herdadas e
-generalizadas de base-clientes/teste/normalizar_lupi.py, que originou este
-script a partir do caso da rede Lupi:
+DECISÕES DE NEGÓCIO ASSUMIDAS (revisar/ajustar se necessário)
 ---------------------------------------------------------------------------
-1. TIPO_MOVIMENTO / MOV:
-   - "VENDA"      -> soma positiva de receita (TOTAL) e quantidade (QUANTIDADE).
-     No DW, vendas saem tipicamente com MOV="S" (saída).
-   - "DEVOLUCAO"  -> SUBTRAÍDA da receita e da quantidade do mesmo agrupamento
-     (Loja, Cliente, Produto, Ano, Mês), mas só quando MOV="E" (entrada de
-     mercadoria). Linhas de DEVOLUCAO com MOV="S" são documento espelho /
-     contrapartida fiscal e NÃO devem reduzir a receita de novo — incluí-las
-     duplicava a baixa (ex.: Frandiesel jun/2026 ficava em ~442k em vez de
-     ~650k). Se a coluna MOV não existir no arquivo, mantém-se o comportamento
-     antigo (todas as DEVOLUCAO entram).
-   - "COMPRA" e "TRANSFER" -> EXCLUÍDOS por completo (não são vendas a
-     cliente final, são movimentos de estoque/logística entre lojas ou com
-     fornecedores).
+1. O arquivo Atacado já vem pré-agregado por (Loja, Fabricante, Cliente,
+   Produto, Ano, Mês) — diferente do antigo export bruto de movimento, não
+   há mais join com catálogo de produto nem filtro de tipo de movimento
+   (VENDA/DEVOLUCAO/MOV) a fazer aqui: é leitura + validação de colunas +
+   renomeação para o schema canônico.
 
-2. Linhas cuja soma líquida de QTD e Receita, dentro do agrupamento final,
-   dá exatamente zero (ex.: uma venda totalmente cancelada por devolução no
-   mesmo agrupamento) são DESCARTADAS do CSV final - é só para não poluir a
+2. Números (Receita, QTD) podem vir em formato BR (vírgula decimal) ou com
+   ponto decimal — o formato exato ainda não estava confirmado quando este
+   script foi escrito, então o parser (`_parse_numero_flexivel`) decide por
+   valor, olhando qual separador aparece mais à direita no texto.
+
+3. JANELA DE ANÁLISE: somente o ano ATUAL e o ano ANTERIOR (relativos ao
+   momento em que o script é executado) entram no CSV final — mesma regra
+   de negócio do formato antigo, mantida por consistência com o resto da
+   aplicação (filtros de período, etc.), não por limitação da fonte.
+
+4. Linhas cuja soma líquida de QTD e Receita, dentro do agrupamento final,
+   dá exatamente zero são DESCARTADAS do CSV final - só para não poluir a
    base com ruído que não representa nem receita nem volume.
 
-3. `Loja` é derivada de `ID_LOJA` (ex.: "lupi_curicica" -> "Lupi Curicica",
-   trocando "_" por espaço e aplicando title case) em vez de usar o código
-   bruto - só para ficar mais legível nos relatórios; é 1:1 com o ID_LOJA
-   original, então não há perda de informação nem ambiguidade.
-
-4. Produtos sem correspondência no join (ID_LOJA, CODIGO_PRODUTO) contra o
-   arquivo de produtos ficam com NOME_FABRICANTE, descricao e Código de
-   referêcia em branco (NaN) - o motor de análise já trata isso
-   automaticamente como "Não informado" / "Não harmonizados".
-
-5. Nenhum cliente é filtrado ou excluído aqui (incluindo "BALCAO") - a
-   aplicação já trata esse filtro como opcional na interface do Analisador.
-
-6. JANELA DE ANÁLISE: somente o ano ATUAL e o ano ANTERIOR (relativos ao
-   momento em que o script é executado) entram no CSV final. Movimentos de
-   anos mais antigos são descartados no processamento de cada chunk.
-
-7. HARMONIZAÇÃO AUTOMÁTICA: se existir `harm.xlsx` (ou `.xls`) na pasta de
+5. HARMONIZAÇÃO AUTOMÁTICA: se existir `harm.xlsx` (ou `.xls`) na pasta de
    trabalho, `normalizar_pasta_empresa` aplica `harmonizar_descricoes.py`
    automaticamente sobre o Base.csv recém-gerado, substituindo a descrição
    bruta do catálogo pela descrição harmonizada. Sem a planilha, a
-   `descricao` fica com o texto bruto vindo do arquivo de PRODUTO (o motor
-   de análise não rotula isso como "Não harmonizados" - só rotula assim
-   quando a descrição está vazia). A planilha e o backup
-   `Base.antes-harm.csv` ficam sempre na pasta de trabalho.
+   `descricao` fica com o texto bruto vindo do arquivo Atacado. A planilha
+   e o backup `Base.antes-harm.csv` ficam sempre na pasta de trabalho.
 """
 
 from __future__ import annotations
@@ -95,14 +82,11 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-import time
 import warnings
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
-
-CHUNKSIZE = 300_000
 
 MESES_PT = {
     1: "janeiro", 2: "fevereiro", 3: "março", 4: "abril", 5: "maio", 6: "junho",
@@ -119,195 +103,129 @@ COLUNAS_GRUPO = [
     "Código Interno", "Código de referêcia",
 ]
 
-MOVIMENTOS_VALIDOS = ("VENDA", "DEVOLUCAO")
+NOME_ARQUIVO_HARM_PADRAO = "harm.xlsx"
 
-# Colunas lidas do MOVIMENTO (MOV é opcional — ver decisão de negócio 1).
-COLS_MOVIMENTO = {
-    "ID_LOJA", "TIPO_MOVIMENTO", "DATA_MOVIMENTO", "NOME_CLIENTE",
-    "CODIGO_PRODUTO", "QUANTIDADE", "TOTAL", "MOV",
+# Colunas esperadas em Dados_Atacado_<empresa>.csv (nomes fixos; ordem livre).
+COLUNAS_ATACADO_ESPERADAS = {
+    "Loja", "NOME_FABRICANTE", "NOME_CLIENTE", "descricao", "Ano", "Mês",
+    "CODIGO_INTERNO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO",
+    "Receita Acumulada 11 Meses", "QTD",
 }
 
-NOME_ARQUIVO_HARM_PADRAO = "harm.xlsx"
+RENAME_ATACADO = {
+    "NOME_CLIENTE": "Cliente",
+    "CODIGO_INTERNO_PRODUTO": "Código Interno",
+    "CODIGO_REFERENCIA_PRODUTO": "Código de referêcia",
+}
 
 
 class ErroNormalizacao(Exception):
-    """Erro amigável quando os arquivos de origem (BI/) não são encontrados ou são inválidos."""
+    """Erro amigável quando os arquivos de origem não são encontrados ou são inválidos."""
     pass
 
 
+def ler_csv_robusto(filepath_or_buffer, **kwargs):
+    """Tenta ler com utf-8-sig. Se der erro de Unicode, tenta com latin1."""
+    kwargs.pop("encoding", None)  # Remove se foi passado para forçar o nosso fallback
+    try:
+        return pd.read_csv(filepath_or_buffer, encoding="utf-8-sig", **kwargs)
+    except UnicodeDecodeError:
+        return pd.read_csv(filepath_or_buffer, encoding="latin1", **kwargs)
+
+
 # ---------------------------------------------------------------------------
-# Localização dos arquivos de origem em BI/
+# Localização dos 3 arquivos de origem na pasta da empresa
 # ---------------------------------------------------------------------------
 
-def _buscar_arquivo(pasta_bi: Path, nome_empresa: str, sufixos: list[str]) -> Path | None:
-    """Procura, em ordem de preferência dos sufixos, um arquivo cujo nome
-    (sem extensão) seja "<nome_empresa>_<sufixo>" - comparação case-insensitive,
-    extensão livre (.dw_2d, .csv etc.)."""
-    if not pasta_bi.is_dir():
+def _buscar_arquivo_prefixo(pasta: Path, prefixo: str, nome_empresa: str) -> Path | None:
+    """Procura um arquivo cujo nome (sem extensão) seja "<prefixo>_<nome_empresa>"
+    - comparação case-insensitive, extensão livre (.csv etc.)."""
+    if not pasta.is_dir():
         return None
-    arquivos = [a for a in pasta_bi.iterdir() if a.is_file()]
-    for sufixo in sufixos:
-        alvo = f"{nome_empresa}_{sufixo}".lower()
-        for arquivo in arquivos:
-            if arquivo.stem.lower() == alvo:
-                return arquivo
+    alvo = f"{prefixo}_{nome_empresa}".lower()
+    for arquivo in pasta.iterdir():
+        if arquivo.is_file() and arquivo.stem.lower() == alvo:
+            return arquivo
     return None
 
 
-def resolver_arquivos_bi(pasta_empresa: Path) -> tuple[Path, Path]:
-    """Localiza os arquivos de movimento e produto em <pasta_empresa>/BI/.
+def resolver_arquivos_dados(pasta_empresa: Path) -> tuple[Path, Path, Path]:
+    """Localiza (Atacado, Estoque, Vendas) em <pasta_empresa>.
 
-    Levanta ErroNormalizacao com mensagem amigável se algum dos dois não for
+    Levanta ErroNormalizacao com mensagem amigável se algum dos três não for
     encontrado.
     """
     nome_empresa = pasta_empresa.name
-    pasta_bi = pasta_empresa / "BI"
 
-    caminho_movimento = _buscar_arquivo(pasta_bi, nome_empresa, ["MOVIMENTO_ATUAL", "MOVIMENTO"])
-    caminho_produto = _buscar_arquivo(pasta_bi, nome_empresa, ["PRODUTO"])
+    caminho_atacado = _buscar_arquivo_prefixo(pasta_empresa, "Dados_Atacado", nome_empresa)
+    caminho_estoque = _buscar_arquivo_prefixo(pasta_empresa, "Dados_Estoque", nome_empresa)
+    caminho_vendas = _buscar_arquivo_prefixo(pasta_empresa, "Dados_Vendas", nome_empresa)
 
     faltando = []
-    if caminho_movimento is None:
-        faltando.append(f"{nome_empresa}_MOVIMENTO_ATUAL ou {nome_empresa}_MOVIMENTO")
-    if caminho_produto is None:
-        faltando.append(f"{nome_empresa}_PRODUTO")
+    if caminho_atacado is None:
+        faltando.append(f"Dados_Atacado_{nome_empresa}")
+    if caminho_estoque is None:
+        faltando.append(f"Dados_Estoque_{nome_empresa}")
+    if caminho_vendas is None:
+        faltando.append(f"Dados_Vendas_{nome_empresa}")
     if faltando:
         raise ErroNormalizacao(
-            f"Não foi possível localizar em {pasta_bi}: " + " e ".join(faltando) + "."
+            f"Não foi possível localizar em {pasta_empresa}: " + ", ".join(faltando) + "."
         )
 
-    return caminho_movimento, caminho_produto
-
-
-def obter_data_ultimo_movimento(caminho_movimento: Path, *, chunksize: int = CHUNKSIZE) -> date | None:
-    """Data exata (calendário) do último movimento de VENDA no arquivo BI (somente leitura)."""
-    max_data: date | None = None
-    leitor = pd.read_csv(
-        caminho_movimento,
-        sep=";",
-        quotechar='"',
-        encoding="utf-8-sig",
-        dtype=str,
-        usecols=["TIPO_MOVIMENTO", "DATA_MOVIMENTO"],
-        chunksize=chunksize,
-    )
-    for chunk in leitor:
-        vendas = chunk[chunk["TIPO_MOVIMENTO"] == "VENDA"]
-        if vendas.empty:
-            continue
-        datas = pd.to_datetime(
-            vendas["DATA_MOVIMENTO"].str.slice(0, 10),
-            format="%d/%m/%Y",
-            errors="coerce",
-        )
-        candidata = datas.max()
-        if pd.isna(candidata):
-            continue
-        dia = candidata.date()
-        if max_data is None or dia > max_data:
-            max_data = dia
-    return max_data
+    return caminho_atacado, caminho_estoque, caminho_vendas
 
 
 # ---------------------------------------------------------------------------
-# Normalização (movimento + produto -> DataFrame no schema do Base.csv)
+# Parsing numérico flexível (formato do CSV novo ainda não 100% confirmado)
 # ---------------------------------------------------------------------------
 
-def _parse_numero_br(serie: pd.Series) -> pd.Series:
-    """Converte texto BR ('1.234,56' ou '395,00') para float.
+def _parse_numero_flexivel(serie: pd.Series) -> pd.Series:
+    """Converte texto numérico para float, aceitando formato BR ('1.234,56')
+    ou internacional ('1234.56') - decide por valor, olhando qual separador
+    (',' ou '.') aparece mais à direita no texto (esse é o decimal; o outro,
+    se houver, é separador de milhar e é descartado)."""
+    texto = serie.fillna("").astype(str).str.strip()
 
-    Remove primeiro o ponto de milhar (se houver) e só depois troca a
-    vírgula decimal por ponto - a ordem é importante, senão um valor como
-    "1.234,56" viraria "1.234.56" e quebraria o to_numeric.
-    """
-    texto = serie.astype(str).str.strip()
-    texto = texto.str.replace(".", "", regex=False)
-    texto = texto.str.replace(",", ".", regex=False)
-    return pd.to_numeric(texto, errors="coerce")
+    pos_virgula = texto.str.rfind(",")
+    pos_ponto = texto.str.rfind(".")
+    tem_virgula = pos_virgula >= 0
+    tem_ponto = pos_ponto >= 0
 
+    virgula_e_decimal = (tem_virgula & ~tem_ponto) | (tem_virgula & tem_ponto & (pos_virgula > pos_ponto))
+    ponto_e_decimal = (tem_ponto & ~tem_virgula) | (tem_virgula & tem_ponto & (pos_ponto > pos_virgula))
 
-def carregar_produtos(caminho_produto: Path) -> pd.DataFrame:
-    """Carrega o catálogo de produtos e prepara a chave de join (ID_LOJA, CODIGO_PRODUTO)."""
-    produtos = pd.read_csv(
-        caminho_produto, sep=";", quotechar='"', encoding="utf-8-sig", dtype=str,
-        usecols=["ID_LOJA", "CODIGO_INTERNO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO",
-                 "DESCRICAO_PRODUTO", "NOME_FABRICANTE"],
+    saida = texto.copy()
+    saida = saida.mask(
+        virgula_e_decimal,
+        texto.str.replace(".", "", regex=False).str.replace(",", ".", regex=False),
     )
-    produtos = produtos.rename(columns={"CODIGO_INTERNO_PRODUTO": "CODIGO_PRODUTO"})
-    produtos["CODIGO_REFERENCIA_PRODUTO"] = produtos["CODIGO_REFERENCIA_PRODUTO"].replace("", pd.NA)
+    saida = saida.mask(ponto_e_decimal, texto.str.replace(",", "", regex=False))
 
-    duplicados = produtos.duplicated(subset=["ID_LOJA", "CODIGO_PRODUTO"]).sum()
-    if duplicados:
-        print(
-            f"[AVISO] {duplicados} linha(s) duplicada(s) em (ID_LOJA, CODIGO_PRODUTO) no "
-            "arquivo de produtos - mantendo a última ocorrência de cada uma."
-        )
-        produtos = produtos.drop_duplicates(subset=["ID_LOJA", "CODIGO_PRODUTO"], keep="last")
-
-    return produtos[["ID_LOJA", "CODIGO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO",
-                      "DESCRICAO_PRODUTO", "NOME_FABRICANTE"]]
+    return pd.to_numeric(saida, errors="coerce")
 
 
-def formatar_loja(id_loja_serie: pd.Series) -> pd.Series:
-    """'lupi_curicica' -> 'Lupi Curicica' (1:1 com ID_LOJA, só para legibilidade)."""
-    return id_loja_serie.str.replace("_", " ", regex=False).str.title()
+def _serie_texto_limpa(serie: pd.Series) -> pd.Series:
+    """Strip; '' / 'nan' viram NA."""
+    texto = serie.fillna("").astype(str).str.strip()
+    return texto.mask(texto.str.lower().isin(("", "nan", "none", "<na>")), other=pd.NA)
 
 
-def processar_chunk(chunk: pd.DataFrame, produtos: pd.DataFrame, anos_permitidos: tuple[int, int]) -> pd.DataFrame | None:
-    """
-    Filtra, ajusta sinais (VENDA soma / DEVOLUCAO subtrai), faz o join com
-    produtos e agrega o chunk pelas colunas de agrupamento finais. Retorna
-    None se, após os filtros, o chunk não tiver nenhuma linha aproveitável.
-    """
-    chunk = chunk[chunk["TIPO_MOVIMENTO"].isin(MOVIMENTOS_VALIDOS)].copy()
-    if chunk.empty:
-        return None
-
-    # DEVOLUCAO + MOV=S = espelho documental; a baixa de receita é só MOV=E.
-    if "MOV" in chunk.columns:
-        mov = chunk["MOV"].fillna("").astype(str).str.strip().str.upper()
-        espelho = (chunk["TIPO_MOVIMENTO"] == "DEVOLUCAO") & mov.eq("S")
-        chunk = chunk.loc[~espelho].copy()
-        if chunk.empty:
-            return None
-
-    chunk["QUANTIDADE"] = _parse_numero_br(chunk["QUANTIDADE"]).fillna(0.0)
-    chunk["TOTAL"] = _parse_numero_br(chunk["TOTAL"]).fillna(0.0)
-
-    eh_devolucao = chunk["TIPO_MOVIMENTO"] == "DEVOLUCAO"
-    chunk.loc[eh_devolucao, "QUANTIDADE"] *= -1
-    chunk.loc[eh_devolucao, "TOTAL"] *= -1
-
-    # Fatiamento de string em vez de pd.to_datetime: formato fixo
-    # "dd/mm/yyyy HH:MM:SS" sem nulos - muito mais rápido que parsing de data
-    # completo em bases com milhões de linhas.
-    mes_num = chunk["DATA_MOVIMENTO"].str.slice(3, 5).astype(int)
-    ano_num = chunk["DATA_MOVIMENTO"].str.slice(6, 10).astype(int)
-    chunk["Ano"] = ano_num
-    chunk["Mês"] = mes_num.map(MESES_PT)
-
-    # Decisão de negócio (6): mantém só o ano atual e o anterior.
-    chunk = chunk[chunk["Ano"].isin(anos_permitidos)]
-    if chunk.empty:
-        return None
-
-    chunk["Loja"] = formatar_loja(chunk["ID_LOJA"])
-    chunk["Cliente"] = chunk["NOME_CLIENTE"]
-    chunk["Código Interno"] = chunk["CODIGO_PRODUTO"]
-
-    chunk = chunk.merge(produtos, how="left", on=["ID_LOJA", "CODIGO_PRODUTO"])
-    chunk["descricao"] = chunk["DESCRICAO_PRODUTO"]
-    chunk["Código de referêcia"] = chunk["CODIGO_REFERENCIA_PRODUTO"]
-
-    agregado = (
-        chunk.groupby(COLUNAS_GRUPO, dropna=False, as_index=False)
-        .agg(Receita=("TOTAL", "sum"), QTD=("QUANTIDADE", "sum"))
-    )
-    return agregado
+def _normalizar_mes(serie: pd.Series) -> pd.Series:
+    """Aceita Mês como número (1-12) ou já por extenso em PT-BR; sempre
+    devolve o nome por extenso (o que `carregar_csv` espera)."""
+    texto = _serie_texto_limpa(serie)
+    numerico = pd.to_numeric(texto, errors="coerce")
+    eh_numerico = numerico.notna()
+    convertido = texto.copy()
+    convertido = convertido.mask(eh_numerico, numerico.map(MESES_PT))
+    return convertido
 
 
 def formatar_qtd(valor: float) -> str:
     """QTD sem separador BR: inteiro puro, ou decimal com ponto se houver fração residual."""
+    if pd.isna(valor):
+        return "0"
     valor_round = round(float(valor), 4)
     if abs(valor_round - round(valor_round)) < 1e-6:
         return str(int(round(valor_round)))
@@ -317,65 +235,83 @@ def formatar_qtd(valor: float) -> str:
 
 def formatar_receita(valor: float) -> str:
     """Receita em formato BR (vírgula decimal), sem separador de milhar."""
+    if pd.isna(valor):
+        valor = 0.0
     return f"{float(valor):.2f}".replace(".", ",")
 
 
-def normalizar(caminho_movimento: Path, caminho_produto: Path) -> pd.DataFrame:
-    """Lê os dois arquivos de origem em chunks e retorna o DataFrame final já formatado."""
+def _pct_vazio(serie: pd.Series) -> float:
+    if serie.empty:
+        return 100.0
+    texto = serie.astype(str).str.strip()
+    vazios = serie.isna() | texto.isin(("", "nan", "None", "<NA>"))
+    return float(vazios.mean() * 100)
+
+
+# ---------------------------------------------------------------------------
+# Normalização (Dados_Atacado -> DataFrame no schema do Base.csv)
+# ---------------------------------------------------------------------------
+
+def normalizar(caminho_atacado: Path) -> pd.DataFrame:
+    """Lê Dados_Atacado_<empresa>.csv e retorna o DataFrame final já formatado."""
     ano_atual = date.today().year
     anos_permitidos = (ano_atual - 1, ano_atual)
 
-    print(f"Carregando catálogo de produtos: {caminho_produto.name}")
-    produtos = carregar_produtos(caminho_produto)
-    print(f"  {len(produtos):,} produtos carregados (ID_LOJA + CODIGO_PRODUTO únicos).")
+    print(f"Lendo {caminho_atacado.name}...")
+    df = ler_csv_robusto(caminho_atacado, sep=";", quotechar='"', dtype=str)
 
-    print(f"Lendo movimentação em chunks de {CHUNKSIZE:,} linhas: {caminho_movimento.name}")
-    partes = []
-    total_linhas_lidas = 0
-    inicio = time.time()
-
-    leitor = pd.read_csv(
-        caminho_movimento, sep=";", quotechar='"', encoding="utf-8-sig", dtype=str,
-        usecols=lambda c: c in COLS_MOVIMENTO,
-        chunksize=CHUNKSIZE,
-    )
-    for i, chunk in enumerate(leitor, start=1):
-        total_linhas_lidas += len(chunk)
-        agregado = processar_chunk(chunk, produtos, anos_permitidos)
-        if agregado is not None and not agregado.empty:
-            partes.append(agregado)
-        decorrido = time.time() - inicio
-        print(f"  chunk {i:>3}: {len(chunk):>9,} linhas lidas | "
-              f"{total_linhas_lidas:>10,} acumuladas | {decorrido:6.1f}s")
-
-    print(f"Leitura concluída em {time.time() - inicio:.1f}s. Consolidando agregações parciais...")
-    if not partes:
+    faltando = sorted(COLUNAS_ATACADO_ESPERADAS - set(df.columns))
+    if faltando:
         raise ErroNormalizacao(
-            f"Nenhuma linha de VENDA/DEVOLUCAO encontrada no arquivo de movimento "
-            f"para os anos {anos_permitidos[0]} ou {anos_permitidos[1]}."
+            f"Arquivo {caminho_atacado.name} sem colunas: {', '.join(faltando)}."
         )
 
-    consolidado = pd.concat(partes, ignore_index=True)
-    final = (
-        consolidado.groupby(COLUNAS_GRUPO, dropna=False, as_index=False)
+    df = df.rename(columns=RENAME_ATACADO)
+
+    for col in ("Loja", "NOME_FABRICANTE", "Cliente", "descricao",
+                "Código Interno", "Código de referêcia"):
+        df[col] = _serie_texto_limpa(df[col])
+
+    df["Ano"] = pd.to_numeric(_serie_texto_limpa(df["Ano"]), errors="coerce")
+    df["Mês"] = _normalizar_mes(df["Mês"])
+    df["Receita"] = _parse_numero_flexivel(df["Receita Acumulada 11 Meses"]).fillna(0.0)
+    df["QTD"] = _parse_numero_flexivel(df["QTD"]).fillna(0.0)
+
+    antes = len(df)
+    df = df.dropna(subset=["Ano", "Mês"])
+    if antes - len(df):
+        print(f"  [AVISO] {antes - len(df):,} linha(s) descartada(s) por Ano/Mês inválido.")
+
+    df["Ano"] = df["Ano"].astype(int)
+    df = df[df["Ano"].isin(anos_permitidos)]
+    if df.empty:
+        raise ErroNormalizacao(
+            f"Nenhuma linha para os anos {anos_permitidos[0]} ou {anos_permitidos[1]} "
+            f"em {caminho_atacado.name}."
+        )
+
+    agregado = (
+        df.groupby(COLUNAS_GRUPO, dropna=False, as_index=False)
         .agg(Receita=("Receita", "sum"), QTD=("QTD", "sum"))
     )
 
-    antes = len(final)
-    # Decisão de negócio (2), ver docstring do módulo: descarta ruído de
-    # agrupamentos com receita E quantidade líquidas exatamente zero.
-    mascara_zero = (final["Receita"].round(2) == 0) & (final["QTD"].round(4) == 0)
-    final = final[~mascara_zero].copy()
-    descartadas = antes - len(final)
-    print(f"Agrupamentos consolidados: {antes:,} -> {len(final):,} "
+    antes = len(agregado)
+    mascara_zero = (agregado["Receita"].round(2) == 0) & (agregado["QTD"].round(4) == 0)
+    agregado = agregado[~mascara_zero].copy()
+    descartadas = antes - len(agregado)
+    print(f"Agrupamentos: {antes:,} -> {len(agregado):,} "
           f"({descartadas:,} descartados por receita e quantidade líquidas = 0).")
 
-    final["Ano"] = final["Ano"].astype(int)
-    final["QTD"] = final["QTD"].apply(formatar_qtd)
-    final["Receita Acumulada 11 Meses"] = final["Receita"].apply(formatar_receita)
+    for col in ("Cliente", "NOME_FABRICANTE", "descricao", "Código de referêcia"):
+        pct = _pct_vazio(agregado[col])
+        nuniq = int(agregado[col].nunique(dropna=True))
+        marca = " [ATENÇÃO]" if pct >= 95 else ""
+        print(f"  {col}: {pct:.1f}% vazio | {nuniq:,} distintos{marca}")
 
-    final = final[COLUNAS_SAIDA]
-    return final
+    agregado["QTD"] = agregado["QTD"].apply(formatar_qtd)
+    agregado["Receita Acumulada 11 Meses"] = agregado["Receita"].apply(formatar_receita)
+
+    return agregado[COLUNAS_SAIDA]
 
 
 def validar(caminho_saida: Path, total_linhas_gravadas: int) -> None:
@@ -389,7 +325,7 @@ def validar(caminho_saida: Path, total_linhas_gravadas: int) -> None:
     print("VALIDAÇÃO")
     print("=" * 70)
 
-    relido = pd.read_csv(caminho_saida, sep=";", encoding="utf-8-sig")
+    relido = ler_csv_robusto(caminho_saida, sep=";")
     if list(relido.columns) != COLUNAS_SAIDA:
         print("[AVISO] Cabeçalho lido não corresponde ao esperado!")
         print(f"  Esperado: {COLUNAS_SAIDA}")
@@ -408,6 +344,9 @@ def validar(caminho_saida: Path, total_linhas_gravadas: int) -> None:
           f"(min={ano_numerico.min()}, max={ano_numerico.max()})")
     print(f"  QTD: {qtd_numerico.isna().sum()} valor(es) não numérico(s)")
     print(f"  Receita: {receita_numerico.isna().sum()} valor(es) não parseável(is)")
+    for col in ("Cliente", "NOME_FABRICANTE", "descricao", "Código de referêcia"):
+        pct = _pct_vazio(relido[col])
+        print(f"  {col}: {pct:.1f}% vazio | {relido[col].nunique(dropna=True):,} distintos")
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +359,7 @@ def normalizar_pasta_empresa(
     aplicar_harmonizacao: bool = True,
     validar_resultado: bool = True,
 ) -> Path:
-    """Lê BI/ em `pasta_fonte` e gera `Base.csv` em `pasta_trabalho`.
+    """Lê os 3 CSVs em `pasta_fonte` e gera `Base.csv` em `pasta_trabalho`.
 
     `pasta_trabalho` é obrigatória e deve ser distinta da fonte (e não pode
     estar dentro dela). A fonte é somente leitura — este módulo nunca grava
@@ -428,14 +367,14 @@ def normalizar_pasta_empresa(
 
     Se `aplicar_harmonizacao` for True e existir harm.xlsx/harm.xls na pasta
     de trabalho, aplica `harmonizar_descricoes.harmonizar` sobre o Base.csv
-    (decisão de negócio 7). Backup e planilha ficam só no trabalho.
+    (decisão de negócio 5). Backup e planilha ficam só no trabalho.
 
     Retorna o caminho do Base.csv gerado.
     """
     pasta_fonte = Path(pasta_fonte).resolve()
     if pasta_trabalho is None:
         raise ErroNormalizacao(
-            "pasta_trabalho é obrigatória. A pasta fonte (BI/) é somente leitura — "
+            "pasta_trabalho é obrigatória. A pasta fonte é somente leitura — "
             "informe uma pasta de trabalho distinta para gravar o Base.csv "
             "(CLI: --trabalho <pasta>)."
         )
@@ -450,9 +389,9 @@ def normalizar_pasta_empresa(
             f"não pode ser igual a pasta_fonte nem estar dentro dela ({pasta_fonte})."
         )
 
-    caminho_movimento, caminho_produto = resolver_arquivos_bi(pasta_fonte)
+    caminho_atacado, _caminho_estoque, _caminho_vendas = resolver_arquivos_dados(pasta_fonte)
 
-    df_saida = normalizar(caminho_movimento, caminho_produto)
+    df_saida = normalizar(caminho_atacado)
 
     pasta_trabalho.mkdir(parents=True, exist_ok=True)
     caminho_saida = pasta_trabalho / "Base.csv"
@@ -478,7 +417,7 @@ def normalizar_pasta_empresa(
             print("\nNenhuma planilha de harmonização encontrada (harm.xlsx) - "
                   "mantendo a descrição bruta do catálogo de produtos.")
 
-    # Bases do relatório Liquidez (estoque + vendas) — mesmo BI, pasta trabalho.
+    # Bases do relatório Liquidez (estoque + vendas) — mesma fonte, pasta trabalho.
     try:
         from normalizar_liquidez import normalizar_liquidez_pasta
         normalizar_liquidez_pasta(pasta_fonte, pasta_trabalho)
@@ -503,9 +442,9 @@ def _localizar_planilha_harmonizacao(pasta_trabalho: Path) -> Path | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Normaliza os exports de movimento/produto (BI/) de uma empresa em Base.csv."
+        description="Normaliza os CSVs (Atacado/Estoque/Vendas) de uma empresa em Base.csv."
     )
-    parser.add_argument("pasta_fonte", help="Pasta da empresa com BI/ (somente leitura)")
+    parser.add_argument("pasta_fonte", help="Pasta da empresa com os 3 CSVs (somente leitura)")
     parser.add_argument(
         "--trabalho",
         required=True,
