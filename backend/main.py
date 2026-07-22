@@ -55,12 +55,14 @@ RAIZ_PROJETO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if RAIZ_PROJETO not in sys.path:
     sys.path.insert(0, RAIZ_PROJETO)
 
-from harmonizar_descricoes import ErroHarmonizacao  # noqa: E402
 from normalizar_base import (  # noqa: E402
     ErroNormalizacao,
-    normalizar_pasta_empresa,
+    aplicar_harmonizacao_em_memoria,
+    normalizar,
+    parse_numero_flexivel,
     resolver_arquivos_dados,
 )
+from normalizar_liquidez import normalizar_estoque, normalizar_vendas  # noqa: E402
 
 CAMINHO_BASE_PADRAO = os.path.join(RAIZ_PROJETO, "base_de_dados.xlsx")
 
@@ -122,7 +124,7 @@ def obter_catalogo(usuario: str = Depends(exigir_login)):
 # Dois caminhos compartilhados (Dashboard + Analisador)
 #
 # caminho_fonte_dados  — somente leitura: /{cliente}/Dados_Atacado_{cliente}.csv + _Estoque_ + _Vendas_
-# caminho_trabalho     — escrita: /{cliente}/Base.csv, config.json, harm.xlsx, backups
+# caminho_trabalho     — escrita: /{cliente}/summary_dashboard.json, config.json, harm.xlsx, tags
 #
 # Chaves legadas (caminho_dados_dashboard / caminho_empresas) ainda são lidas
 # como fallback na migração.
@@ -245,7 +247,7 @@ def _exigir_caminho_trabalho() -> str:
     if not caminho:
         raise HTTPException(
             status_code=400,
-            detail="Configure a pasta de trabalho (Base.csv / config.json) antes de continuar.",
+            detail="Configure a pasta de trabalho (summary_dashboard.json / config.json) antes de continuar.",
         )
     return caminho
 
@@ -692,7 +694,9 @@ def _grupos_manuais_empresa(empresa: Optional[str], loja: Optional[str] = None) 
 # Máximo de empresas em cache (cada DF/summary pode ser grande).
 _CACHE_EMPRESA_MAX = 3
 
-# Cache por empresa do Base.csv no trabalho (mtime -> df). LRU via OrderedDict.
+# Cache por empresa do DataFrame lido direto da fonte (mtime do Dados_Atacado -> df).
+# LRU via OrderedDict. Não há mais Base.csv em disco — nada é persistido no trabalho
+# além do summary_dashboard.json/config/harm/tags.
 _cache_base_empresa: OrderedDict[str, dict] = OrderedDict()
 
 # Cache do Excel padrão (sem empresa selecionada).
@@ -734,84 +738,32 @@ def _data_ultimo_movimento_bi(pasta_fonte: str) -> Optional[date]:
         return None
 
 
-def _ensure_base_csv(
-    pasta_fonte: str,
-    pasta_trabalho: str,
-    empresa: str,
-    *,
-    forcar: bool = False,
-) -> str:
-    """Garante Base.csv no trabalho.
+def _carregar_atacado_df(pasta_fonte: str, pasta_trabalho: str) -> pd.DataFrame:
+    """Lê Dados_Atacado_<empresa>.csv direto da fonte e aplica harmonização em memória.
 
-    Por padrão **não** renormaliza quando a fonte é mais nova — o lote noturno
-    (ou o botão Regenerar base) atualiza os arquivos. Aqui só:
-
-    - devolve o Base.csv já existente; ou
-    - com ``forcar=True``, regenera a partir da fonte.
-
-    Se o Base.csv não existir e ``forcar`` for False, responde 400 pedindo
-    regeneração manual / lote.
-
-    Nunca escreve sob pasta_fonte. Recusa se fonte == trabalho.
-    """
-    _assert_fonte_diferente_de_trabalho()
-    _assert_escrita_fora_da_fonte(pasta_trabalho)
-    caminho_csv = os.path.join(pasta_trabalho, "Base.csv")
-    _assert_escrita_fora_da_fonte(caminho_csv)
-
-    try:
-        os.makedirs(pasta_trabalho, exist_ok=True)
-    except OSError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Não foi possível criar a pasta de trabalho da empresa: {exc}",
-        )
-
-    if not forcar:
-        if os.path.isfile(caminho_csv):
-            return caminho_csv
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Base.csv ainda não gerado para '{empresa}'. "
-                "Aguarde a normalização noturna ou use o botão Regenerar base."
-            ),
-        )
-
-    logger.info("Regeneração forçada da Base.csv para %s (fonte -> trabalho).", empresa)
-
-    try:
-        normalizar_pasta_empresa(pasta_fonte, pasta_trabalho=pasta_trabalho)
-    except ErroNormalizacao as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except ErroHarmonizacao as exc:
-        raise HTTPException(status_code=400, detail=f"Falha ao harmonizar descrições: {exc}")
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.error("Falha inesperada ao normalizar a empresa %s:\n%s", empresa, traceback.format_exc())
-        raise HTTPException(status_code=400, detail=f"Falha inesperada ao normalizar a base: {exc}")
-
-    _cache_summary_dashboard.pop(empresa, None)
-    _cache_base_empresa.pop(empresa, None)
-    invalidar_summary_dashboard(pasta_trabalho)
-    return caminho_csv
+    Não escreve nada em disco (sem mais Base.csv). Levanta ErroNormalizacao se os
+    arquivos da fonte não existirem/faltar coluna."""
+    caminho_atacado, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
+    df = normalizar(caminho_atacado)
+    return aplicar_harmonizacao_em_memoria(df, Path(pasta_trabalho))
 
 
 def _garantir_summary_dashboard_arquivo(
     empresa: str,
     pasta_fonte: str,
     pasta_trabalho: str,
-    caminho_csv: str,
+    caminho_atacado: str,
 ) -> Path:
-    """Garante summary_dashboard.json(.gz) fresco vs Base.csv; regenera se preciso.
+    """Garante summary_dashboard.json(.gz) fresco vs a fonte; regenera se preciso.
 
-    Prefere o .gz (pré-comprimido) para evitar gzip on-the-fly no hot path.
+    Frescor é comparado contra o mtime de Dados_Atacado_<empresa>.csv na fonte (não
+    há mais Base.csv intermediário). Prefere o .gz (pré-comprimido) para evitar
+    gzip on-the-fly no hot path.
     """
     caminho_gz = caminho_summary_dashboard_gz(pasta_trabalho)
     caminho_json = caminho_summary_dashboard(pasta_trabalho)
 
-    if summary_dashboard_atualizado(pasta_trabalho, caminho_csv):
+    if summary_dashboard_atualizado(pasta_trabalho, caminho_atacado):
         if caminho_gz.is_file():
             return caminho_gz
         if caminho_json.is_file():
@@ -844,14 +796,19 @@ def _garantir_summary_dashboard_arquivo(
                 )
                 return caminho_json
 
+    _assert_fonte_diferente_de_trabalho()
+    _assert_escrita_fora_da_fonte(pasta_trabalho)
+
     try:
-        df, _linhas_vazias = af.carregar_csv(caminho_csv)
+        df, _linhas_vazias = _carregar_base_empresa(empresa)
         data_ultimo = _data_ultimo_movimento_bi(pasta_fonte)
         caminho = gerar_e_gravar_summary_dashboard(
             pasta_trabalho,
             df,
             data_ultimo_movimento=data_ultimo,
         )
+    except HTTPException:
+        raise
     except af.ErroCarregamentoCSV as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
@@ -898,10 +855,10 @@ def _resposta_summary_arquivo(
     empresa: str,
     caminho_summary: Path,
     pasta_fonte: str,
-    caminho_csv: str,
+    caminho_atacado: str,
 ) -> Response:
     """Serve summary pré-serializado (RAM/disco); header com data da fonte."""
-    mtime_csv = os.path.getmtime(caminho_csv)
+    mtime_csv = os.path.getmtime(caminho_atacado)
     body = _corpo_summary_cacheado(empresa, caminho_summary, mtime_csv)
     headers: dict[str, str] = {}
     data_ultimo = _data_ultimo_movimento_bi(pasta_fonte)
@@ -917,16 +874,23 @@ def _resposta_summary_arquivo(
 
 
 def _regenerar_base_empresa(empresa: str) -> dict:
-    """Força renormalização fonte->Base.csv, regenera summary em disco e limpa caches."""
+    """Limpa caches (RAM + summary em disco) e força reprocessamento direto da fonte."""
     pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
-    caminho_csv = _ensure_base_csv(pasta_fonte, pasta_trabalho, empresa, forcar=True)
+    try:
+        caminho_atacado, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
+    except ErroNormalizacao as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    _cache_summary_dashboard.pop(empresa, None)
+    _cache_base_empresa.pop(empresa, None)
+    invalidar_summary_dashboard(pasta_trabalho)
+
     caminho_summary = _garantir_summary_dashboard_arquivo(
-        empresa, pasta_fonte, pasta_trabalho, caminho_csv,
+        empresa, pasta_fonte, pasta_trabalho, str(caminho_atacado),
     )
     return {
         "ok": True,
         "empresa": empresa,
-        "caminho": caminho_csv,
         "summary": str(caminho_summary),
     }
 
@@ -954,20 +918,31 @@ def _carregar_base_padrao() -> tuple[pd.DataFrame, int]:
 
 
 def _carregar_base_empresa(empresa: str) -> tuple[pd.DataFrame, int]:
+    """Lê Dados_Atacado_<empresa>.csv direto da fonte (sem Base.csv em disco).
+
+    Cache LRU em RAM chaveado no mtime do Dados_Atacado na fonte.
+    """
     pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
-    caminho_csv = _ensure_base_csv(pasta_fonte, pasta_trabalho, empresa)
-    mtime = os.path.getmtime(caminho_csv)
+    try:
+        caminho_atacado, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
+    except ErroNormalizacao as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    mtime = os.path.getmtime(caminho_atacado)
     em_cache = _cache_base_empresa.get(empresa)
     if em_cache and em_cache["mtime"] == mtime:
         _lru_touch(_cache_base_empresa, empresa)
         return em_cache["df"], em_cache["linhas_vazias"]
 
     try:
-        df, linhas_vazias = af.carregar_csv(caminho_csv)
+        df_bruto = _carregar_atacado_df(pasta_fonte, pasta_trabalho)
+        df, linhas_vazias = af.validar_e_limpar(df_bruto, receita_em_texto_br=True)
+    except ErroNormalizacao as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     except af.ErroCarregamentoCSV as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except Exception as exc:
-        logger.error("Falha inesperada ao carregar Base.csv de %s:\n%s", empresa, traceback.format_exc())
+        logger.error("Falha inesperada ao carregar dados de %s:\n%s", empresa, traceback.format_exc())
         raise HTTPException(status_code=400, detail=f"Falha inesperada ao carregar a base: {exc}")
 
     df = _normalizar_coluna_loja_inplace(df)
@@ -1014,7 +989,7 @@ def _carregar_base(
     empresa: Optional[str] = None,
     loja: Optional[str] = None,
 ) -> tuple[pd.DataFrame, int]:
-    """Com empresa: Base.csv do trabalho (após ensure). Sem empresa: Excel padrão da raiz.
+    """Com empresa: dados direto da fonte (Dados_Atacado_<empresa>.csv). Sem empresa: Excel padrão da raiz.
 
     loja opcional filtra a coluna Loja depois do cache (o cache guarda o DF completo
     com Loja já normalizada).
@@ -1768,21 +1743,21 @@ def ensure_base_empresa(
     forcar: bool = False,
     usuario: str = Depends(exigir_login),
 ):
-    """Garante Base.csv no trabalho a partir da fonte (Analisador / dash).
+    """Confirma que a fonte tem os dados da empresa (Analisador / dash).
 
-    Por padrão só verifica se o arquivo existe (não renormaliza se a fonte for mais nova).
-    Query ``forcar=true`` equivale a Regenerar base.
+    Não há mais Base.csv persistido — os dados são lidos direto da fonte a cada
+    seleção. ``forcar=true`` limpa os caches e regenera o summary do zero
+    (equivalente a Regenerar base).
     """
     if forcar:
         return _regenerar_base_empresa(nome)
-    pasta_fonte, pasta_trabalho = _pastas_empresa(nome)
-    caminho_csv = _ensure_base_csv(pasta_fonte, pasta_trabalho, nome)
-    return {"ok": True, "caminho": caminho_csv, "empresa": nome}
+    _pastas_empresa(nome)  # 404 se a empresa não tiver os 3 CSVs na fonte
+    return {"ok": True, "empresa": nome}
 
 
 @app.post("/api/empresas/{nome}/regenerar-base")
 def regenerar_base_empresa(nome: str, usuario: str = Depends(exigir_login)):
-    """Força regenerar Base.csv a partir da fonte e limpa cache (Analisador)."""
+    """Limpa caches e força reprocessamento direto da fonte (Analisador)."""
     return _regenerar_base_empresa(nome)
 
 
@@ -1835,19 +1810,22 @@ def listar_empresas_dashboard():
 
 @app.post("/api/dashboard/empresas/{empresa}/regenerar-base")
 def regenerar_base_dashboard(empresa: str):
-    """Força regenerar Base.csv a partir da fonte e limpa cache (Dashboard público)."""
+    """Limpa caches e força reprocessamento direto da fonte (Dashboard público)."""
     return _regenerar_base_empresa(empresa)
 
 
 @app.get("/api/dashboard/summary/{empresa}")
 def obter_summary_dashboard(empresa: str):
-    """Serve summary_dashboard.json(.gz) em disco/RAM. Regenera só se Base.csv for mais novo."""
+    """Serve summary_dashboard.json(.gz) em disco/RAM. Regenera só se a fonte for mais nova."""
     pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
-    caminho_csv = _ensure_base_csv(pasta_fonte, pasta_trabalho, empresa)
+    try:
+        caminho_atacado, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
+    except ErroNormalizacao as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     caminho_summary = _garantir_summary_dashboard_arquivo(
-        empresa, pasta_fonte, pasta_trabalho, caminho_csv,
+        empresa, pasta_fonte, pasta_trabalho, str(caminho_atacado),
     )
-    return _resposta_summary_arquivo(empresa, caminho_summary, pasta_fonte, caminho_csv)
+    return _resposta_summary_arquivo(empresa, caminho_summary, pasta_fonte, str(caminho_atacado))
 
 
 # ---------------------------------------------------------------------------
@@ -2261,52 +2239,37 @@ def _carregar_df_filtrado(
 CHAVES_ALVOS = frozenset({"mais_atacado", "liquidez"})
 
 
-def _parse_br_series(serie: pd.Series) -> pd.Series:
-    texto = serie.astype(str).str.strip()
-    texto = texto.str.replace(".", "", regex=False).str.replace(",", ".", regex=False)
-    return pd.to_numeric(texto, errors="coerce")
-
-
-def _ler_csv_alvos(pasta_trabalho: str, nome: str) -> pd.DataFrame:
-    caminho = os.path.join(pasta_trabalho, nome)
-    if not os.path.isfile(caminho):
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Arquivo {nome} não encontrado em {pasta_trabalho}. "
-                "Regenere a base da empresa (os CSVs de Liquidez/Mais Atacado "
-                "são gerados junto com o Base.csv)."
-            ),
-        )
-    return pd.read_csv(caminho, sep=";", encoding="utf-8-sig", dtype=str)
-
-
 def _analises_alvos(empresa: Optional[str], chaves: set[str]) -> dict[str, pd.DataFrame]:
-    """Carrega CSVs da pasta de trabalho para a seção Alvos (sem granularidade)."""
+    """Gera os DataFrames da seção Alvos direto da fonte, em memória (sem CSV em disco)."""
     if not empresa:
         raise HTTPException(
             status_code=400,
             detail="Selecione uma empresa para gerar os relatórios Alvos (Mais Atacado / Liquidez).",
         )
-    _, pasta_trabalho = _pastas_empresa(empresa)
+    pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
+    try:
+        caminho_atacado, caminho_estoque, caminho_vendas = resolver_arquivos_dados(Path(pasta_fonte))
+    except ErroNormalizacao as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
     analises: dict[str, pd.DataFrame] = {}
 
     if "mais_atacado" in chaves:
-        df = _ler_csv_alvos(pasta_trabalho, "Base.csv")
+        df = _carregar_atacado_df(pasta_fonte, pasta_trabalho)
         if "Receita Acumulada 11 Meses" in df.columns:
-            df["Receita Acumulada 11 Meses"] = _parse_br_series(df["Receita Acumulada 11 Meses"])
+            df["Receita Acumulada 11 Meses"] = parse_numero_flexivel(df["Receita Acumulada 11 Meses"])
         if "QTD" in df.columns:
-            df["QTD"] = _parse_br_series(df["QTD"])
+            df["QTD"] = parse_numero_flexivel(df["QTD"])
         analises["mais_atacado"] = df
 
     if "liquidez" in chaves:
-        estoque = _ler_csv_alvos(pasta_trabalho, "Liquidez_Estoque.csv")
+        estoque = normalizar_estoque(caminho_estoque)
         for col in ("Qtd_estoque", "Preço_médio_de_venda", "Preço_médio_cmv", "Último_custo"):
             if col in estoque.columns:
-                estoque[col] = _parse_br_series(estoque[col])
-        vendas = _ler_csv_alvos(pasta_trabalho, "Liquidez_Vendas.csv")
+                estoque[col] = parse_numero_flexivel(estoque[col])
+        vendas = normalizar_vendas(caminho_vendas)
         if "QTD" in vendas.columns:
-            vendas["QTD"] = _parse_br_series(vendas["QTD"])
+            vendas["QTD"] = parse_numero_flexivel(vendas["QTD"])
         analises["liquidez_estoque"] = estoque
         analises["liquidez_vendas"] = vendas
 
