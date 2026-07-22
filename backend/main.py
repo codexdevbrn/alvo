@@ -132,6 +132,9 @@ def obter_catalogo(usuario: str = Depends(exigir_login)):
 
 CHAVE_CAMINHO_FONTE_DADOS = "caminho_fonte_dados"
 CHAVE_CAMINHO_TRABALHO = "caminho_trabalho"
+# Flag manual: "1" = ainda aguardando a base de dados ser montada na fonte (mostra
+# aviso no Dashboard público em vez de dados/erro). Liga/desliga em Configurações.
+CHAVE_AGUARDANDO_BASE_DADOS = "aguardando_base_dados"
 # Legadas — só leitura de fallback / aliases de rota
 CHAVE_CAMINHO_DADOS_DASHBOARD = "caminho_dados_dashboard"
 CHAVE_CAMINHO_EMPRESAS = "caminho_empresas"
@@ -1535,6 +1538,23 @@ def definir_caminho_trabalho(corpo: CaminhoPasta, usuario: str = Depends(exigir_
     return {"caminho": _salvar_caminho_trabalho(corpo.caminho)}
 
 
+class AguardandoBaseDadosBody(BaseModel):
+    aguardando: bool
+
+
+@app.get("/api/config/aguardando-base-dados")
+def obter_aguardando_base_dados(usuario: str = Depends(exigir_login)):
+    return {"aguardando": db.obter_config_app(CHAVE_AGUARDANDO_BASE_DADOS, "0") == "1"}
+
+
+@app.post("/api/config/aguardando-base-dados")
+def definir_aguardando_base_dados(
+    corpo: AguardandoBaseDadosBody, usuario: str = Depends(exigir_login),
+):
+    db.definir_config_app(CHAVE_AGUARDANDO_BASE_DADOS, "1" if corpo.aguardando else "0")
+    return {"aguardando": corpo.aguardando}
+
+
 @app.post("/api/config/escolher-pasta")
 async def escolher_pasta_config(
     corpo: EscolherPastaBody = Body(default_factory=EscolherPastaBody),
@@ -1801,6 +1821,19 @@ def obter_caminho_dados_dashboard():
 @app.post("/api/dashboard/caminho-dados")
 def definir_caminho_dados_dashboard(corpo: CaminhoPasta):
     return {"caminho": _salvar_caminho_fonte(corpo.caminho)}
+
+
+@app.get("/api/dashboard/aguardando-base-dados")
+def obter_aguardando_base_dados_dashboard():
+    """Público — o Dashboard usa isso para mostrar o aviso de base em montagem."""
+    return {"aguardando": db.obter_config_app(CHAVE_AGUARDANDO_BASE_DADOS, "0") == "1"}
+
+
+@app.post("/api/dashboard/aguardando-base-dados")
+def definir_aguardando_base_dados_dashboard(corpo: AguardandoBaseDadosBody):
+    """Público — mesma flag do /api/config, sem exigir login (igual caminho-fonte/trabalho)."""
+    db.definir_config_app(CHAVE_AGUARDANDO_BASE_DADOS, "1" if corpo.aguardando else "0")
+    return {"aguardando": corpo.aguardando}
 
 
 @app.get("/api/dashboard/empresas")

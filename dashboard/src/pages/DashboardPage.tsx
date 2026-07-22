@@ -7,8 +7,10 @@ import { BreakdownSection } from '../components/BreakdownSection';
 import { RevenueDetailModal } from '../components/RevenueDetailModal';
 import { LoadingScreen } from '../components/LoadingScreen';
 import { DashboardHeader } from '../components/DashboardHeader';
+import { AppShell } from '../components/AppShell';
+import { EVENTO_EMPRESA } from '../components/SidebarEmpresaSelect';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
-import { obterSummaryEmpresa } from '../api/client';
+import { obterAguardandoBaseDados, obterSummaryEmpresa } from '../api/client';
 import { formatCurrency, formatNumber } from '../utils/formatters';
 import { descricaoPeriodoPadrao, mesDeRotulo, resolverPeriodoEfetivo, rotuloCorteFechadoParaGrafico } from '../utils/periodoFechado';
 import {
@@ -114,10 +116,7 @@ export default function DashboardPage() {
   const [empresa, setEmpresa] = useState<string>(() => localStorage.getItem('alvo_empresa') || '');
   const [empresaLoading, setEmpresaLoading] = useState(false);
   const [empresaError, setEmpresaError] = useState<string | null>(null);
-  /** Incrementado após regenerar Base.csv para forçar reload sem trocar a empresa. */
-  const [empresaReloadKey, setEmpresaReloadKey] = useState(0);
-  /** null = modal fechado; string (incl. '') = empresa pendente de confirmação */
-  const [empresaPendenteConfirmacao, setEmpresaPendenteConfirmacao] = useState<string | null>(null);
+  const [aguardandoBaseDados, setAguardandoBaseDados] = useState(false);
 
   // Filter States with Persistence (atualizam na hora — a UI responde imediatamente)
   // number[] vazio = todos (mesmo padrão do período)
@@ -276,82 +275,45 @@ export default function DashboardPage() {
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [empresa, empresaReloadKey]);
-
-  const recarregarEmpresaAtual = (_nome?: string) => {
-    setEmpresaReloadKey((k) => k + 1);
-  };
-
-  const handleEmpresaChange = (nova: string) => {
-    // Os filtros são índices nos maps do dataset atual — não valem para outro
-    clearFilters();
-    setEmpresa(nova);
-  };
-
-  const solicitarTrocaEmpresa = (nova: string) => {
-    if (nova === empresa) return;
-    setEmpresaPendenteConfirmacao(nova);
-  };
-
-  const confirmarTrocaEmpresa = () => {
-    if (empresaPendenteConfirmacao === null) return;
-    const nova = empresaPendenteConfirmacao;
-    setEmpresaPendenteConfirmacao(null);
-    handleEmpresaChange(nova);
-  };
-
-  const cancelarTrocaEmpresa = () => {
-    setEmpresaPendenteConfirmacao(null);
-  };
+  }, [empresa]);
 
   useEffect(() => {
-    if (empresaPendenteConfirmacao === null) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') cancelarTrocaEmpresa();
+    obterAguardandoBaseDados(false).then(setAguardandoBaseDados).catch(() => { /* mantém false */ });
+  }, []);
+
+  // Empresa da sidebar (localStorage + evento) — limpa filtros ao trocar.
+  useEffect(() => {
+    const aplicar = (atual: string) => {
+      setEmpresa((prev) => {
+        if (prev === atual) return prev;
+        setClient([]);
+        setMfr([]);
+        setDesc([]);
+        setStore([]);
+        setPeriod([]);
+        setSeverity([]);
+        return atual;
+      });
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [empresaPendenteConfirmacao]);
-
-  const textoConfirmacaoEmpresa = (() => {
-    if (empresaPendenteConfirmacao === null) return '';
-    if (empresaPendenteConfirmacao === '') return 'Deseja mesmo carregar os dados padrão?';
-    return `Deseja mesmo carregar os dados da ${empresaPendenteConfirmacao}?`;
-  })();
-
-  const modalConfirmacaoEmpresa = empresaPendenteConfirmacao !== null ? (
-    <div
-      className="config-modal-overlay"
-      role="presentation"
-      onClick={cancelarTrocaEmpresa}
-    >
-      <div
-        className="config-modal"
-        style={{ width: 'min(420px, 100%)', maxHeight: 'none' }}
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="confirm-empresa-titulo"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="config-modal-header">
-          <h2 id="confirm-empresa-titulo">Confirmar carga</h2>
-        </div>
-        <div className="config-modal-body" style={{ padding: '1.25rem' }}>
-          <p style={{ margin: '0 0 1.25rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-            {textoConfirmacaoEmpresa}
-          </p>
-          <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-            <button type="button" className="analisador-btn analisador-btn-sec" onClick={cancelarTrocaEmpresa}>
-              Não
-            </button>
-            <button type="button" className="analisador-btn analisador-btn-pri" onClick={confirmarTrocaEmpresa}>
-              Sim, carregar
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  ) : null;
+    const onEvento = (e: Event) => {
+      const detalhe = (e as CustomEvent<string>).detail;
+      const scrollY = window.scrollY;
+      aplicar(typeof detalhe === 'string' ? detalhe : localStorage.getItem('alvo_empresa') || '');
+      requestAnimationFrame(() => {
+        window.scrollTo({ top: scrollY, left: 0, behavior: 'auto' });
+      });
+    };
+    const onStorageFocus = () => {
+      aplicar(localStorage.getItem('alvo_empresa') || '');
+    };
+    window.addEventListener(EVENTO_EMPRESA, onEvento);
+    window.addEventListener('storage', onStorageFocus);
+    // Não escuta 'focus' da janela — ao fechar o combobox isso relia LS e podia remexer a página.
+    return () => {
+      window.removeEventListener(EVENTO_EMPRESA, onEvento);
+      window.removeEventListener('storage', onStorageFocus);
+    };
+  }, []);
 
   // ==========================================
   // Helper Functions
@@ -805,41 +767,50 @@ export default function DashboardPage() {
 
   if (loading) return <LoadingScreen />;
 
+  const avisoBaseDados = aguardandoBaseDados ? (
+    <div className="glass-card" style={{ padding: '0.85rem 1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+      <AlertTriangle size={18} color="#f59e0b" style={{ flexShrink: 0 }} />
+      <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
+        <strong style={{ color: 'white' }}>Base de dados em montagem.</strong> Os números abaixo podem estar incompletos ou desatualizados até a base ficar pronta.
+      </span>
+    </div>
+  ) : null;
+
   // Sem dados (summary estático indisponível e/ou empresa com erro): mantém o
-  // header com o seletor/engrenagem visível para o usuário poder corrigir.
+  // shell com Configurações na sidebar para o usuário poder corrigir.
   if (!data) {
     return (
-      <div className="dashboard-container">
-        <DashboardHeader
-          empresa={empresa}
-          onEmpresaChange={solicitarTrocaEmpresa}
-          onRecarregarEmpresa={recarregarEmpresaAtual}
-        />
-        {modalConfirmacaoEmpresa}
-        <div className="glass-card" style={{ padding: '4rem', textAlign: 'center' }}>
-          <AlertTriangle size={48} color="#f43f5e" style={{ marginBottom: '1rem' }} />
-          <h2 style={{ color: 'white' }}>Não foi possível carregar os dados</h2>
-          <p style={{ color: 'var(--text-secondary)' }}>
-            {empresaError || 'Verifique se o backend está no ar e se as pastas fonte/trabalho estão configuradas (engrenagem no topo).'}
-          </p>
+      <AppShell>
+        <div className="dashboard-container">
+          <DashboardHeader
+            empresa={empresa}
+          />
+          {avisoBaseDados}
+          <div className="glass-card" style={{ padding: '4rem', textAlign: 'center' }}>
+            <AlertTriangle size={48} color="#f43f5e" style={{ marginBottom: '1rem' }} />
+            <h2 style={{ color: 'white' }}>Não foi possível carregar os dados</h2>
+            <p style={{ color: 'var(--text-secondary)' }}>
+              {aguardandoBaseDados
+                ? 'A base de dados ainda está sendo montada. Volte em breve.'
+                : (empresaError || 'Verifique se o backend está no ar e se as pastas fonte/trabalho estão configuradas em Configurações.')}
+            </p>
+          </div>
         </div>
-      </div>
+      </AppShell>
     );
   }
 
   return (
-    <div className="dashboard-container">
+    <AppShell ultimoMovimento={data?.updated_at}>
+      <div className="dashboard-container">
       <DashboardHeader
-        updatedAt={data?.updated_at}
         clientName={data ? rotuloFiltroIds(client, data.maps.c, 'clientes') : undefined}
         isFiltering={isFilterPending}
         empresa={empresa}
-        onEmpresaChange={solicitarTrocaEmpresa}
         empresaLoading={empresaLoading}
-        onRecarregarEmpresa={recarregarEmpresaAtual}
       />
 
-      {modalConfirmacaoEmpresa}
+      {avisoBaseDados}
 
       {empresaError && (
         <div className="glass-card" style={{ padding: '0.85rem 1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
@@ -973,6 +944,7 @@ export default function DashboardPage() {
         usarMesesFechados={usarMesesFechados}
         granularidade={granularidade}
       />
-    </div>
+      </div>
+    </AppShell>
   );
 }

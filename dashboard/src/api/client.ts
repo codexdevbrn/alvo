@@ -46,8 +46,8 @@ async function tratarResposta<T>(res: Response): Promise<T> {
       mensagem = JSON.stringify(detail);
     } else if (res.status === 502 || res.status === 503 || res.status === 504 || res.status === 500) {
       mensagem =
-        'Backend indisponível (porta 8002). Confira se o uvicorn está rodando: '
-        + 'cd backend && python -m uvicorn main:app --reload --port 8002';
+        'Backend indisponível (porta 8003). Confira se o uvicorn está rodando: '
+        + 'cd backend && python -m uvicorn main:app --reload --port 8003';
     } else {
       mensagem = `Erro ${res.status} ao comunicar com o backend.`;
     }
@@ -246,6 +246,29 @@ export async function definirCaminhoTrabalho(caminho: string, auth = false): Pro
   return dados.caminho;
 }
 
+/** Público — usado pelo Dashboard para mostrar o aviso de base em montagem. */
+export async function obterAguardandoBaseDados(auth = false): Promise<boolean> {
+  const res = await fetch(
+    auth ? '/api/config/aguardando-base-dados' : '/api/dashboard/aguardando-base-dados',
+    { headers: auth ? authHeaders() : {} },
+  );
+  const dados = await tratarResposta<{ aguardando: boolean }>(res);
+  return dados.aguardando;
+}
+
+export async function definirAguardandoBaseDados(aguardando: boolean, auth = false): Promise<boolean> {
+  const res = await fetch(
+    auth ? '/api/config/aguardando-base-dados' : '/api/dashboard/aguardando-base-dados',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(auth ? authHeaders() : {}) },
+      body: JSON.stringify({ aguardando }),
+    },
+  );
+  const dados = await tratarResposta<{ aguardando: boolean }>(res);
+  return dados.aguardando;
+}
+
 /** Abre diálogo nativo de pasta no backend local (tkinter). null = cancelado. */
 export async function escolherPasta(
   titulo?: string,
@@ -348,6 +371,7 @@ export type TagCatalogoItem = {
 };
 
 export const TAGS_CATALOGO_PADRAO: TagCatalogoItem[] = [
+  { id: 'alerta', rotulo: 'Alerta', ativa: true, cor: '#ec1818' },
   { id: 'inadimplente', rotulo: 'Inadimplente', ativa: true, cor: '#f43f5e' },
   { id: 'cliente_balcao', rotulo: 'Cliente Balcão', ativa: true, cor: '#f59e0b' },
   { id: 'encerrou_operacao', rotulo: 'Encerrou operação', ativa: true, cor: '#64748b' },
@@ -544,13 +568,22 @@ export async function regenerarBaseEmpresa(
 export async function obterSummaryEmpresa(empresa: string, signal?: AbortSignal): Promise<DashboardData> {
   try {
     const res = await fetch(`/api/dashboard/summary/${encodeURIComponent(empresa)}`, { signal });
-    return tratarResposta(res);
+    const data = await tratarResposta<DashboardData>(res);
+    const ultimo = res.headers.get('X-Ultimo-Movimento');
+    if (ultimo) {
+      data.updated_at = ultimo;
+    }
+    return data;
   } catch (err) {
     if (err instanceof DOMException && err.name === 'AbortError') throw err;
-    if (err instanceof Error && err.message.startsWith('Erro ')) throw err;
-    throw new Error(
-      'Não foi possível conectar ao backend (porta 8002). Verifique se o servidor está rodando e tente novamente.',
-    );
+    // fetch só lança TypeError em falha de rede (proxy/backend fora).
+    // Erros HTTP (400/500 com detail) já vêm de tratarResposta — não mascarar.
+    if (err instanceof TypeError) {
+      throw new Error(
+        'Não foi possível conectar ao backend (porta 8003). Verifique se o servidor está rodando e tente novamente.',
+      );
+    }
+    throw err;
   }
 }
 
