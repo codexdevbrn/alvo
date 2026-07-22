@@ -26,13 +26,19 @@ import pandas as pd
 import numpy as np
 from fastapi import Body, Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 import db
 from auth import criar_token, exigir_login
-from dashboard_summary import gerar_summary
+from dashboard_summary import (
+    caminho_summary_dashboard,
+    caminho_summary_dashboard_gz,
+    gerar_e_gravar_summary_dashboard,
+    invalidar_summary_dashboard,
+    summary_dashboard_atualizado,
+)
 from engine import analise_funil as af
 from engine.exportadores_pdf_word import exportar_relatorio_pdf
 from exportar_excel import (
@@ -53,20 +59,29 @@ from harmonizar_descricoes import ErroHarmonizacao  # noqa: E402
 from normalizar_base import (  # noqa: E402
     ErroNormalizacao,
     normalizar_pasta_empresa,
-    obter_data_ultimo_movimento,
-    resolver_arquivos_bi,
+    resolver_arquivos_dados,
 )
 
 CAMINHO_BASE_PADRAO = os.path.join(RAIZ_PROJETO, "base_de_dados.xlsx")
 
 app = FastAPI(title="Analisador de Monitoria - API")
 
+# Summary grande já vai pré-comprimido (.json.gz). Não usar GZipMiddleware
+# global — recomprimir on-the-fly dezenas de MB estoura o tempo da splash.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    # Dev/preview: localhost + LAN (ex.: http://192.168.1.13:5173).
+    # Com proxy Vite (/api relativo) o browser não precisa de CORS; isto cobre
+    # chamadas diretas à porta 8003 e acesso pela IP da máquina.
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+    ],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Ultimo-Movimento"],
 )
 
 
@@ -106,7 +121,7 @@ def obter_catalogo(usuario: str = Depends(exigir_login)):
 # ---------------------------------------------------------------------------
 # Dois caminhos compartilhados (Dashboard + Analisador)
 #
-# caminho_fonte_dados  — somente leitura: /{cliente}/BI/{cliente}_MOVIMENTO_* + _PRODUTO
+# caminho_fonte_dados  — somente leitura: /{cliente}/Dados_Atacado_{cliente}.csv + _Estoque_ + _Vendas_
 # caminho_trabalho     — escrita: /{cliente}/Base.csv, config.json, harm.xlsx, backups
 #
 # Chaves legadas (caminho_dados_dashboard / caminho_empresas) ainda são lidas
@@ -138,6 +153,7 @@ _CAMPOS_CONFIG_FLAT = frozenset({
 _CAMPOS_TAGS_FLAT = frozenset({"tags", "catalogo", "grupos", "clientes_balcao"})
 
 TAGS_CATALOGO_PADRAO: list[dict] = [
+    {"id": "alerta", "rotulo": "Alerta", "ativa": True, "cor": "#ec1818"},
     {"id": "inadimplente", "rotulo": "Inadimplente", "ativa": True, "cor": "#f43f5e"},
     {"id": "cliente_balcao", "rotulo": "Cliente Balcão", "ativa": True, "cor": "#f59e0b"},
     {"id": "encerrou_operacao", "rotulo": "Encerrou operação", "ativa": True, "cor": "#64748b"},
@@ -219,7 +235,7 @@ def _exigir_caminho_fonte() -> str:
     if not caminho or not os.path.isdir(caminho):
         raise HTTPException(
             status_code=400,
-            detail="Configure a pasta fonte de dados (BI, somente leitura) antes de continuar.",
+            detail="Configure a pasta fonte de dados (somente leitura) antes de continuar.",
         )
     return caminho
 
@@ -269,16 +285,21 @@ def _validar_nome_empresa(nome: str) -> str:
 
 
 def _listar_empresas_fonte() -> list[str]:
-    """Subpastas da fonte que contêm BI/ (somente leitura)."""
+    """Subpastas da fonte que têm os 3 CSVs (Atacado/Estoque/Vendas), somente leitura."""
     caminho = _resolver_caminho_fonte()
     if not caminho or not os.path.isdir(caminho):
         return []
-    return sorted(
-        nome
-        for nome in os.listdir(caminho)
-        if os.path.isdir(os.path.join(caminho, nome))
-        and os.path.isdir(os.path.join(caminho, nome, "BI"))
-    )
+    resultado = []
+    for nome in os.listdir(caminho):
+        pasta_empresa = os.path.join(caminho, nome)
+        if not os.path.isdir(pasta_empresa):
+            continue
+        try:
+            resolver_arquivos_dados(Path(pasta_empresa))
+        except (ErroNormalizacao, OSError):
+            continue
+        resultado.append(nome)
+    return sorted(resultado)
 
 
 def _pastas_empresa(empresa: str) -> tuple[str, str]:
@@ -290,11 +311,10 @@ def _pastas_empresa(empresa: str) -> tuple[str, str]:
     pasta_trabalho = os.path.join(trabalho_root, empresa)
     if not os.path.isdir(pasta_fonte):
         raise HTTPException(status_code=404, detail=f"Empresa '{empresa}' não encontrada na pasta fonte.")
-    if not os.path.isdir(os.path.join(pasta_fonte, "BI")):
-        raise HTTPException(
-            status_code=404,
-            detail=f"Pasta BI/ não encontrada para a empresa '{empresa}' na fonte.",
-        )
+    try:
+        resolver_arquivos_dados(Path(pasta_fonte))
+    except ErroNormalizacao as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     return pasta_fonte, pasta_trabalho
 
 
@@ -422,7 +442,7 @@ def _normalizar_mapa_tags(tags_bruto, ids_validos: set[str] | None = None) -> di
             continue
         if not isinstance(lista, list):
             continue
-        limpas = []
+        limpas = list(saida.get(cliente, []))
         for tag in lista:
             t = str(tag).strip().lower()
             if t in ids_validos and t not in limpas:
@@ -432,10 +452,33 @@ def _normalizar_mapa_tags(tags_bruto, ids_validos: set[str] | None = None) -> di
     return saida
 
 
+def _tag_alerta_padrao() -> dict:
+    for item in TAGS_CATALOGO_PADRAO:
+        if item.get("id") == "alerta":
+            return dict(item)
+    return {"id": "alerta", "rotulo": "Alerta", "ativa": True, "cor": "#ec1818"}
+
+
+def _catalogo_tem_tag_alerta(catalogo: list[dict]) -> bool:
+    for item in catalogo:
+        tag_id = str(item.get("id", "")).strip().lower()
+        rotulo = _slug_de_rotulo(str(item.get("rotulo", "")))
+        if tag_id == "alerta" or rotulo == "alerta":
+            return True
+    return False
+
+
+def _garantir_tag_alerta(catalogo: list[dict]) -> list[dict]:
+    """Garante a tag base Alerta em todas as empresas (mesmo com catálogo já salvo)."""
+    if _catalogo_tem_tag_alerta(catalogo):
+        return catalogo
+    return [_tag_alerta_padrao(), *catalogo]
+
+
 def _normalizar_catalogo_tags(catalogo_bruto) -> list[dict]:
-    """Catálogo dinâmico por empresa; sem catálogo salvo, usa o padrão de 3 tags."""
+    """Catálogo dinâmico por empresa; sem catálogo salvo, usa o padrão (inclui Alerta)."""
     if not isinstance(catalogo_bruto, list) or not catalogo_bruto:
-        return [dict(item) for item in TAGS_CATALOGO_PADRAO]
+        return _garantir_tag_alerta([dict(item) for item in TAGS_CATALOGO_PADRAO])
 
     saida: list[dict] = []
     vistos: set[str] = set()
@@ -465,7 +508,9 @@ def _normalizar_catalogo_tags(catalogo_bruto) -> list[dict]:
             "cor": cor,
         })
 
-    return saida if saida else [dict(item) for item in TAGS_CATALOGO_PADRAO]
+    if not saida:
+        return _garantir_tag_alerta([dict(item) for item in TAGS_CATALOGO_PADRAO])
+    return _garantir_tag_alerta(saida)
 
 
 def _sincronizar_lista_balcao(tags: dict[str, list[str]]) -> list[str]:
@@ -656,7 +701,6 @@ _cache_base: dict = {"mtime": None, "df": None, "linhas_vazias": 0}
 # Cache do summary do dashboard por empresa. LRU via OrderedDict.
 _cache_summary_dashboard: OrderedDict[str, dict] = OrderedDict()
 
-
 def _lru_touch(cache: OrderedDict, key: str) -> None:
     """Marca key como mais recentemente usada (hit)."""
     if key in cache:
@@ -673,15 +717,20 @@ def _lru_set(cache: OrderedDict, key: str, value: dict, max_size: int = _CACHE_E
 
 
 def _data_ultimo_movimento_bi(pasta_fonte: str) -> Optional[date]:
-    """Lê a data exata do último movimento de VENDA no BI da fonte (somente leitura)."""
+    """Data de modificação de Dados_Atacado_<empresa>.csv na fonte (somente leitura).
+
+    O arquivo novo só tem Ano/Mês (sem dia) — usa-se a data de última escrita
+    do arquivo como proxy de "última atualização" em vez de tentar extrair
+    um dia exato dos dados.
+    """
     try:
-        caminho_mov, _ = resolver_arquivos_bi(Path(pasta_fonte))
-        return obter_data_ultimo_movimento(caminho_mov)
+        caminho_atacado, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
+        return date.fromtimestamp(os.path.getmtime(caminho_atacado))
     except ErroNormalizacao as exc:
-        logger.warning("BI indisponível para data do último movimento em %s: %s", pasta_fonte, exc)
+        logger.warning("Dados indisponíveis para data de atualização em %s: %s", pasta_fonte, exc)
         return None
     except Exception as exc:
-        logger.warning("Falha ao ler data do último movimento em %s: %s", pasta_fonte, exc)
+        logger.warning("Falha ao ler data de atualização em %s: %s", pasta_fonte, exc)
         return None
 
 
@@ -694,11 +743,11 @@ def _ensure_base_csv(
 ) -> str:
     """Garante Base.csv no trabalho.
 
-    Por padrão **não** renormaliza quando o BI é mais novo — o lote noturno
+    Por padrão **não** renormaliza quando a fonte é mais nova — o lote noturno
     (ou o botão Regenerar base) atualiza os arquivos. Aqui só:
 
     - devolve o Base.csv já existente; ou
-    - com ``forcar=True``, regenera a partir do BI da fonte.
+    - com ``forcar=True``, regenera a partir da fonte.
 
     Se o Base.csv não existir e ``forcar`` for False, responde 400 pedindo
     regeneração manual / lote.
@@ -729,7 +778,7 @@ def _ensure_base_csv(
             ),
         )
 
-    logger.info("Regeneração forçada da Base.csv para %s (BI fonte -> trabalho).", empresa)
+    logger.info("Regeneração forçada da Base.csv para %s (fonte -> trabalho).", empresa)
 
     try:
         normalizar_pasta_empresa(pasta_fonte, pasta_trabalho=pasta_trabalho)
@@ -745,14 +794,141 @@ def _ensure_base_csv(
 
     _cache_summary_dashboard.pop(empresa, None)
     _cache_base_empresa.pop(empresa, None)
+    invalidar_summary_dashboard(pasta_trabalho)
     return caminho_csv
 
 
+def _garantir_summary_dashboard_arquivo(
+    empresa: str,
+    pasta_fonte: str,
+    pasta_trabalho: str,
+    caminho_csv: str,
+) -> Path:
+    """Garante summary_dashboard.json(.gz) fresco vs Base.csv; regenera se preciso.
+
+    Prefere o .gz (pré-comprimido) para evitar gzip on-the-fly no hot path.
+    """
+    caminho_gz = caminho_summary_dashboard_gz(pasta_trabalho)
+    caminho_json = caminho_summary_dashboard(pasta_trabalho)
+
+    if summary_dashboard_atualizado(pasta_trabalho, caminho_csv):
+        if caminho_gz.is_file():
+            return caminho_gz
+        if caminho_json.is_file():
+            # JSON legado sem .gz — comprime uma vez a partir do arquivo existente.
+            try:
+                import gzip as _gzip
+                payload = caminho_json.read_bytes()
+                fd_gz, tmp_gz = tempfile.mkstemp(
+                    prefix="summary_dashboard_",
+                    suffix=".json.gz.tmp",
+                    dir=str(Path(pasta_trabalho)),
+                )
+                try:
+                    os.close(fd_gz)
+                    with _gzip.open(tmp_gz, "wb", compresslevel=4) as f:
+                        f.write(payload)
+                    os.replace(tmp_gz, caminho_gz)
+                except Exception:
+                    try:
+                        os.unlink(tmp_gz)
+                    except OSError:
+                        pass
+                    raise
+                return caminho_gz
+            except Exception as exc:
+                logger.warning(
+                    "Falha ao comprimir summary legado de %s; servindo JSON: %s",
+                    empresa,
+                    exc,
+                )
+                return caminho_json
+
+    try:
+        df, _linhas_vazias = af.carregar_csv(caminho_csv)
+        data_ultimo = _data_ultimo_movimento_bi(pasta_fonte)
+        caminho = gerar_e_gravar_summary_dashboard(
+            pasta_trabalho,
+            df,
+            data_ultimo_movimento=data_ultimo,
+        )
+    except af.ErroCarregamentoCSV as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        logger.error(
+            "Falha inesperada ao gerar summary da empresa %s:\n%s",
+            empresa,
+            traceback.format_exc(),
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=f"Falha inesperada ao processar a base: {exc}",
+        )
+
+    return caminho
+
+
+def _corpo_summary_cacheado(empresa: str, caminho_summary: Path, mtime_csv: float) -> bytes:
+    """Bytes do arquivo summary (preferência .gz), com cache LRU em RAM."""
+    em_cache = _cache_summary_dashboard.get(empresa)
+    if (
+        em_cache
+        and em_cache.get("mtime") == mtime_csv
+        and em_cache.get("path") == str(caminho_summary)
+        and isinstance(em_cache.get("body"), (bytes, bytearray))
+    ):
+        _lru_touch(_cache_summary_dashboard, empresa)
+        return em_cache["body"]
+
+    body = Path(caminho_summary).read_bytes()
+    _lru_set(
+        _cache_summary_dashboard,
+        empresa,
+        {
+            "mtime": mtime_csv,
+            "path": str(caminho_summary),
+            "body": body,
+            "gzip": caminho_summary.name.endswith(".json.gz"),
+        },
+    )
+    return body
+
+
+def _resposta_summary_arquivo(
+    empresa: str,
+    caminho_summary: Path,
+    pasta_fonte: str,
+    caminho_csv: str,
+) -> Response:
+    """Serve summary pré-serializado (RAM/disco); header com data da fonte."""
+    mtime_csv = os.path.getmtime(caminho_csv)
+    body = _corpo_summary_cacheado(empresa, caminho_summary, mtime_csv)
+    headers: dict[str, str] = {}
+    data_ultimo = _data_ultimo_movimento_bi(pasta_fonte)
+    if data_ultimo is not None:
+        headers["X-Ultimo-Movimento"] = data_ultimo.strftime("%d/%m/%Y")
+    if caminho_summary.name.endswith(".json.gz"):
+        headers["Content-Encoding"] = "gzip"
+    return Response(
+        content=body,
+        media_type="application/json",
+        headers=headers,
+    )
+
+
 def _regenerar_base_empresa(empresa: str) -> dict:
-    """Força renormalização BI→Base.csv e limpa caches da empresa."""
+    """Força renormalização fonte->Base.csv, regenera summary em disco e limpa caches."""
     pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
     caminho_csv = _ensure_base_csv(pasta_fonte, pasta_trabalho, empresa, forcar=True)
-    return {"ok": True, "empresa": empresa, "caminho": caminho_csv}
+    caminho_summary = _garantir_summary_dashboard_arquivo(
+        empresa, pasta_fonte, pasta_trabalho, caminho_csv,
+    )
+    return {
+        "ok": True,
+        "empresa": empresa,
+        "caminho": caminho_csv,
+        "summary": str(caminho_summary),
+    }
 
 
 def _carregar_base_padrao() -> tuple[pd.DataFrame, int]:
@@ -979,7 +1155,7 @@ def _itens_clientes_previa(classificado: pd.DataFrame) -> list[dict]:
     receita = pd.to_numeric(frame["Receita"], errors="coerce").fillna(0.0).tolist()
     return [
         {
-            "cliente": str(cliente),
+            "cliente": str(cliente).strip(),
             "receita": float(rec),
             "percentual_receita": pct_rec,
             "percentual_acumulado": pct_acum,
@@ -992,6 +1168,7 @@ def _itens_clientes_previa(classificado: pd.DataFrame) -> list[dict]:
             percentual_acumulado,
             frame["Faixa"].tolist(),
         )
+        if str(cliente).strip()
     ]
 
 
@@ -1591,9 +1768,9 @@ def ensure_base_empresa(
     forcar: bool = False,
     usuario: str = Depends(exigir_login),
 ):
-    """Garante Base.csv no trabalho a partir do BI da fonte (Analisador / dash).
+    """Garante Base.csv no trabalho a partir da fonte (Analisador / dash).
 
-    Por padrão só verifica se o arquivo existe (não renormaliza se o BI for mais novo).
+    Por padrão só verifica se o arquivo existe (não renormaliza se a fonte for mais nova).
     Query ``forcar=true`` equivale a Regenerar base.
     """
     if forcar:
@@ -1605,7 +1782,7 @@ def ensure_base_empresa(
 
 @app.post("/api/empresas/{nome}/regenerar-base")
 def regenerar_base_empresa(nome: str, usuario: str = Depends(exigir_login)):
-    """Força regenerar Base.csv a partir do BI e limpa cache (Analisador)."""
+    """Força regenerar Base.csv a partir da fonte e limpa cache (Analisador)."""
     return _regenerar_base_empresa(nome)
 
 
@@ -1658,33 +1835,19 @@ def listar_empresas_dashboard():
 
 @app.post("/api/dashboard/empresas/{empresa}/regenerar-base")
 def regenerar_base_dashboard(empresa: str):
-    """Força regenerar Base.csv a partir do BI e limpa cache (Dashboard público)."""
+    """Força regenerar Base.csv a partir da fonte e limpa cache (Dashboard público)."""
     return _regenerar_base_empresa(empresa)
 
 
 @app.get("/api/dashboard/summary/{empresa}")
 def obter_summary_dashboard(empresa: str):
+    """Serve summary_dashboard.json(.gz) em disco/RAM. Regenera só se Base.csv for mais novo."""
     pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
     caminho_csv = _ensure_base_csv(pasta_fonte, pasta_trabalho, empresa)
-
-    mtime = os.path.getmtime(caminho_csv)
-    em_cache = _cache_summary_dashboard.get(empresa)
-    if em_cache and em_cache["mtime"] == mtime:
-        _lru_touch(_cache_summary_dashboard, empresa)
-        return em_cache["summary"]
-
-    try:
-        df, _linhas_vazias = af.carregar_csv(caminho_csv)
-        data_ultimo = _data_ultimo_movimento_bi(pasta_fonte)
-        summary = gerar_summary(df, data_ultimo_movimento=data_ultimo)
-    except af.ErroCarregamentoCSV as exc:
-        raise HTTPException(status_code=400, detail=str(exc))
-    except Exception as exc:
-        logger.error("Falha inesperada ao gerar summary da empresa %s:\n%s", empresa, traceback.format_exc())
-        raise HTTPException(status_code=400, detail=f"Falha inesperada ao processar a base: {exc}")
-
-    _lru_set(_cache_summary_dashboard, empresa, {"mtime": mtime, "summary": summary})
-    return summary
+    caminho_summary = _garantir_summary_dashboard_arquivo(
+        empresa, pasta_fonte, pasta_trabalho, caminho_csv,
+    )
+    return _resposta_summary_arquivo(empresa, caminho_summary, pasta_fonte, caminho_csv)
 
 
 # ---------------------------------------------------------------------------
