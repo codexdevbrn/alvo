@@ -1,26 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Download, FolderOpen, LogOut, Save, Settings } from 'lucide-react';
+import { AppShell } from '../components/AppShell';
+import { Download, FolderOpen, Save } from 'lucide-react';
 import {
   analisar,
-  clearToken,
-  definirCaminhoFonteDados,
-  definirCaminhoTrabalho,
   exportarRelatorio,
   listarEmpresas,
   obterBase,
-  obterCaminhoFonteDados,
   obterCaminhoTrabalho,
   obterCatalogo,
   obterPreviaGrupos,
   obterPreviaProdutos,
   obterTagsClientes,
-  regenerarBaseEmpresa,
   salvarConfiguracaoEmpresa,
-  salvarCatalogoTags,
   salvarGruposManuais,
   salvarTagsUmCliente,
-  escolherPasta,
   tentarCarregarConfiguracaoEmpresa,
   TAGS_CATALOGO_PADRAO,
   type CategoriaCatalogo,
@@ -37,12 +30,12 @@ import {
 } from '../api/client';
 import { PreviaClientesTable } from '../components/analisador/PreviaClientesTable';
 import { PreviaProdutosTable } from '../components/analisador/PreviaProdutosTable';
-import { ConfigModal } from '../components/analisador/ConfigModal';
 import { NumberStepper } from '../components/analisador/NumberStepper';
 import { ResultTable } from '../components/analisador/ResultTable';
 import { ExportarModal } from '../components/analisador/ExportarModal';
 import { ExplorarBuilder } from '../components/analisador/ExplorarBuilder';
 import { ClientesGruposPanel } from '../components/analisador/ClientesGruposPanel';
+import { AnalisadorCombobox } from '../components/analisador/AnalisadorCombobox';
 import { slugId } from '../utils/slug';
 import { rotuloGrupoCurto } from '../utils/formatters';
 
@@ -103,7 +96,6 @@ function resumirRegrasConfig(dados: ConfigEmpresaSalva): string[] {
 }
 
 export default function AnalisadorPage() {
-  const navigate = useNavigate();
   const [etapa, setEtapa] = useState<Etapa>('carregando-base');
   const [erro, setErro] = useState<string | null>(null);
   const [sucesso, setSucesso] = useState<string | null>(null);
@@ -141,8 +133,6 @@ export default function AnalisadorPage() {
   const [tagsPorCliente, setTagsPorCliente] = useState<Record<string, TagCliente[]>>({});
   const [tagsCatalogo, setTagsCatalogo] = useState<TagCatalogoItem[]>(TAGS_CATALOGO_PADRAO);
   const [gruposManuais, setGruposManuais] = useState<GrupoManualClientes[]>([]);
-  const [salvandoTagsCatalogo, setSalvandoTagsCatalogo] = useState(false);
-  const [regenerandoBase, setRegenerandoBase] = useState(false);
   const [carregandoGrupos, setCarregandoGrupos] = useState(false);
   const [produtosGrupos, setProdutosGrupos] = useState<Grupo[] | null>(null);
   const [itensProdutos, setItensProdutos] = useState<ItemProdutoPrevia[]>([]);
@@ -172,11 +162,7 @@ export default function AnalisadorPage() {
     () => lerLojaSalva(localStorage.getItem('alvo_empresa') || ''),
   );
 
-  const [caminhoFonte, setCaminhoFonte] = useState<string | null>(null);
   const [caminhoTrabalho, setCaminhoTrabalho] = useState<string | null>(null);
-  const [mostrarConfig, setMostrarConfig] = useState(false);
-  const [caminhoFonteInput, setCaminhoFonteInput] = useState('');
-  const [caminhoTrabalhoInput, setCaminhoTrabalhoInput] = useState('');
   const [configPendente, setConfigPendente] = useState<{
     empresa: string;
     dados: ConfigEmpresaSalva;
@@ -196,12 +182,9 @@ export default function AnalisadorPage() {
       .then(setCatalogo)
       .catch((e) => setErro(e instanceof Error ? e.message : 'Falha ao carregar catálogo.'));
     listarEmpresas().then(setEmpresas).catch(() => {});
-    Promise.all([obterCaminhoFonteDados(true), obterCaminhoTrabalho(true)])
-      .then(([fonte, trabalho]) => {
-        setCaminhoFonte(fonte);
-        setCaminhoFonteInput(fonte || '');
+    Promise.all([obterCaminhoTrabalho(true)])
+      .then(([trabalho]) => {
         setCaminhoTrabalho(trabalho);
-        setCaminhoTrabalhoInput(trabalho || '');
       })
       .catch(() => {});
   }, []);
@@ -573,24 +556,6 @@ export default function AnalisadorPage() {
     }
   };
 
-  const handleSalvarTagsCatalogo = async () => {
-    if (!empresaBase) {
-      setErro('Selecione uma empresa para salvar o catálogo de tags.');
-      return;
-    }
-    setSalvandoTagsCatalogo(true);
-    setErro(null);
-    try {
-      const dados = await salvarCatalogoTags(empresaBase, tagsCatalogo, lojaApi);
-      setTagsCatalogo(dados.catalogo ?? tagsCatalogo);
-      setTagsPorCliente(dados.tags ?? tagsPorCliente);
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Falha ao salvar catálogo de tags.');
-    } finally {
-      setSalvandoTagsCatalogo(false);
-    }
-  };
-
   const persistirGruposManuais = (proximos: GrupoManualClientes[]) => {
     if (!empresaBase) {
       return Promise.reject(new Error('Selecione uma empresa.'));
@@ -686,19 +651,14 @@ export default function AnalisadorPage() {
     }
   };
 
-  const handleBuscarPasta = async (campo: 'fonte' | 'trabalho') => {
-    const titulo = campo === 'fonte'
-      ? 'Pasta fonte de dados (BI, somente leitura)'
-      : 'Pasta de trabalho (Base.csv, config.json)';
-    return escolherPasta(titulo, true);
-  };
-
   const handleTagsClienteChange = async (cliente: string, tags: TagCliente[]) => {
     if (!empresaBase) return;
-    const tinhaBalcao = (tagsPorCliente[cliente] ?? []).includes('cliente_balcao');
+    const chave = cliente.trim();
+    if (!chave) return;
+    const tinhaBalcao = (tagsPorCliente[chave] ?? []).includes('cliente_balcao');
     const temBalcao = tags.includes('cliente_balcao');
     try {
-      const dados = await salvarTagsUmCliente(empresaBase, cliente, tags, lojaApi);
+      const dados = await salvarTagsUmCliente(empresaBase, chave, tags, lojaApi);
       setTagsPorCliente(dados.tags ?? {});
       // Tag só cadastra o nome; o filtro só muda a prévia se o checkbox estiver ligado.
       if (desconsiderarBalcao && tinhaBalcao !== temBalcao) {
@@ -843,45 +803,6 @@ export default function AnalisadorPage() {
       });
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Falha ao carregar configuração da empresa.');
-    }
-  };
-
-  const handleSalvarCaminhos = async () => {
-    setErro(null);
-    try {
-      if (caminhoFonteInput.trim()) {
-        const fonte = await definirCaminhoFonteDados(caminhoFonteInput.trim(), true);
-        setCaminhoFonte(fonte);
-        setCaminhoFonteInput(fonte);
-      }
-      if (caminhoTrabalhoInput.trim()) {
-        const trabalho = await definirCaminhoTrabalho(caminhoTrabalhoInput.trim(), true);
-        setCaminhoTrabalho(trabalho);
-        setCaminhoTrabalhoInput(trabalho);
-      }
-      const nomes = await listarEmpresas();
-      setEmpresas(nomes);
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Falha ao salvar os caminhos.');
-    }
-  };
-
-  const handleRegenerarBase = async () => {
-    if (!empresaSelecionada) {
-      setErro('Selecione uma empresa na tela principal para regenerar a base.');
-      return;
-    }
-    setErro(null);
-    setSucesso(null);
-    setRegenerandoBase(true);
-    try {
-      await regenerarBaseEmpresa(empresaSelecionada, true);
-      setSucesso(`Base de ${empresaSelecionada} regenerada. Recarregando…`);
-      await iniciarEmpresa(empresaSelecionada, lojaSelecionada || null);
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Falha ao regenerar a base.');
-    } finally {
-      setRegenerandoBase(false);
     }
   };
 
@@ -1032,18 +953,11 @@ export default function AnalisadorPage() {
     );
   };
 
-  const sair = () => {
-    clearToken();
-    navigate('/login');
-  };
-
   return (
+    <AppShell>
     <div className="dashboard-container analisador-page">
-      <header className="analisador-header">
-        <div className="analisador-header-left">
-          <button type="button" onClick={() => navigate('/')} className="analisador-btn analisador-btn-sec">
-            <ArrowLeft size={16} /> Dashboard
-          </button>
+      <header className="app-page-header">
+        <div>
           <h1>
             Analisador de Monitoria
             {nomeEmpresaEfetivo && (
@@ -1057,63 +971,7 @@ export default function AnalisadorPage() {
             )}
           </h1>
         </div>
-        <div className="analisador-header-actions">
-          <button
-            type="button"
-            onClick={() => setMostrarConfig(true)}
-            title="Configurações da análise"
-            className="analisador-btn analisador-btn-sec"
-          >
-            <Settings size={16} />
-          </button>
-          <button type="button" onClick={sair} className="analisador-btn analisador-btn-sec">
-            <LogOut size={16} /> Sair
-          </button>
-        </div>
       </header>
-
-      <ConfigModal
-        aberto={mostrarConfig}
-        onFechar={() => setMostrarConfig(false)}
-        config={{
-          granularidade,
-          granularidadesDisponiveis: previa?.granularidades ?? ['Mensal', 'Trimestral', 'Semestral', 'Anual'],
-          periodosQueda,
-          quedaMinimaAlertaRs,
-          topNProdutos,
-          reducaoMinimaErosao,
-          quedaMinimaErosaoRs,
-          reducaoMinimaSemVenda,
-          topNPoderCompra,
-          excluirPeriodoAtual,
-          caminhoFonteInput,
-          caminhoFonte,
-          caminhoTrabalhoInput,
-          caminhoTrabalho,
-          empresa: empresaBase,
-          tagsCatalogo,
-        }}
-        onChange={(patch) => {
-          if (patch.granularidade !== undefined) setGranularidade(patch.granularidade);
-          if (patch.periodosQueda !== undefined) setPeriodosQueda(patch.periodosQueda);
-          if (patch.quedaMinimaAlertaRs !== undefined) setQuedaMinimaAlertaRs(patch.quedaMinimaAlertaRs);
-          if (patch.topNProdutos !== undefined) setTopNProdutos(patch.topNProdutos);
-          if (patch.reducaoMinimaErosao !== undefined) setReducaoMinimaErosao(patch.reducaoMinimaErosao);
-          if (patch.quedaMinimaErosaoRs !== undefined) setQuedaMinimaErosaoRs(patch.quedaMinimaErosaoRs);
-          if (patch.reducaoMinimaSemVenda !== undefined) setReducaoMinimaSemVenda(patch.reducaoMinimaSemVenda);
-          if (patch.topNPoderCompra !== undefined) setTopNPoderCompra(patch.topNPoderCompra);
-          if (patch.excluirPeriodoAtual !== undefined) setExcluirPeriodoAtual(patch.excluirPeriodoAtual);
-          if (patch.caminhoFonteInput !== undefined) setCaminhoFonteInput(patch.caminhoFonteInput);
-          if (patch.caminhoTrabalhoInput !== undefined) setCaminhoTrabalhoInput(patch.caminhoTrabalhoInput);
-          if (patch.tagsCatalogo !== undefined) setTagsCatalogo(patch.tagsCatalogo);
-        }}
-        onSalvarCaminho={handleSalvarCaminhos}
-        onBuscarPasta={handleBuscarPasta}
-        onSalvarTagsCatalogo={handleSalvarTagsCatalogo}
-        salvandoTagsCatalogo={salvandoTagsCatalogo}
-        onRegenerarBase={handleRegenerarBase}
-        regenerandoBase={regenerandoBase}
-      />
 
       <ExportarModal
         aberto={formatoParaConfirmar !== null}
@@ -1216,24 +1074,20 @@ export default function AnalisadorPage() {
             </p>
           </div>
 
-          <div className="glass-card glass-card-flat analisador-bloco">
+          <div className="glass-card glass-card-flat analisador-bloco analisador-bloco-empresa">
             <h2 className="analisador-titulo">Empresa analisada</h2>
-            <label className="analisador-campo">
+            <div className="analisador-campo">
               <span>Empresa analisada</span>
-              <select
-                className="custom-select analisador-select"
+              <AnalisadorCombobox
                 value={empresaSelecionada}
-                onChange={(e) => handleSelecionarEmpresa(e.target.value)}
-              >
-                <option value="">— Digitar manualmente —</option>
-                {empresaSelecionada && !empresas.includes(empresaSelecionada) && (
-                  <option value={empresaSelecionada}>{empresaSelecionada}</option>
-                )}
-                {empresas.map((nome) => (
-                  <option key={nome} value={nome}>{nome}</option>
-                ))}
-              </select>
-            </label>
+                options={empresas}
+                onChange={handleSelecionarEmpresa}
+                emptyLabel="— Digitar manualmente —"
+                searchPlaceholder="Buscar empresa…"
+                includeOrphanValue
+                aria-label="Empresa analisada"
+              />
+            </div>
             {!empresaSelecionada && (
               <label className="analisador-campo">
                 <span>Nome manual</span>
@@ -1246,19 +1100,17 @@ export default function AnalisadorPage() {
               </label>
             )}
             {mostrarSeletorLoja && (
-              <label className="analisador-campo">
+              <div className="analisador-campo">
                 <span>Loja</span>
-                <select
-                  className="custom-select analisador-select"
+                <AnalisadorCombobox
                   value={lojaSelecionada}
-                  onChange={(e) => handleSelecionarLoja(e.target.value)}
-                >
-                  <option value="">Todas as lojas</option>
-                  {lojasDisponiveis.map((nome) => (
-                    <option key={nome} value={nome}>{nome}</option>
-                  ))}
-                </select>
-              </label>
+                  options={lojasDisponiveis}
+                  onChange={handleSelecionarLoja}
+                  emptyLabel="Todas as lojas"
+                  searchPlaceholder={lojasDisponiveis.length > 8 ? 'Buscar loja…' : false}
+                  aria-label="Loja"
+                />
+              </div>
             )}
             <div className="analisador-acoes">
               <button type="button" onClick={handleCarregarConfiguracaoEmpresa} className="analisador-btn analisador-btn-sec">
@@ -1502,18 +1354,10 @@ export default function AnalisadorPage() {
           )}
 
           {abaWorkspace === 'graficos' && (
-            <div className="glass-card glass-card-flat analisador-explorar-card">
-              <h2 className="analisador-titulo">Gráficos personalizados</h2>
-              <p className="analisador-hint">Agregações em tempo real a partir das colunas da base da empresa.</p>
-              <ExplorarBuilder empresa={empresaBase} loja={lojaApi} modo="grafico" />
-            </div>
+            <ExplorarBuilder empresa={empresaBase} loja={lojaApi} modo="grafico" />
           )}
           {abaWorkspace === 'tabelas' && (
-            <div className="glass-card glass-card-flat analisador-explorar-card">
-              <h2 className="analisador-titulo">Tabelas dinâmicas</h2>
-              <p className="analisador-hint">Tabela pivô/agregada em tempo real. Marque dimensões e métricas.</p>
-              <ExplorarBuilder empresa={empresaBase} loja={lojaApi} modo="tabela" />
-            </div>
+            <ExplorarBuilder empresa={empresaBase} loja={lojaApi} modo="tabela" />
           )}
           {abaWorkspace === 'clientes' && (
             <ClientesGruposPanel
@@ -1574,5 +1418,6 @@ export default function AnalisadorPage() {
         </div>
       )}
     </div>
+    </AppShell>
   );
 }

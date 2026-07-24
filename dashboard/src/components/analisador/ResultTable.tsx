@@ -50,19 +50,12 @@ export function ResultTable({ tabela }: { tabela: TabelaResultado }) {
   );
 
   return (
-    <div style={{ overflowX: 'auto' }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
+    <div className="analisador-tabela-wrap custom-scrollbar">
+      <table className="analisador-tabela" style={{ tableLayout: 'auto', minWidth: 0 }}>
         <thead>
           <tr>
             {tabela.colunas.map((coluna, indiceColuna) => (
-              <th
-                key={coluna}
-                style={{
-                  textAlign: numerica[indiceColuna] ? 'right' : 'left',
-                  padding: '0.5rem 0.7rem', background: 'rgba(99,102,241,0.15)',
-                  color: 'var(--text-primary)', whiteSpace: 'nowrap', position: 'sticky', top: 0,
-                }}
-              >
+              <th key={coluna} style={{ textAlign: numerica[indiceColuna] ? 'right' : 'left' }}>
                 {coluna}
               </th>
             ))}
@@ -70,14 +63,11 @@ export function ResultTable({ tabela }: { tabela: TabelaResultado }) {
         </thead>
         <tbody>
           {tabela.linhas.map((linha, indiceLinha) => (
-            <tr key={indiceLinha} style={{ borderBottom: '1px solid var(--border)' }}>
+            <tr key={indiceLinha}>
               {linha.map((valor, indiceColuna) => (
                 <td
                   key={indiceColuna}
-                  style={{
-                    padding: '0.5rem 0.7rem', whiteSpace: 'nowrap', color: 'var(--text-secondary)',
-                    textAlign: numerica[indiceColuna] ? 'right' : 'left',
-                  }}
+                  style={{ textAlign: numerica[indiceColuna] ? 'right' : 'left' }}
                 >
                   {formatarValor(valor, tabela.colunas[indiceColuna])}
                 </td>

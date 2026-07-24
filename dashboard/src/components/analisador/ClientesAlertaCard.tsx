@@ -44,6 +44,8 @@ type SerieCliente = {
   rotuloUltimo: string;
   varReceita: number | null;
   varQtd: number | null;
+  /** Mês anterior − atual (R$). Positivo = perda. */
+  perdaReceita: number;
 };
 
 type SeriePorCliente = Record<string, SerieCliente>;
@@ -197,6 +199,23 @@ function variacaoNosUltimosMeses(
   return ((atual - anterior) / anterior) * 100;
 }
 
+/** Perda absoluta de receita (R$): mês anterior − atual. Positivo = queda. */
+function perdaReceitaAbs(bloco?: SerieCliente | null): number {
+  if (bloco && Number.isFinite(bloco.perdaReceita)) return bloco.perdaReceita;
+  const pontos = bloco?.serie;
+  if (!pontos || pontos.length < 2) return 0;
+  const atual = Number(pontos[pontos.length - 1].Receita) || 0;
+  const anterior = Number(pontos[pontos.length - 2].Receita) || 0;
+  return anterior - atual;
+}
+
+function perdaReceitaDaSerie(pontos: PontoSerie[]): number {
+  if (pontos.length < 2) return 0;
+  const atual = Number(pontos[pontos.length - 1].Receita) || 0;
+  const anterior = Number(pontos[pontos.length - 2].Receita) || 0;
+  return anterior - atual;
+}
+
 function BadgeVariacao({ pct }: { pct: number | null }) {
   if (pct == null || !Number.isFinite(pct)) {
     return <span className="analisador-alerta-var neutro">—</span>;
@@ -205,6 +224,29 @@ function BadgeVariacao({ pct }: { pct: number | null }) {
   return (
     <span className={`analisador-alerta-var ${positivo ? 'alta' : 'queda'}`}>
       {positivo ? '↑' : '↓'} {formatPercent(Math.abs(pct), 1)}
+    </span>
+  );
+}
+
+/** Mostra perda/ganho em R$ (critério da ordenação) + % vs mês anterior. */
+function BadgePerdaReceita({
+  perdaRs,
+  pct,
+}: {
+  perdaRs: number;
+  pct: number | null;
+}) {
+  if (!Number.isFinite(perdaRs) || (perdaRs === 0 && (pct == null || !Number.isFinite(pct)))) {
+    return <span className="analisador-alerta-var neutro">—</span>;
+  }
+  const queda = perdaRs > 0;
+  const alta = perdaRs < 0;
+  const classe = queda ? 'queda' : alta ? 'alta' : 'neutro';
+  const seta = queda ? '↓' : alta ? '↑' : '→';
+  return (
+    <span className={`analisador-alerta-var ${classe}`}>
+      {seta} {formatCurrency(Math.abs(perdaRs))}
+      {pct != null && Number.isFinite(pct) ? ` · ${formatPercent(Math.abs(pct), 1)}` : ''}
     </span>
   );
 }
@@ -279,14 +321,22 @@ export function ClientesAlertaCard({
 
   const clientesAlerta = useMemo(() => {
     if (!tagAlerta) return [];
-    const receitaPorCliente = new Map(itensClientes.map((i) => [i.cliente, i.receita]));
-    const nomes = new Set([
-      ...Object.keys(tagsPorCliente),
-      ...itensClientes.map((i) => i.cliente),
-    ]);
+    const receitaPorCliente = new Map(
+      itensClientes.map((i) => [i.cliente.trim(), i.receita] as const),
+    );
+    const balcaoNorm = new Set([...balcaoSet].map((c) => c.trim()));
+    const nomes = new Set<string>();
+    for (const k of Object.keys(tagsPorCliente)) {
+      const n = k.trim();
+      if (n) nomes.add(n);
+    }
+    for (const i of itensClientes) {
+      const n = i.cliente.trim();
+      if (n) nomes.add(n);
+    }
     return Array.from(nomes)
       .filter((cliente) => {
-        if (balcaoSet.has(cliente)) return false;
+        if (balcaoNorm.has(cliente)) return false;
         const tags = tagsPorCliente[cliente] ?? [];
         if (tags.includes('cliente_balcao')) return false;
         return tags.includes(tagAlerta.id);
@@ -294,9 +344,25 @@ export function ClientesAlertaCard({
       .map((cliente) => ({
         cliente,
         receita: receitaPorCliente.get(cliente) ?? 0,
-      }))
-      .sort((a, b) => b.receita - a.receita);
+      }));
   }, [tagAlerta, tagsPorCliente, itensClientes, balcaoSet]);
+
+  /** Maior perda de receita (R$ vs mês anterior) primeiro; depois pior %; depois receita. */
+  const clientesAlertaOrdenados = useMemo(() => {
+    return [...clientesAlerta].sort((a, b) => {
+      const blocoA = seriePorCliente[a.cliente];
+      const blocoB = seriePorCliente[b.cliente];
+      const perdaA = perdaReceitaAbs(blocoA);
+      const perdaB = perdaReceitaAbs(blocoB);
+      if (perdaA !== perdaB) return perdaB - perdaA;
+      const varA = blocoA?.varReceita;
+      const varB = blocoB?.varReceita;
+      const pctA = varA == null || !Number.isFinite(varA) ? 0 : varA;
+      const pctB = varB == null || !Number.isFinite(varB) ? 0 : varB;
+      if (pctA !== pctB) return pctA - pctB;
+      return b.receita - a.receita;
+    });
+  }, [clientesAlerta, seriePorCliente]);
 
   const chaveClientesAlerta = useMemo(
     () => clientesAlerta.map((c) => c.cliente).join('\n'),
@@ -344,7 +410,7 @@ export function ClientesAlertaCard({
         const bruto: Record<string, PontoSerie[]> = {};
         let fimGlobal: string | null = null;
         for (const linha of res.linhas) {
-          const cliente = String(linha[iCliente] ?? '');
+          const cliente = String(linha[iCliente] ?? '').trim();
           if (!cliente) continue;
           const periodo = String(linha[iPeriodo] ?? '').trim();
           if (!parsePeriodoMensal(periodo)) continue;
@@ -365,15 +431,18 @@ export function ClientesAlertaCard({
 
         const agrupado: SeriePorCliente = {};
         for (const [cliente, pontos] of Object.entries(bruto)) {
+          const chave = cliente.trim();
+          if (!chave) continue;
           const serie = serieUltimosMesesCorridos(pontos, MESES_CORRIDOS, fimGlobal);
           const ultimo = serie[serie.length - 1];
-          agrupado[cliente] = {
+          agrupado[chave] = {
             serie,
             receitaUltimo: ultimo?.Receita ?? 0,
             qtdUltimo: ultimo?.QTD ?? 0,
             rotuloUltimo: ultimo?.rotulo ?? '',
             varReceita: variacaoNosUltimosMeses(serie, 'Receita'),
             varQtd: variacaoNosUltimosMeses(serie, 'QTD'),
+            perdaReceita: perdaReceitaDaSerie(serie),
           };
         }
         setSeriePorCliente(agrupado);
@@ -401,7 +470,7 @@ export function ClientesAlertaCard({
           <AlertTriangle size={18} style={{ color: '#f59e0b' }} /> Clientes em alerta
         </h2>
         <p className="analisador-hint" style={{ margin: 0 }}>
-          Crie uma tag chamada <strong style={{ color: 'white' }}>Alerta</strong> nas configurações
+          Crie uma tag chamada <strong style={{ color: 'white' }}>Alerta</strong> em Configurações
           e marque os clientes na prévia para acompanhar aqui.
         </p>
       </div>
@@ -425,7 +494,8 @@ export function ClientesAlertaCard({
           )}
         </h2>
         <p className="analisador-hint">
-          Um bloco por cliente — gráfico com os últimos 6 meses corridos.
+          Um bloco por cliente — últimos 6 meses. Ordenados pela maior perda de receita em R$
+          (mês atual vs anterior).
         </p>
       </header>
 
@@ -446,14 +516,15 @@ export function ClientesAlertaCard({
             </p>
           )}
 
-          <div className="analisador-alerta-clientes">
-            {clientesAlerta.map((item) => {
+          <div className="analisador-alerta-clientes custom-scrollbar">
+            {clientesAlertaOrdenados.map((item) => {
               const bloco = seriePorCliente[item.cliente];
               const serie = bloco?.serie ?? [];
               const receitaUltimo = bloco?.receitaUltimo ?? item.receita;
               const qtdUltimo = bloco?.qtdUltimo ?? 0;
               const varReceita = bloco?.varReceita ?? null;
               const varQtd = bloco?.varQtd ?? null;
+              const perdaReceita = bloco?.perdaReceita ?? perdaReceitaAbs(bloco);
               const rotuloUltimo = bloco?.rotuloUltimo || null;
 
               return (
@@ -474,7 +545,7 @@ export function ClientesAlertaCard({
                         <span>Receita</span>
                         <strong>
                           {formatCurrency(receitaUltimo)}
-                          <BadgeVariacao pct={varReceita} />
+                          <BadgePerdaReceita perdaRs={perdaReceita} pct={varReceita} />
                         </strong>
                       </div>
                       <div className="analisador-alerta-kpi">

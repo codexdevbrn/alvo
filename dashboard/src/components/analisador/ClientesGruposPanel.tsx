@@ -55,14 +55,22 @@ export function ClientesGruposPanel({
 
   const clientesComTag = useMemo(() => {
     const q = filtroTags.trim().toLowerCase();
-    const receitaPorCliente = new Map(itensClientes.map((i) => [i.cliente, i.receita]));
-    const nomes = new Set([
-      ...Object.keys(tagsPorCliente),
-      ...itensClientes.map((i) => i.cliente),
-    ]);
+    const receitaPorCliente = new Map(
+      itensClientes.map((i) => [i.cliente.trim(), i.receita] as const),
+    );
+    const balcaoNorm = new Set([...balcaoSet].map((c) => c.trim()));
+    const nomes = new Set<string>();
+    for (const k of Object.keys(tagsPorCliente)) {
+      const n = k.trim();
+      if (n) nomes.add(n);
+    }
+    for (const i of itensClientes) {
+      const n = i.cliente.trim();
+      if (n) nomes.add(n);
+    }
     return Array.from(nomes)
       .filter((cliente) => {
-        if (balcaoSet.has(cliente)) return false;
+        if (balcaoNorm.has(cliente)) return false;
         const tags = tagsPorCliente[cliente] ?? [];
         if (tags.includes(idBalcao)) return false;
         if (tags.length === 0) return false;
@@ -74,7 +82,7 @@ export function ClientesGruposPanel({
         receita: receitaPorCliente.get(cliente) ?? 0,
       }))
       .sort((a, b) => b.receita - a.receita);
-  }, [itensClientes, tagsPorCliente, balcaoSet, filtroTags]);
+  }, [itensClientes, tagsPorCliente, balcaoSet, filtroTags, idBalcao]);
 
   const rotuloTag = (id: string) =>
     tagsCatalogo.find((t) => t.id === id)?.rotulo ?? id;

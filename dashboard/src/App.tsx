@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import DashboardPage from './pages/DashboardPage';
 import LoginPage from './pages/LoginPage';
 import AnalisadorPage from './pages/AnalisadorPage';
+import ConfiguracoesPage from './pages/ConfiguracoesPage';
 import { getToken } from './api/client';
 
 function RotaProtegida({ children }: { children: ReactElement }) {
@@ -15,6 +16,7 @@ export default function App() {
       <Routes>
         <Route path="/" element={<DashboardPage />} />
         <Route path="/login" element={<LoginPage />} />
+        <Route path="/config" element={<ConfiguracoesPage />} />
         <Route
           path="/analisador"
           element={

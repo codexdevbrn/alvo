@@ -9,6 +9,11 @@ import type {
 import { TAGS_CATALOGO_PADRAO } from '../../api/client';
 import { formatCurrency, rotuloGrupoCurto } from '../../utils/formatters';
 
+/** Alinha com o backend, que grava tags com cliente.strip(). */
+function nomeClienteChave(cliente: string): string {
+  return cliente.trim();
+}
+
 interface PreviaClientesTableProps {
   itens: ItemClientePrevia[];
   excluidos: Set<string>;
@@ -92,7 +97,7 @@ export function PreviaClientesTable({
     return lista.filter((item) => item.grupo === 'Balcão' && !excluidos.has(item.cliente)).length;
   }, [lista, desconsiderarBalcao, excluidos]);
 
-  const tagsDoMenu = menu ? (tagsPorCliente[menu.cliente] ?? []) : [];
+  const tagsDoMenu = menu ? (tagsPorCliente[nomeClienteChave(menu.cliente)] ?? []) : [];
 
   const opcoesTags = useMemo(
     () => tagsCatalogo.filter((item) => item.ativa),
@@ -101,8 +106,11 @@ export function PreviaClientesTable({
 
   const gruposDoMenu = useMemo(() => {
     if (!menu) return new Set<string>();
+    const chave = nomeClienteChave(menu.cliente);
     return new Set(
-      gruposManuais.filter((g) => g.clientes.includes(menu.cliente)).map((g) => g.id),
+      gruposManuais
+        .filter((g) => g.clientes.some((c) => nomeClienteChave(c) === chave))
+        .map((g) => g.id),
     );
   }, [menu, gruposManuais]);
 
@@ -160,18 +168,19 @@ export function PreviaClientesTable({
       Math.max(8, rect.left),
       window.innerWidth - larguraMenu - 8,
     );
-    setMenu({ cliente, top, left });
+    setMenu({ cliente: nomeClienteChave(cliente), top, left });
   };
 
   const alternarTag = async (tag: TagCliente) => {
     if (!menu || !onTagsChange || !empresa) return;
-    const atuais = new Set(tagsPorCliente[menu.cliente] ?? []);
+    const cliente = nomeClienteChave(menu.cliente);
+    const atuais = new Set(tagsPorCliente[cliente] ?? []);
     if (atuais.has(tag)) atuais.delete(tag);
     else atuais.add(tag);
     const proximas = Array.from(atuais) as TagCliente[];
     setSalvandoTag(true);
     try {
-      await onTagsChange(menu.cliente, proximas);
+      await onTagsChange(cliente, proximas);
     } finally {
       setSalvandoTag(false);
     }
@@ -181,7 +190,7 @@ export function PreviaClientesTable({
     if (!menu || !onToggleGrupoManual || !empresa) return;
     setSalvandoTag(true);
     try {
-      await onToggleGrupoManual(menu.cliente, grupoId);
+      await onToggleGrupoManual(nomeClienteChave(menu.cliente), grupoId);
     } finally {
       setSalvandoTag(false);
     }
@@ -193,7 +202,7 @@ export function PreviaClientesTable({
     if (!nome) return;
     setSalvandoTag(true);
     try {
-      await onCriarGrupoManual(menu.cliente, nome);
+      await onCriarGrupoManual(nomeClienteChave(menu.cliente), nome);
       setCriandoGrupo(false);
       setNomeNovoGrupo('');
     } finally {
@@ -262,7 +271,7 @@ export function PreviaClientesTable({
             {itensFiltrados.map((item) => {
               const forcaBalcao = desconsiderarBalcao && item.grupo === 'Balcão';
               const excluido = estaExcluido(item);
-              const tags = tagsPorCliente[item.cliente] ?? [];
+              const tags = tagsPorCliente[nomeClienteChave(item.cliente)] ?? [];
               return (
                 <tr key={item.cliente} className={excluido ? 'is-excluido' : undefined}>
                   <td className="col-check">
@@ -279,14 +288,14 @@ export function PreviaClientesTable({
                       />
                     </label>
                   </td>
-                  <td className="col-nome" title={item.cliente}>
+                  <td className="col-nome" title={nomeClienteChave(item.cliente)}>
                     <button
                       type="button"
                       className="analisador-cliente-nome"
                       onClick={(e) => abrirMenu(item.cliente, e.currentTarget)}
                       disabled={!menuEditavel}
                     >
-                      {item.cliente}
+                      {nomeClienteChave(item.cliente)}
                     </button>
                   </td>
                   <td className="col-tags">

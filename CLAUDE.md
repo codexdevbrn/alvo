@@ -39,6 +39,9 @@ npm run build       # tsc -b && vite build
 npm run lint         # eslint .
 npm run preview
 ```
+**Deploy (XAMPP):**
+Ao alterar o frontend, além de rodar `npm run build`, é necessário copiar os arquivos de `dashboard/dist` para o diretório do Apache: `c:\xampp\monitoria\htdocs`. (Ex: `Copy-Item -Path ".\dist\*" -Destination "c:\xampp\monitoria\htdocs" -Recurse -Force`)
+
 Vite tem proxy de `/api` → `http://localhost:8000` (`dashboard/vite.config.ts`), então em dev o frontend chama `/api` relativo.
 
 **Atualizar dados do dashboard (modo estático)**: `python process_data.py` na raiz (lê `base_de_dados.xlsx`, grava `dashboard/public/data/summary.json`).

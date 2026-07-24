@@ -225,8 +225,8 @@ export function PeriodSelector({
   const anosAsc = years;
   const anoMaisRecente = anosAsc[anosAsc.length - 1];
   /** Alinha com HistoryChart: série B (ano atual) = verde, série A (anterior) = accent. */
-  const corAno = (y: number) => (y === anoMaisRecente ? '#10b981' : 'var(--accent)');
-  const corAnoSolida = (y: number) => (y === anoMaisRecente ? '#10b981' : '#6366f1');
+  const corAno = (y: number) => (y === anoMaisRecente ? 'var(--accent-secondary-bright)' : 'var(--accent)');
+  const corAnoSolida = (y: number) => (y === anoMaisRecente ? '#6f8cc4' : '#dabb6c');
 
   const cols =
     granularidade === 'Mensal' ? 3 :
@@ -292,11 +292,11 @@ export function PeriodSelector({
                     padding: '8px 10px',
                     borderRadius: '8px',
                     border: periodosIguais(value, indicesFechados)
-                      ? '1px solid rgba(99, 102, 241, 0.65)'
-                      : '1px solid rgba(99, 102, 241, 0.35)',
+                      ? '1px solid rgba(218, 187, 108, 0.65)'
+                      : '1px solid rgba(218, 187, 108, 0.35)',
                     background: periodosIguais(value, indicesFechados)
-                      ? 'rgba(99, 102, 241, 0.22)'
-                      : 'rgba(99, 102, 241, 0.12)',
+                      ? 'rgba(218, 187, 108, 0.22)'
+                      : 'rgba(218, 187, 108, 0.12)',
                     color: 'var(--text-primary)',
                     fontSize: '0.72rem',
                     fontWeight: 600,
@@ -316,11 +316,11 @@ export function PeriodSelector({
                     padding: '8px 10px',
                     borderRadius: '8px',
                     border: periodosIguais(value, indicesAteAgora)
-                      ? '1px solid rgba(245, 158, 11, 0.65)'
-                      : '1px solid rgba(245, 158, 11, 0.35)',
+                      ? '1px solid rgba(104, 129, 141, 0.7)'
+                      : '1px solid rgba(104, 129, 141, 0.35)',
                     background: periodosIguais(value, indicesAteAgora)
-                      ? 'rgba(245, 158, 11, 0.22)'
-                      : 'rgba(245, 158, 11, 0.12)',
+                      ? 'rgba(104, 129, 141, 0.22)'
+                      : 'rgba(104, 129, 141, 0.12)',
                     color: 'var(--text-primary)',
                     fontSize: '0.72rem',
                     fontWeight: 600,

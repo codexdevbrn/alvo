@@ -28,11 +28,14 @@ export default function LoginPage() {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '1rem' }}>
       <form onSubmit={handleSubmit} className="glass-card" style={{ width: '100%', maxWidth: 380, display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-        <div>
-          <h1 style={{ fontSize: '1.75rem', fontWeight: 700, margin: 0 }}>Analisador de Monitoria</h1>
-          <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>
-            Entre para acessar as análises de vendas.
-          </p>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+          <img src="/logo_2d_icone.png" alt="" width={40} height={40} style={{ borderRadius: '0.55rem' }} />
+          <div>
+            <h1 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>Analisador de Monitoria</h1>
+            <p style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+              Entre para acessar as análises de vendas.
+            </p>
+          </div>
         </div>
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
@@ -63,7 +66,7 @@ export default function LoginPage() {
           </div>
         </label>
 
-        {erro && <p style={{ color: '#f43f5e', fontSize: '0.85rem', margin: 0 }}>{erro}</p>}
+        {erro && <p style={{ color: 'var(--danger)', fontSize: '0.85rem', margin: 0 }}>{erro}</p>}
 
         <div style={{ display: 'flex', gap: '0.75rem' }}>
           <button
@@ -83,7 +86,7 @@ export default function LoginPage() {
             type="submit"
             disabled={carregando}
             style={{
-              flex: 1, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: '0.75rem',
+              flex: 1, background: 'var(--accent)', color: 'var(--accent-contrast)', border: 'none', borderRadius: '0.75rem',
               padding: '0.75rem', fontSize: '0.95rem', fontWeight: 600, cursor: carregando ? 'wait' : 'pointer',
               opacity: carregando ? 0.7 : 1,
             }}

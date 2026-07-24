@@ -113,7 +113,7 @@ function TrendCard({ title, items, barColor, barGlow, isMobile, labelPeriodo }: 
                     return (
                         <div key={item.id}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: isMobile ? '0.7rem' : '0.8rem' }}>
-                                <span style={{ color: 'var(--text-secondary)', fontWeight: 500, maxWidth: isMobile ? '120px' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
+                                <span style={{ color: 'var(--text-primary)', fontWeight: 600, maxWidth: isMobile ? '120px' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
                                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
                                     <span style={{ color: 'white', fontWeight: 600 }}>{formatCurrency(item.rev25)}</span>
                                     <span style={{
@@ -131,7 +131,8 @@ function TrendCard({ title, items, barColor, barGlow, isMobile, labelPeriodo }: 
                                     height: '100%',
                                     background: barColor,
                                     borderRadius: '2px',
-                                    boxShadow: `0 0 8px ${barGlow}`
+                                    boxShadow: `0 0 8px ${barGlow}`,
+                                    transition: 'width 0.5s cubic-bezier(0.22, 0.61, 0.36, 1)'
                                 }} />
                             </div>
                         </div>
@@ -246,8 +247,8 @@ export function BreakdownSection({
             <TrendCard
                 title="Performance por Cliente"
                 items={topClients}
-                barColor="#f59e0b"
-                barGlow="rgba(245, 158, 11, 0.2)"
+                barColor="var(--accent-tertiary)"
+                barGlow="rgba(104, 129, 141, 0.28)"
                 isMobile={isMobile}
                 labelPeriodo={labelB}
             />
@@ -255,15 +256,15 @@ export function BreakdownSection({
                 title="Performance por Fabricante"
                 items={topMfrs}
                 barColor="var(--accent)"
-                barGlow="rgba(99, 102, 241, 0.25)"
+                barGlow="rgba(218, 187, 108, 0.25)"
                 isMobile={isMobile}
                 labelPeriodo={labelB}
             />
             <TrendCard
                 title="Performance por Categoria"
                 items={topDescs}
-                barColor="#34d399"
-                barGlow="rgba(52, 211, 153, 0.25)"
+                barColor="var(--accent-secondary-bright)"
+                barGlow="rgba(48, 67, 115, 0.35)"
                 isMobile={isMobile}
                 labelPeriodo={labelB}
             />

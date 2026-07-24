@@ -20,9 +20,19 @@ schema canônico do Analisador), que já entrega Receita como float, QTD como
 int e Data_Venda como datetime — então a lógica foi adaptada para essas
 colunas e vetorizada (o iterrows do script original seria lento com 647k
 linhas por requisição).
+
+Cache em disco: `summary_dashboard.json` na pasta de trabalho da empresa,
+invalidado quando Base.csv fica mais novo (mtime).
 """
 
+from __future__ import annotations
+
+import gzip
+import json
+import os
+import tempfile
 from datetime import date
+from pathlib import Path
 
 import pandas as pd
 
@@ -32,6 +42,109 @@ MESES_NOME = {
     1: "janeiro", 2: "fevereiro", 3: "março", 4: "abril", 5: "maio", 6: "junho",
     7: "julho", 8: "agosto", 9: "setembro", 10: "outubro", 11: "novembro", 12: "dezembro",
 }
+
+NOME_SUMMARY_DASHBOARD = "summary_dashboard.json"
+NOME_SUMMARY_DASHBOARD_GZ = "summary_dashboard.json.gz"
+
+
+def caminho_summary_dashboard(pasta_trabalho: str | Path) -> Path:
+    return Path(pasta_trabalho) / NOME_SUMMARY_DASHBOARD
+
+
+def caminho_summary_dashboard_gz(pasta_trabalho: str | Path) -> Path:
+    return Path(pasta_trabalho) / NOME_SUMMARY_DASHBOARD_GZ
+
+
+def summary_dashboard_atualizado(
+    pasta_trabalho: str | Path,
+    caminho_base_csv: str | Path,
+) -> bool:
+    """True se o JSON (ou .gz) em disco existe e não é mais antigo que o Base.csv."""
+    caminho_csv = Path(caminho_base_csv)
+    if not caminho_csv.is_file():
+        return False
+    mtime_csv = os.path.getmtime(caminho_csv)
+    for caminho in (
+        caminho_summary_dashboard_gz(pasta_trabalho),
+        caminho_summary_dashboard(pasta_trabalho),
+    ):
+        if caminho.is_file() and os.path.getmtime(caminho) >= mtime_csv:
+            return True
+    return False
+
+
+def gravar_summary_dashboard(pasta_trabalho: str | Path, summary: dict) -> Path:
+    """Grava summary_dashboard.json e .json.gz (atômico) na pasta de trabalho.
+
+    Retorna o caminho do .json.gz (preferido para FileResponse).
+    """
+    pasta = Path(pasta_trabalho)
+    pasta.mkdir(parents=True, exist_ok=True)
+    destino = caminho_summary_dashboard(pasta)
+    destino_gz = caminho_summary_dashboard_gz(pasta)
+    payload = json.dumps(summary, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+    fd, tmp_nome = tempfile.mkstemp(
+        prefix="summary_dashboard_",
+        suffix=".json.tmp",
+        dir=str(pasta),
+    )
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(payload)
+        os.replace(tmp_nome, destino)
+    except Exception:
+        try:
+            os.unlink(tmp_nome)
+        except OSError:
+            pass
+        raise
+
+    fd_gz, tmp_gz = tempfile.mkstemp(
+        prefix="summary_dashboard_",
+        suffix=".json.gz.tmp",
+        dir=str(pasta),
+    )
+    try:
+        os.close(fd_gz)
+        with gzip.open(tmp_gz, "wb", compresslevel=4) as f:
+            f.write(payload)
+        os.replace(tmp_gz, destino_gz)
+    except Exception:
+        try:
+            os.unlink(tmp_gz)
+        except OSError:
+            pass
+        raise
+
+    return destino_gz
+
+
+def invalidar_summary_dashboard(pasta_trabalho: str | Path) -> None:
+    for caminho in (
+        caminho_summary_dashboard(pasta_trabalho),
+        caminho_summary_dashboard_gz(pasta_trabalho),
+    ):
+        try:
+            caminho.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def gerar_e_gravar_summary_dashboard(
+    pasta_trabalho: str | Path,
+    df: pd.DataFrame,
+    *,
+    data_ultimo_movimento: date | None = None,
+    updated_at: str | None = None,
+) -> Path:
+    """Gera o summary a partir do DataFrame e grava summary_dashboard.json(+.gz)."""
+    summary = gerar_summary(
+        df,
+        updated_at=updated_at,
+        data_ultimo_movimento=data_ultimo_movimento,
+    )
+    return gravar_summary_dashboard(pasta_trabalho, summary)
 
 
 def formatar_ultimo_movimento(

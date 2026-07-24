@@ -471,8 +471,8 @@ function HistoryChartInner({
                     <TrendingUp size={20} color="var(--accent)" /> Histórico
                 </h3>
                 <div style={{ display: 'flex', gap: '1rem', fontSize: '0.7rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                    {showA && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: '#6366f1' }} /> {labelA}</div>}
-                    {showB && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: '#10b981' }} /> {labelB}</div>}
+                    {showA && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' }} /> {labelA}</div>}
+                    {showB && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent-secondary-bright)' }} /> {labelB}</div>}
                 </div>
             </div>
             <div
@@ -505,7 +505,7 @@ function HistoryChartInner({
                                 cursor={{ fill: 'rgba(255,255,255,0.04)', radius: 8 }}
                             />
                             {showA && (
-                                <Bar name={labelA} dataKey="revenueA" fill="#6366f1" radius={[6, 6, 0, 0]} maxBarSize={72} isAnimationActive={false}>
+                                <Bar name={labelA} dataKey="revenueA" fill="var(--accent)" radius={[6, 6, 0, 0]} maxBarSize={72} isAnimationActive={false}>
                                     <LabelList
                                         dataKey="revenueA"
                                         position="top"
@@ -517,7 +517,7 @@ function HistoryChartInner({
                                 </Bar>
                             )}
                             {showB && (
-                                <Bar name={labelB} dataKey="revenueB" fill="#10b981" radius={[6, 6, 0, 0]} maxBarSize={72} isAnimationActive={false}>
+                                <Bar name={labelB} dataKey="revenueB" fill="var(--accent-secondary-bright)" radius={[6, 6, 0, 0]} maxBarSize={72} isAnimationActive={false}>
                                     <LabelList
                                         dataKey="revenueB"
                                         position="top"
@@ -533,12 +533,12 @@ function HistoryChartInner({
                         <AreaChart data={chartData} margin={chartMargin(isMobile)} accessibilityLayer={false}>
                             <defs>
                                 <linearGradient id="colorA" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#6366f1" stopOpacity={0.3} />
-                                    <stop offset="95%" stopColor="#6366f1" stopOpacity={0} />
+                                    <stop offset="5%" stopColor="#dabb6c" stopOpacity={0.3} />
+                                    <stop offset="95%" stopColor="#dabb6c" stopOpacity={0} />
                                 </linearGradient>
                                 <linearGradient id="colorB" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                                    <stop offset="5%" stopColor="#6f8cc4" stopOpacity={0.35} />
+                                    <stop offset="95%" stopColor="#6f8cc4" stopOpacity={0} />
                                 </linearGradient>
                             </defs>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
@@ -569,7 +569,7 @@ function HistoryChartInner({
                                     name={labelA}
                                     type="monotone"
                                     dataKey="revenueA"
-                                    stroke="#6366f1"
+                                    stroke="#dabb6c"
                                     fill="url(#colorA)"
                                     strokeWidth={2}
                                     isAnimationActive={false}
@@ -583,7 +583,7 @@ function HistoryChartInner({
                                     name={labelB}
                                     type="monotone"
                                     dataKey="revenueB"
-                                    stroke="#10b981"
+                                    stroke="#6f8cc4"
                                     fill="url(#colorB)"
                                     strokeWidth={2}
                                     isAnimationActive={false}

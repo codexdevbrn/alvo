@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ChevronDown, Download } from 'lucide-react';
 import {
   Area,
   AreaChart,
@@ -25,6 +26,7 @@ import {
   type ExplorarAgregado,
   type ExplorarSchema,
 } from '../../api/client';
+import { baixarCsv, baixarSvgComoPng, baixarXlsx } from '../../utils/exportDownload';
 import { formatCurrency, formatNumber } from '../../utils/formatters';
 import { ResultTable } from './ResultTable';
 
@@ -46,7 +48,7 @@ type Props = {
 };
 
 const METRICAS_PADRAO = ['Receita', 'QTD', 'Clientes'];
-const CORES_SERIE = ['#10b981', '#6366f1', '#f59e0b', '#38bdf8', '#f43f5e', '#a78bfa'];
+const CORES_SERIE = ['#dabb6c', '#6f8cc4', '#68818d', '#cc6300', '#e8cc86', '#8aa3ad'];
 const TIPOS_GRAFICO: { id: TipoGrafico; rotulo: string }[] = [
   { id: 'barras', rotulo: 'Barras' },
   { id: 'linhas', rotulo: 'Linhas' },
@@ -161,9 +163,9 @@ function BoxPlotShape(props: {
         y={Math.min(yQ3, yQ1)}
         width={boxW}
         height={Math.max(Math.abs(yQ1 - yQ3), 1)}
-        fill="#6366f1"
+        fill="#dabb6c"
         fillOpacity={0.75}
-        stroke="#818cf8"
+        stroke="#e8cc86"
       />
       <line x1={cx - boxW / 2} x2={cx + boxW / 2} y1={yMed} y2={yMed} stroke="#fff" strokeWidth={2} />
     </g>
@@ -181,6 +183,32 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
   const [resultado, setResultado] = useState<ExplorarAgregado | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [carregando, setCarregando] = useState(false);
+  const [exportando, setExportando] = useState(false);
+  const [menuExportAberto, setMenuExportAberto] = useState(false);
+  const menuExportRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuExportAberto) return;
+    const fechar = (e: MouseEvent) => {
+      if (menuExportRef.current && !menuExportRef.current.contains(e.target as Node)) {
+        setMenuExportAberto(false);
+      }
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setMenuExportAberto(false);
+    };
+    document.addEventListener('mousedown', fechar);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', fechar);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [menuExportAberto]);
+
+  useEffect(() => {
+    setMenuExportAberto(false);
+  }, [modo]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -458,7 +486,7 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
                 }}
               />
               <Legend {...LEGENDA_PROPS} />
-              <Scatter name={nomeSerie} data={chartData} fill="#6366f1" isAnimationActive={false} />
+              <Scatter name={nomeSerie} data={chartData} fill="#dabb6c" isAnimationActive={false} />
             </ScatterChart>
           </ResponsiveContainer>
         </div>
@@ -498,7 +526,7 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
                 content={() => (
                   <ul className="analisador-explorar-legend">
                     <li className="analisador-explorar-legend-item">
-                      <span className="analisador-explorar-legend-swatch" style={{ background: '#6366f1' }} />
+                      <span className="analisador-explorar-legend-swatch" style={{ background: '#dabb6c' }} />
                       <span className="analisador-explorar-legend-label">
                         Distribuição ({rotuloSerie(metricas[0] ?? 'Receita')}) — min / Q1 / mediana / Q3 / máx
                       </span>
@@ -614,15 +642,97 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
           ? 'Dispersão: marque Receita e QTD (ou uma delas) + dimensão.'
           : null;
 
+  const podeExportar =
+    !!resultado && resultado.linhas.length > 0 && !carregando && !exportando;
+
+  const handleExportar = async (formatoTabela: 'csv' | 'xlsx' = 'csv') => {
+    if (!resultado || resultado.linhas.length === 0) return;
+    setMenuExportAberto(false);
+    setExportando(true);
+    setErro(null);
+    try {
+      const stamp = new Date().toISOString().slice(0, 10);
+      if (modo === 'tabela') {
+        const base = `explorar-tabela-${stamp}`;
+        if (formatoTabela === 'xlsx') {
+          baixarXlsx(resultado.colunas, resultado.linhas, `${base}.xlsx`);
+        } else {
+          baixarCsv(resultado.colunas, resultado.linhas, `${base}.csv`);
+        }
+      } else {
+        const el = chartRef.current;
+        if (!el) throw new Error('Área do gráfico indisponível.');
+        await baixarSvgComoPng(el, `explorar-grafico-${stamp}.png`);
+      }
+    } catch (err) {
+      setErro(err instanceof Error ? err.message : 'Falha ao exportar.');
+    } finally {
+      setExportando(false);
+    }
+  };
+
   return (
     <div className="analisador-stack">
       <div className="glass-card glass-card-flat analisador-explorar-card">
-        <h2 className="analisador-titulo">
-          {modo === 'grafico' ? 'Gráfico personalizado' : 'Tabela dinâmica'}
-        </h2>
+        <div className="analisador-titulo-linha">
+          <h2 className="analisador-titulo">
+            {modo === 'grafico' ? 'Gráficos personalizados' : 'Tabelas dinâmicas'}
+          </h2>
+          <div className="analisador-titulo-linha-acoes">
+            {modo === 'grafico' ? (
+              <button
+                type="button"
+                className="analisador-btn analisador-btn-pri analisador-btn-compact"
+                disabled={!podeExportar}
+                onClick={() => void handleExportar()}
+                title="Exportar o gráfico visível como PNG"
+              >
+                <Download size={14} />
+                {exportando ? 'Exportando…' : 'Exportar PNG'}
+              </button>
+            ) : (
+              <div className="analisador-export-menu" ref={menuExportRef}>
+                <button
+                  type="button"
+                  className="analisador-btn analisador-btn-pri analisador-btn-compact"
+                  disabled={!podeExportar}
+                  aria-haspopup="menu"
+                  aria-expanded={menuExportAberto}
+                  onClick={() => setMenuExportAberto((v) => !v)}
+                  title="Exportar a tabela visível (CSV ou XLSX)"
+                >
+                  <Download size={14} />
+                  {exportando ? 'Exportando…' : 'Exportar'}
+                  <ChevronDown size={14} />
+                </button>
+                {menuExportAberto && !exportando && (
+                  <div className="analisador-export-menu-panel dropdown-menu-panel" role="menu">
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="dropdown-menu-item"
+                      onClick={() => void handleExportar('csv')}
+                    >
+                      CSV
+                    </button>
+                    <button
+                      type="button"
+                      role="menuitem"
+                      className="dropdown-menu-item"
+                      onClick={() => void handleExportar('xlsx')}
+                    >
+                      XLSX
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
         <p className="analisador-hint">
-          Builder livre sobre as colunas da base. Atualiza em tempo real ao mudar dimensões/métricas
-          (agregação no servidor — a base completa não sobe para o navegador).
+          {modo === 'grafico'
+            ? 'Agregações em tempo real a partir das colunas da base da empresa.'
+            : 'Tabela pivô/agregada em tempo real. Marque dimensões e métricas.'}
         </p>
 
         <div className="analisador-explorar-builder">
@@ -659,14 +769,24 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
           </fieldset>
 
           <div className="analisador-explorar-opcoes-linha">
-            <label className="analisador-check-linha">
-              <input
-                type="checkbox"
-                checked={aplicarGrupos}
-                onChange={(e) => setAplicarGrupos(e.target.checked)}
-              />
-              <span>Aplicar grupos manuais (agrega membros no campo Cliente)</span>
-            </label>
+            <div className="analisador-explorar-grupos-bloco">
+              <label className="analisador-check-linha">
+                <input
+                  type="checkbox"
+                  checked={aplicarGrupos}
+                  onChange={(e) => setAplicarGrupos(e.target.checked)}
+                />
+                <span>Aplicar grupos manuais (agrega membros no campo Cliente)</span>
+              </label>
+              {carregando && <p className="analisador-hint">Atualizando…</p>}
+              {resultado && !erro && !carregando && (
+                <p className="analisador-hint">
+                  {resultado.linhas.length.toLocaleString('pt-BR')} de{' '}
+                  {resultado.total_linhas.toLocaleString('pt-BR')} linhas agregadas
+                  {schema ? ` · base com ${schema.linhas.toLocaleString('pt-BR')} registros` : ''}
+                </p>
+              )}
+            </div>
 
             {modo === 'grafico' && (
               <label className="analisador-campo analisador-explorar-tipo">
@@ -712,21 +832,17 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
         </div>
 
         {dicaTipo && <p className="analisador-hint">{dicaTipo}</p>}
-        {carregando && <p className="analisador-hint">Atualizando…</p>}
         {erro && (
           <p className="analisador-feedback-inline erro" role="alert">{erro}</p>
-        )}
-        {resultado && !erro && (
-          <p className="analisador-hint">
-            {resultado.linhas.length.toLocaleString('pt-BR')} de{' '}
-            {resultado.total_linhas.toLocaleString('pt-BR')} linhas agregadas
-            {schema ? ` · base com ${schema.linhas.toLocaleString('pt-BR')} registros` : ''}
-          </p>
         )}
       </div>
 
       <div className="glass-card glass-card-flat">
-        {modo === 'grafico' ? renderGrafico() : <ResultTable tabela={tabela} />}
+        {modo === 'grafico' ? (
+          <div ref={chartRef}>{renderGrafico()}</div>
+        ) : (
+          <ResultTable tabela={tabela} />
+        )}
       </div>
     </div>
   );
