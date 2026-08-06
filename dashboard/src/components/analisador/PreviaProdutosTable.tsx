@@ -6,6 +6,7 @@ interface PreviaProdutosTableProps {
   itens: ItemProdutoPrevia[];
   excluidos: Set<string>;
   onToggle: (produto: string) => void;
+  onToggleAll?: (produtos: string[], checkAll: boolean) => void;
   carregando?: boolean;
 }
 
@@ -14,7 +15,7 @@ function formatarPct(valor: number | null): string {
   return `${valor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
 }
 
-export function PreviaProdutosTable({ itens, excluidos, onToggle, carregando }: PreviaProdutosTableProps) {
+export function PreviaProdutosTable({ itens, excluidos, onToggle, onToggleAll, carregando }: PreviaProdutosTableProps) {
   const [busca, setBusca] = useState('');
   const [grupoFiltro, setGrupoFiltro] = useState('');
   const lista = useMemo(() => itens ?? [], [itens]);
@@ -41,6 +42,9 @@ export function PreviaProdutosTable({ itens, excluidos, onToggle, carregando }: 
     () => itensFiltrados.filter((item) => !excluidos.has(item.produto)).length,
     [itensFiltrados, excluidos],
   );
+
+  const todosConsideradosFiltro = itensFiltrados.length > 0 && incluidosNoFiltro === itensFiltrados.length;
+  const algumConsideradoFiltro = incluidosNoFiltro > 0;
 
   if (carregando) {
     return <p className="analisador-hint">Calculando prévia de produtos...</p>;
@@ -85,7 +89,27 @@ export function PreviaProdutosTable({ itens, excluidos, onToggle, carregando }: 
         <table className="analisador-tabela">
           <thead>
             <tr>
-              <th className="col-check">Incluir?</th>
+              <th className="col-check">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <label className="analisador-check">
+                    <input
+                      type="checkbox"
+                      checked={todosConsideradosFiltro}
+                      ref={(el) => {
+                        if (el) el.indeterminate = algumConsideradoFiltro && !todosConsideradosFiltro;
+                      }}
+                      onChange={() => {
+                        if (onToggleAll) {
+                          const checkAll = !todosConsideradosFiltro;
+                          const chaves = itensFiltrados.map((i) => i.produto);
+                          onToggleAll(chaves, checkAll);
+                        }
+                      }}
+                    />
+                  </label>
+                  <span>Incluir?</span>
+                </div>
+              </th>
               <th className="col-nome">Produto</th>
               <th className="col-num">Receita</th>
               <th className="col-pct">% Rec.</th>

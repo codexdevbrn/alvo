@@ -196,6 +196,11 @@ def normalizar_liquidez_pasta(
         )
 
     _caminho_atacado, caminho_estoque, caminho_vendas = resolver_arquivos_dados(pasta_fonte)
+    if caminho_estoque is None or caminho_vendas is None:
+        raise ErroNormalizacao(
+            f"Liquidez exige Dados_Estoque_{pasta_fonte.name}.* e "
+            f"Dados_Vendas_{pasta_fonte.name}.* na pasta fonte."
+        )
     pasta_trabalho.mkdir(parents=True, exist_ok=True)
 
     print(f"[Liquidez] Estoque a partir de {caminho_estoque.name}...")

@@ -18,3 +18,14 @@ base-clientes/
 # Artefatos graphify / Cursor
 graphify-out/
 .cursor/
+.tmp_graphify.txt
+
+# Configurações locais de outros assistentes (mesmo motivo de .claude/)
+.agents/
+.codex/
+
+# Projeto separado, com repositório git próprio — não versionar aqui dentro
+PrismSystem/
+
+# Logs do agendador noturno
+logs_agendador/

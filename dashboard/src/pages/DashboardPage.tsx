@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useTransition, useRef } from 'react';
+import { useState, useMemo, useEffect, useTransition, useRef, useCallback } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { FilterBar } from '../components/FilterBar';
 import { MetricsGrid } from '../components/MetricsGrid';
@@ -6,6 +6,11 @@ import { HistoryChart } from '../components/HistoryChart';
 import { BreakdownSection } from '../components/BreakdownSection';
 import { RevenueDetailModal } from '../components/RevenueDetailModal';
 import { LoadingScreen } from '../components/LoadingScreen';
+import {
+  jaExibiuSplashTelaCheia,
+  marcarSplashTelaCheiaExibida,
+} from '../components/splashTelaCheia';
+import { gravarSummaryCache, lerSummaryCache } from '../utils/cacheSummary';
 import { DashboardHeader } from '../components/DashboardHeader';
 import { AppShell } from '../components/AppShell';
 import { EVENTO_EMPRESA } from '../components/SidebarEmpresaSelect';
@@ -107,13 +112,41 @@ export default function DashboardPage() {
   // State Definitions
   // ==========================================
 
-  const [data, setData] = useState<DashboardData | null>(null);
-  const [loading, setLoading] = useState(true);
+  // Empresa selecionada ('' = summary.json estático, comportamento padrão).
+  // Declarada aqui em cima porque o estado inicial de `data` depende dela.
+  const [empresa, setEmpresa] = useState<string>(() => localStorage.getItem('alvo_empresa') || '');
+  /** Espelho de `empresa` pro listener do evento da sidebar, que roda com deps []. */
+  const empresaRef = useRef(empresa);
+  useEffect(() => {
+    empresaRef.current = empresa;
+  }, [empresa]);
+
+  const [data, setData] = useState<DashboardData | null>(() => lerSummaryCache(empresa));
+  const [loading, setLoading] = useState(() => lerSummaryCache(empresa) === null);
+  /**
+   * O que mostrar enquanto os dados não chegam:
+   *  - `splash-inicial`: primeira entrada no site — prisma em tela cheia;
+   *  - `troca-de-base`: trocou a empresa — prisma só na área de conteúdo;
+   *  - `silencioso`: troca de tela — nada, igual ao Analisador (com o cache,
+   *    normalmente nem chega a aparecer).
+   */
+  const [modoCarregamento, setModoCarregamento] = useState<
+    'splash-inicial' | 'troca-de-base' | 'silencioso'
+  >(() => (jaExibiuSplashTelaCheia() ? 'silencioso' : 'splash-inicial'));
+  // Só sai da tela de loading quando dados E 1º ciclo do traçado terminarem
+  // (mesmo que os dados cheguem antes) — evita flash do desenho pela metade.
+  // Só a splash de tela cheia depende do fim do traçado. Nos outros modos já
+  // nasce true, senão os cálculos ficariam esperando um callback que nunca vem.
+  const [introDone, setIntroDone] = useState(() => jaExibiuSplashTelaCheia());
+  const handleFirstLoopDone = useCallback(() => {
+    // A partir daqui a splash de tela cheia já foi vista nesta carga da
+    // página: as próximas trocas de rota animam só a área de conteúdo.
+    marcarSplashTelaCheiaExibida();
+    setIntroDone(true);
+  }, []);
   const [historyType, setHistoryType] = useState<null | 'revenue' | 'mfr' | 'desc'>(null);
   const [isComputing, startComputeTransition] = useTransition();
 
-  // Empresa selecionada ('' = summary.json estático, comportamento padrão)
-  const [empresa, setEmpresa] = useState<string>(() => localStorage.getItem('alvo_empresa') || '');
   const [empresaLoading, setEmpresaLoading] = useState(false);
   const [empresaError, setEmpresaError] = useState<string | null>(null);
   const [aguardandoBaseDados, setAguardandoBaseDados] = useState(false);
@@ -240,14 +273,28 @@ export default function DashboardPage() {
 
     const carregar = async () => {
       setEmpresaError(null);
-      if (data === null) setLoading(true);
-      else setEmpresaLoading(true);
+
+      // Já baixado nesta sessão: volta instantâneo, sem animação nenhuma.
+      const emCache = lerSummaryCache(empresa);
+      if (emCache) {
+        setData(emCache);
+        setLoading(false);
+        setEmpresaLoading(false);
+        return;
+      }
+
+      setLoading(true);
+      if (modoCarregamento === 'splash-inicial') setIntroDone(false);
+      if (data !== null) setEmpresaLoading(true);
 
       try {
         const d = empresa
           ? await obterSummaryEmpresa(empresa, controller.signal)
           : await carregarEstatico();
-        if (!cancelado) setData(d);
+        if (!cancelado) {
+          gravarSummaryCache(empresa, d);
+          setData(d);
+        }
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return;
         console.error('Error loading data:', err);
@@ -284,16 +331,22 @@ export default function DashboardPage() {
   // Empresa da sidebar (localStorage + evento) — limpa filtros ao trocar.
   useEffect(() => {
     const aplicar = (atual: string) => {
-      setEmpresa((prev) => {
-        if (prev === atual) return prev;
-        setClient([]);
-        setMfr([]);
-        setDesc([]);
-        setStore([]);
-        setPeriod([]);
-        setSeverity([]);
-        return atual;
-      });
+      // Compara pelo ref (e não dentro de um updater de setEmpresa): disparar
+      // outros setStates de dentro de um updater é atualização em fase de
+      // render — o React pode reexecutar/descartar, e era por isso que o modo
+      // de carregamento não chegava a mudar.
+      if (empresaRef.current === atual) return;
+      empresaRef.current = atual;
+      // Trocar a base é a única transição que mostra o prisma na área de
+      // conteúdo — é o carregamento pesado, o usuário precisa do retorno.
+      setModoCarregamento('troca-de-base');
+      setEmpresa(atual);
+      setClient([]);
+      setMfr([]);
+      setDesc([]);
+      setStore([]);
+      setPeriod([]);
+      setSeverity([]);
     };
     const onEvento = (e: Event) => {
       const detalhe = (e as CustomEvent<string>).detail;
@@ -339,7 +392,7 @@ export default function DashboardPage() {
   // ==========================================
 
   const processed = useMemo(() => {
-    if (!data) return { stats: null, filterOptions: null, noDataMessage: null };
+    if (!data || loading || !introDone) return { stats: null, filterOptions: null, noDataMessage: null } as any;
 
     // Usa filtros já “assentados” (debounce + transition) — cliques rápidos não recalculam a cada mês
     const client = computeFilters.client;
@@ -759,13 +812,32 @@ export default function DashboardPage() {
       filterOptions: { clientOpts, mfrOpts, descOpts, storeOpts },
       noDataMessage: populationRows.length === 0 ? "Nenhum dado encontrado para os filtros selecionados." : null
     };
-  }, [data, computeFilters, historyType, computeUsarMesesFechados, computeGranularidade, visaoDetalhada]);
+  }, [data, computeFilters, historyType, computeUsarMesesFechados, computeGranularidade, visaoDetalhada, loading, introDone]);
 
   // ==========================================
   // Render
   // ==========================================
 
-  if (loading) return <LoadingScreen />;
+  // Primeira entrada no site: prisma em tela cheia, sem sidebar.
+  if (modoCarregamento === 'splash-inicial' && (loading || !introDone)) {
+    return <LoadingScreen onFirstLoopDone={handleFirstLoopDone} />;
+  }
+
+  // Troca de base: prisma só na área de conteúdo, sidebar viva e navegável.
+  if (modoCarregamento === 'troca-de-base' && loading) {
+    return (
+      <AppShell>
+        <LoadingScreen variante="conteudo" />
+      </AppShell>
+    );
+  }
+
+  // Troca de tela: nada de prisma — o Dashboard aparece quando os dados
+  // chegam, igual ao Analisador. Com o cache em memória isso é instantâneo;
+  // o shell vazio só aparece na 1ª visita à rota dentro da sessão.
+  if (loading && !data) {
+    return <AppShell><div className="dashboard-container" /></AppShell>;
+  }
 
   const avisoBaseDados = aguardandoBaseDados ? (
     <div className="glass-card" style={{ padding: '0.85rem 1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>

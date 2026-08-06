@@ -2,12 +2,13 @@
 normalizar_base.py
 ===================
 
-Script generalista de normalização de dados de empresas: lê os 3 CSVs
-exportados pelo PDV/ERP para a pasta da empresa na fonte —
+Script legado de normalização de dados de empresas. A fonte atual fornece a
+base pronta em Excel e o backend a lê diretamente; este módulo ainda mantém
+helpers de normalização usados por rotinas offline.
 
-    Dados_Atacado_<empresa>.csv   (arquivo base — vendas já agregadas)
-    Dados_Estoque_<empresa>.csv
-    Dados_Vendas_<empresa>.csv
+Dados Mais Atacado.xlsx       (arquivo base pronto para leitura)
+Dados_Estoque_<empresa>.*     (opcional, somente Liquidez)
+Dados_Vendas_<empresa>.*      (opcional, somente Liquidez)
 
 — e gera o `Base.csv` no schema que o motor de análise do projeto
 (`backend/engine/analise_funil.py`, função `carregar_csv`) já espera:
@@ -18,10 +19,11 @@ exportados pelo PDV/ERP para a pasta da empresa na fonte —
 Layout de pastas — dois papéis (pastas distintas):
 
     <pasta_fonte>/                         (somente leitura)
-        <nome>/
-            Dados_Atacado_<nome>.<ext>
-            Dados_Estoque_<nome>.<ext>
-            Dados_Vendas_<nome>.<ext>
+        <pasta_fonte>/
+          <nome>/
+            Dados Mais Atacado.xlsx
+            Dados_Estoque_<nome>.<ext>  (opcional)
+            Dados_Vendas_<nome>.<ext>   (opcional)
 
     <pasta_trabalho>/                      (escrita: Base.csv, harm, backups)
         harm.xlsx                          (opcional, aplicado automaticamente)
@@ -29,9 +31,8 @@ Layout de pastas — dois papéis (pastas distintas):
 
 A fonte nunca recebe escrita. `--trabalho` é obrigatório no CLI.
 
-Onde `<nome>` é o nome da pasta da empresa (ex.: pasta "teste" -> arquivo
-"Dados_Atacado_teste.csv") e `<ext>` pode variar (`.csv` é o esperado, mas a
-busca é case-insensitive e não fixa a extensão).
+O arquivo principal tem nome fixo `Dados Mais Atacado.xlsx`. Estoque e Vendas
+continuam usando o nome da empresa e extensão definida pela exportação.
 
 A ordem das colunas em cada CSV pode variar de empresa para empresa — os
 nomes de coluna, não. A leitura é sempre por nome, nunca por posição.
@@ -104,8 +105,9 @@ COLUNAS_GRUPO = [
 ]
 
 NOME_ARQUIVO_HARM_PADRAO = "harm.xlsx"
+NOME_ARQUIVO_BASE_EMPRESA = "Dados Mais Atacado.xlsx"
 
-# Colunas esperadas em Dados_Atacado_<empresa>.csv (nomes fixos; ordem livre).
+# Colunas esperadas no layout intermediário das rotinas offline.
 COLUNAS_ATACADO_ESPERADAS = {
     "Loja", "NOME_FABRICANTE", "NOME_CLIENTE", "descricao", "Ano", "Mês",
     "CODIGO_INTERNO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO",
@@ -134,20 +136,20 @@ def ler_csv_robusto(filepath_or_buffer, **kwargs):
 
 
 # ---------------------------------------------------------------------------
-# Localização dos 3 arquivos de origem na pasta da empresa
+# Localização da base e dos arquivos opcionais de Liquidez
 # ---------------------------------------------------------------------------
 
-def resolver_arquivos_dados(pasta_empresa: Path) -> tuple[Path, Path, Path]:
-    """Localiza (Atacado, Estoque, Vendas) em <pasta_empresa>.
+def resolver_arquivos_dados(pasta_empresa: Path) -> tuple[Path, Path | None, Path | None]:
+    """Localiza a base XLSX e, quando existirem, os arquivos de Liquidez.
 
-    Um único `iterdir()` sobre a pasta, casando os três prefixos por nome
-    (sem extensão) - comparação case-insensitive, extensão livre (.csv etc.).
-    Levanta ErroNormalizacao com mensagem amigável se algum dos três não for
-    encontrado.
+    A base da empresa tem nome fixo ``Dados Mais Atacado.xlsx``. Estoque e
+    Vendas continuam usando os nomes legados com o nome da empresa e extensão
+    livre. A comparação é case-insensitive para funcionar no Windows.
+    A base XLSX é obrigatória; Estoque e Vendas são opcionais e só são
+    necessários quando a análise de Liquidez for solicitada.
     """
     nome_empresa = pasta_empresa.name
     alvos = {
-        f"dados_atacado_{nome_empresa}".lower(): "atacado",
         f"dados_estoque_{nome_empresa}".lower(): "estoque",
         f"dados_vendas_{nome_empresa}".lower(): "vendas",
     }
@@ -156,7 +158,10 @@ def resolver_arquivos_dados(pasta_empresa: Path) -> tuple[Path, Path, Path]:
         for arquivo in pasta_empresa.iterdir():
             if not arquivo.is_file():
                 continue
-            papel = alvos.get(arquivo.stem.lower())
+            if arquivo.name.casefold() == NOME_ARQUIVO_BASE_EMPRESA.casefold():
+                papel = "atacado"
+            else:
+                papel = alvos.get(arquivo.stem.lower())
             if papel is not None:
                 encontrados[papel] = arquivo
 
@@ -166,11 +171,7 @@ def resolver_arquivos_dados(pasta_empresa: Path) -> tuple[Path, Path, Path]:
 
     faltando = []
     if caminho_atacado is None:
-        faltando.append(f"Dados_Atacado_{nome_empresa}")
-    if caminho_estoque is None:
-        faltando.append(f"Dados_Estoque_{nome_empresa}")
-    if caminho_vendas is None:
-        faltando.append(f"Dados_Vendas_{nome_empresa}")
+        faltando.append(NOME_ARQUIVO_BASE_EMPRESA)
     if faltando:
         raise ErroNormalizacao(
             f"Não foi possível localizar em {pasta_empresa}: " + ", ".join(faltando) + "."
@@ -259,11 +260,11 @@ def _pct_vazio(serie: pd.Series) -> float:
 
 
 # ---------------------------------------------------------------------------
-# Normalização (Dados_Atacado -> DataFrame no schema do Base.csv)
+# Compatibilidade offline (o backend lê o XLSX diretamente)
 # ---------------------------------------------------------------------------
 
 def normalizar(caminho_atacado: Path) -> pd.DataFrame:
-    """Lê Dados_Atacado_<empresa>.csv e retorna o DataFrame final já formatado."""
+    """Normaliza um arquivo intermediário usado somente por rotinas offline."""
     ano_atual = date.today().year
     anos_permitidos = (ano_atual - 1, ano_atual)
 
@@ -404,7 +405,7 @@ def normalizar_pasta_empresa(
     aplicar_harmonizacao: bool = True,
     validar_resultado: bool = True,
 ) -> Path:
-    """Lê os 3 CSVs em `pasta_fonte` e gera `Base.csv` em `pasta_trabalho`.
+    """Lê Dados Mais Atacado.xlsx em `pasta_fonte` e gera `Base.csv` no trabalho.
 
     `pasta_trabalho` é obrigatória e deve ser distinta da fonte (e não pode
     estar dentro dela). A fonte é somente leitura — este módulo nunca grava
@@ -436,7 +437,10 @@ def normalizar_pasta_empresa(
 
     caminho_atacado, _caminho_estoque, _caminho_vendas = resolver_arquivos_dados(pasta_fonte)
 
-    df_saida = normalizar(caminho_atacado)
+    # O XLSX já vem normalizado; apenas mapeia/valida colunas em memória.
+    from backend.engine.analise_funil import carregar_excel_base_empresa
+
+    df_saida = carregar_excel_base_empresa(caminho_atacado)
 
     pasta_trabalho.mkdir(parents=True, exist_ok=True)
     caminho_saida = pasta_trabalho / "Base.csv"
@@ -487,9 +491,9 @@ def _localizar_planilha_harmonizacao(pasta_trabalho: Path) -> Path | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Normaliza os CSVs (Atacado/Estoque/Vendas) de uma empresa em Base.csv."
+        description="Lê Dados Mais Atacado.xlsx de uma empresa e gera Base.csv no trabalho."
     )
-    parser.add_argument("pasta_fonte", help="Pasta da empresa com os 3 CSVs (somente leitura)")
+    parser.add_argument("pasta_fonte", help="Pasta da empresa com Dados Mais Atacado.xlsx (somente leitura)")
     parser.add_argument(
         "--trabalho",
         required=True,

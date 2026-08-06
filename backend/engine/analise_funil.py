@@ -62,6 +62,22 @@ MAPA_COLUNAS_BASE_PADRAO = {
     "[QTD]": "QTD",
 }
 
+# O arquivo por empresa já chega pronto para leitura, mas usa nomes de
+# exportação próprios. O mapeamento acontece em memória; a fonte nunca recebe
+# escrita nem arquivo intermediário.
+MAPA_COLUNAS_BASE_EMPRESA = {
+    "ID_LOJA": "Loja",
+    "NOME_CLIENTE": "Cliente",
+    "DESCRICAO_PRODUTO": "descricao",
+    "ANO": "Ano",
+    "MÊS": "Mês",
+    "CODIGO_INTERNO_PRODUTO": "Código Interno",
+    "CODIGO_REFERENCIA_PRODUTO": "Código de referêcia",
+    "NOME_FABRICANTE": "NOME_FABRICANTE",
+    "Receita Acumulada 11 Meses": "Receita Acumulada 11 Meses",
+    "QTD": "QTD",
+}
+
 GRANULARIDADES = ["Mensal", "Trimestral", "Semestral", "Anual"]
 
 DESCRICAO_NAO_HARMONIZADA = "Não harmonizados"
@@ -142,6 +158,64 @@ def carregar_excel_base(caminho_arquivo):
     # A receita nesta base já vem numérica (float), não precisa da conversão
     # de formato BR usada no CSV.
     return validar_e_limpar(df, receita_em_texto_br=False)
+
+
+def _normalizar_numero_excel(serie):
+    """Converte número Excel ou texto BR sem perder células numéricas."""
+    if pd.api.types.is_numeric_dtype(serie):
+        return pd.to_numeric(serie, errors="coerce")
+
+    texto = serie.astype(str).str.strip()
+    tem_virgula = texto.str.contains(",", regex=False)
+    tem_ponto = texto.str.contains(".", regex=False)
+    virgula_decimal = tem_virgula & (~tem_ponto | (texto.str.rfind(",") > texto.str.rfind(".")))
+    convertido = texto.copy()
+    convertido = convertido.mask(
+        virgula_decimal,
+        texto.str.replace(".", "", regex=False).str.replace(",", ".", regex=False),
+    )
+    convertido = convertido.mask(
+        ~virgula_decimal,
+        texto.str.replace(",", "", regex=False),
+    )
+    return pd.to_numeric(convertido, errors="coerce")
+
+
+def carregar_excel_base_empresa(caminho_arquivo):
+    """Lê ``Dados Mais Atacado.xlsx`` no schema pronto da empresa.
+
+    Identificadores são lidos como texto para preservar zeros à esquerda.
+    Receita e QTD aceitam células numéricas do Excel e texto decimal BR.
+    Retorna o DataFrame bruto já com nomes canônicos; a validação final fica
+    em ``validar_e_limpar`` no backend.
+    """
+    tipos_texto = {
+        "ID_LOJA": str,
+        "NOME_CLIENTE": str,
+        "DESCRICAO_PRODUTO": str,
+        "CODIGO_INTERNO_PRODUTO": str,
+        "CODIGO_REFERENCIA_PRODUTO": str,
+        "NOME_FABRICANTE": str,
+    }
+    try:
+        df = pd.read_excel(caminho_arquivo, sheet_name=0, dtype=tipos_texto)
+    except Exception as exc:
+        raise ErroCarregamentoCSV(
+            f"Não foi possível ler Dados Mais Atacado.xlsx: {exc}"
+        ) from exc
+
+    colunas_faltando = [c for c in MAPA_COLUNAS_BASE_EMPRESA if c not in df.columns]
+    if colunas_faltando:
+        raise ErroCarregamentoCSV(
+            "Dados Mais Atacado.xlsx sem colunas: " + ", ".join(colunas_faltando)
+        )
+
+    df = df.rename(columns=MAPA_COLUNAS_BASE_EMPRESA)
+    df["Receita Acumulada 11 Meses"] = _normalizar_numero_excel(
+        df["Receita Acumulada 11 Meses"]
+    )
+    df["QTD"] = _normalizar_numero_excel(df["QTD"])
+    return df
 
 
 def validar_e_limpar(df, receita_em_texto_br):
@@ -268,6 +342,39 @@ def _formatar_rotulo_periodo(periodo, granularidade):
         ano, sem = periodo.split("-S")
         return f"S{sem}/{ano[-2:]}"
     return periodo  # Anual: já é só o ano
+
+
+COLUNAS_ALERTAS_QUEDA = [
+    "descricao", "Periodos_Consecutivos_Em_Queda",
+    "Receita_Ultimo_Periodo", "Receita_Primeiro_Periodo",
+]
+
+
+def _completar_periodos_sem_venda(agregado, campo, periodos_ordenados):
+    """Preenche com 0 os períodos sem venda de cada entidade, da 1ª venda em diante.
+
+    Sem isso o `shift(1)` compara com o período anterior *em que houve venda* —
+    então um mês zerado no meio desaparece e dois períodos distantes viram
+    "consecutivos". Só completa a partir da primeira venda de cada entidade:
+    preencher antes disso inventaria queda em produto/cliente novo.
+
+    Espera `agregado` com as colunas `campo`, "Periodo", "_ordem", "Receita" e
+    "QTD"; devolve o mesmo formato, já com as linhas faltantes zeradas.
+    """
+    if agregado.empty:
+        return agregado
+
+    primeiro = agregado.groupby(campo)["_ordem"].min()
+    grade = pd.MultiIndex.from_product(
+        [primeiro.index, range(len(periodos_ordenados))], names=[campo, "_ordem"],
+    ).to_frame(index=False)
+    grade = grade[grade["_ordem"] >= grade[campo].map(primeiro)]
+
+    completo = grade.merge(agregado.drop(columns=["Periodo"]), on=[campo, "_ordem"], how="left")
+    colunas_valor = [c for c in ("Receita", "QTD") if c in completo.columns]
+    completo[colunas_valor] = completo[colunas_valor].fillna(0)
+    completo["Periodo"] = completo["_ordem"].map(dict(enumerate(periodos_ordenados)))
+    return completo[list(agregado.columns)]
 
 
 def _ordenar_periodos(periodos, granularidade):
@@ -419,6 +526,7 @@ def tendencia_produtos(df, granularidade="Mensal", periodos_queda_consecutiva=2,
     )
     ordem_periodo = {p: i for i, p in enumerate(periodos_ordenados)}
     evolucao["_ordem"] = evolucao["Periodo"].map(ordem_periodo)
+    evolucao = _completar_periodos_sem_venda(evolucao, "descricao", periodos_ordenados)
     evolucao.sort_values(["descricao", "_ordem"], inplace=True)
 
     evolucao["Receita_Periodo_Anterior"] = evolucao.groupby("descricao")["Receita"].shift(1)
@@ -433,6 +541,18 @@ def tendencia_produtos(df, granularidade="Mensal", periodos_queda_consecutiva=2,
         (evolucao["Receita"] - evolucao["Receita_Periodo_Anterior"]) / evolucao["Receita_Periodo_Anterior"] * 100,
         np.nan,
     )
+    # "Em queda" para a contagem de períodos consecutivos: queda normal, OU
+    # período zerado depois de já ter havido venda. Sem a segunda parte, um
+    # produto que morreu (100 -> 0 -> 0 -> 0) contava uma queda só e saía do
+    # alerta justamente no caso mais grave — o percentual do 2º zero em diante
+    # é indefinido (anterior = 0), mas a queda continua acontecendo.
+    houve_venda_antes = (
+        evolucao.groupby("descricao")["Receita"].cummax().groupby(evolucao["descricao"]).shift(1) > 0
+    )
+    evolucao["_em_queda"] = (
+        (anterior_valido & atual_valido & (evolucao["Receita"] < evolucao["Receita_Periodo_Anterior"]))
+        | ((evolucao["Receita"] == 0) & houve_venda_antes.fillna(False))
+    )
 
     # Detecta queda em N períodos consecutivos terminando no período mais
     # recente (queda atual) e calcula a tendência geral (mesma passada pelos
@@ -444,11 +564,8 @@ def tendencia_produtos(df, granularidade="Mensal", periodos_queda_consecutiva=2,
         tendencia_por_produto[produto] = _tendencia_percentual(grupo["Receita"].to_numpy())
 
         quedas_seguidas = 0
-        for variacao in grupo["Variacao_Percentual"]:
-            if pd.notnull(variacao) and variacao < 0:
-                quedas_seguidas += 1
-            else:
-                quedas_seguidas = 0
+        for em_queda in grupo["_em_queda"]:
+            quedas_seguidas = quedas_seguidas + 1 if em_queda else 0
         if quedas_seguidas >= periodos_queda_consecutiva:
             janela = grupo.tail(quedas_seguidas + 1)
             alertas.append({
@@ -469,10 +586,10 @@ def tendencia_produtos(df, granularidade="Mensal", periodos_queda_consecutiva=2,
 
     evolucao.sort_values(["Tendencia_Pct", "descricao", "_ordem"], ascending=[False, True, True], inplace=True)
     evolucao["Periodo"] = evolucao["Periodo"].apply(lambda p: _formatar_rotulo_periodo(p, granularidade))
-    evolucao.drop(columns=["_ordem"], inplace=True)
+    evolucao.drop(columns=["_ordem", "_em_queda"], inplace=True)
     evolucao.reset_index(drop=True, inplace=True)
 
-    alertas_df = pd.DataFrame(alertas)
+    alertas_df = pd.DataFrame(alertas, columns=COLUNAS_ALERTAS_QUEDA)
     if not alertas_df.empty:
         if queda_minima_rs and queda_minima_rs > 0:
             queda_rs = alertas_df["Receita_Primeiro_Periodo"] - alertas_df["Receita_Ultimo_Periodo"]
@@ -574,7 +691,10 @@ def erosao_clientes_por_produto(df, granularidade="Mensal", produtos_alvo=None,
     periodo_anterior, periodo_atual = periodos_ordenados[-2], periodos_ordenados[-1]
 
     base = df
-    if produtos_alvo:
+    if produtos_alvo is not None:
+        # Lista vazia = nenhum produto no escopo, e não "todos" — o `None` é o
+        # único jeito de pedir a base inteira. Antes, uma lista vazia (nenhum
+        # alerta de queda) alargava o escopo para toda a base em vez de zerar.
         base = base[base["descricao"].isin(produtos_alvo)]
     base = base[base[col_periodo].isin([periodo_anterior, periodo_atual])]
     if base.empty:
@@ -844,6 +964,9 @@ def calcular_renuncia(df, granularidade="Mensal", campo="Cliente"):
         .rename(columns={col_periodo: "Periodo"})
     )
     agrupado["_ordem"] = agrupado["Periodo"].map(ordem_periodo)
+    # Período sem venda entra como 0 (da 1ª venda em diante): renúncia é a
+    # receita deixada na mesa, e parar de comprar é exatamente isso.
+    agrupado = _completar_periodos_sem_venda(agrupado, campo, periodos_ordenados)
     agrupado.sort_values([campo, "_ordem"], inplace=True)
 
     agrupado["Receita_Anterior"] = agrupado.groupby(campo)["Receita"].shift(1)
@@ -858,6 +981,104 @@ def calcular_renuncia(df, granularidade="Mensal", campo="Cliente"):
     agrupado.drop(columns=["_ordem", "Receita_Anterior"], inplace=True)
     agrupado.reset_index(drop=True, inplace=True)
     return agrupado
+
+
+# ---------------------------------------------------------------------------
+# Regra de corte (curva de Pareto -> faixas) — FONTE ÚNICA
+#
+# Toda classificação em faixas do projeto passa por aqui: relatório por período
+# (classificar_faixas), prévias agregadas da tela (classificar_clientes_agregado
+# / classificar_produtos_agregado), os contadores (contar_clientes_por_grupo) e
+# os sugeridores de corte (sugerir_cortes_grupos / sugerir_corte_produtos).
+#
+# Mantê-la em um só lugar é o que garante que a prévia da tela e o relatório
+# final classifiquem exatamente igual. Mudar a régua de corte = mexer só em
+# `faixa_por_curva`/`contar_por_faixa`, nunca em cada chamador.
+# ---------------------------------------------------------------------------
+
+NOME_FAIXA_DEMAIS = "Demais"
+NOME_FAIXA_BALCAO = "Balcão"
+
+
+def nomes_faixas(cortes, nomes=None):
+    """Nomes das faixas para `cortes`, sempre com "Demais" no fim (1 a mais que os cortes)."""
+    base = list(nomes) if nomes else [f"Grupo {i + 1}" for i in range(len(cortes))]
+    return base + [NOME_FAIXA_DEMAIS]
+
+
+def curva_pareto(receita_por_entidade):
+    """Ordena a receita (desc) e devolve a curva de Pareto usada na classificação.
+
+    Recebe uma Series indexada pela entidade (cliente/produto) e devolve um
+    DataFrame com Receita, Percentual_Individual e Percentual_Acumulado (este
+    último inclusivo: soma até a entidade, ela incluída).
+
+    Receita total <= 0 zera os percentuais em vez de dividir por zero.
+    """
+    receita = receita_por_entidade.sort_values(ascending=False)
+    total = receita.sum()
+    if total <= 0:
+        individual = pd.Series(0.0, index=receita.index)
+        acumulado = pd.Series(0.0, index=receita.index)
+    else:
+        individual = receita / total * 100
+        acumulado = receita.cumsum() / total * 100
+    return pd.DataFrame({
+        "Receita": receita,
+        "Percentual_Individual": individual,
+        "Percentual_Acumulado": acumulado,
+    })
+
+
+def faixa_por_curva(curva, cortes, nomes=None):
+    """Faixa de cada entidade a partir da curva de Pareto. Vetorizado.
+
+    Régua: a entidade pertence à faixa em que ela ENTRA, ou seja, decidida pelo
+    acumulado ANTES dela (`acumulado - individual`). O maior cliente entra com
+    0% acumulado e portanto sempre cai na primeira faixa; quem começa depois do
+    último corte cai em "Demais".
+
+    Comparar o acumulado INCLUSIVO com o corte (régua anterior) deixava a
+    primeira faixa vazia sempre que a maior entidade sozinha já passava do
+    primeiro corte — caso comum quando um cliente concentra o faturamento.
+    """
+    rotulos = nomes_faixas(cortes, nomes)
+    acumulado_anterior = pd.Series(
+        curva["Percentual_Acumulado"] - curva["Percentual_Individual"]
+    )
+    faixa = pd.Series(rotulos[-1], index=acumulado_anterior.index, dtype=object)
+    # De trás para frente: o corte menor sobrescreve o maior, então cada
+    # entidade termina com a primeira faixa em que cabe.
+    for corte, rotulo in zip(reversed(list(cortes)), reversed(rotulos[:-1])):
+        faixa = faixa.mask(acumulado_anterior < corte, rotulo)
+    return faixa
+
+
+def contar_por_faixa(curva, cortes):
+    """Quantas entidades caem em cada faixa — mesma régua de `faixa_por_curva`.
+
+    Devolve uma lista com um item a mais que `cortes` (o último é "Demais").
+    """
+    faixa = faixa_por_curva(curva, cortes)
+    rotulos = nomes_faixas(cortes)
+    contagem = faixa.value_counts()
+    return [int(contagem.get(rotulo, 0)) for rotulo in rotulos]
+
+
+def _reduzir_corte_ate_caber(curva, cortes, indice, limite_inferior,
+                             max_por_grupo, passo):
+    """Reduz cortes[indice] até a faixa correspondente ter <= max_por_grupo entidades.
+
+    Para de reduzir ao encostar no corte anterior (não inverte a ordem dos cortes).
+    """
+    corte = cortes[indice]
+    while True:
+        quantidade = contar_por_faixa(curva, cortes[: indice + 1])[indice]
+        if quantidade <= max_por_grupo or corte <= limite_inferior + passo:
+            return corte
+        corte -= passo
+        cortes = list(cortes)
+        cortes[indice] = corte
 
 
 # ---------------------------------------------------------------------------
@@ -887,8 +1108,7 @@ def classificar_faixas(df, granularidade="Mensal", campo="Cliente", excluidos=No
     """
     excluidos = set(excluidos or [])
     cortes = list(cortes)
-    nomes_grupos = list(nomes_grupos) if nomes_grupos else [f"Grupo {i + 1}" for i in range(len(cortes))]
-    nomes_grupos = nomes_grupos + ["Demais"]
+    nomes_grupos_base = list(nomes_grupos) if nomes_grupos else None
 
     col_periodo = COLUNA_PERIODO[granularidade]
     base = df[~df[campo].isin(excluidos)] if excluidos else df
@@ -904,28 +1124,18 @@ def classificar_faixas(df, granularidade="Mensal", campo="Cliente", excluidos=No
             grupo_balcao = pd.DataFrame(columns=grupo.columns)
 
         receita_entidade = (
-            grupo_normal.groupby(campo, as_index=False)["Receita"].sum()
-            .sort_values("Receita", ascending=False)
-            .reset_index(drop=True)
+            curva_pareto(grupo_normal.groupby(campo)["Receita"].sum())
+            .reset_index()
+            .rename(columns={"index": campo})
+            # Ordem histórica das colunas: o export Excel e a tabela da tela
+            # consomem esta ordem.
+            [[campo, "Receita", "Percentual_Acumulado", "Percentual_Individual"]]
         )
         receita_total = receita_entidade["Receita"].sum()
-        if receita_total <= 0:
-            receita_entidade["Percentual_Acumulado"] = 0.0
-            receita_entidade["Percentual_Individual"] = 0.0
-        else:
-            receita_entidade["Percentual_Acumulado"] = (
-                receita_entidade["Receita"].cumsum() / receita_total * 100
-            )
-            receita_entidade["Percentual_Individual"] = receita_entidade["Receita"] / receita_total * 100
         receita_entidade["Periodo"] = periodo
-
-        def faixa(percentual_acumulado):
-            for corte, nome in zip(cortes, nomes_grupos):
-                if percentual_acumulado <= corte:
-                    return nome
-            return nomes_grupos[-1]
-
-        receita_entidade["Faixa_ABC"] = receita_entidade["Percentual_Acumulado"].apply(faixa)
+        receita_entidade["Faixa_ABC"] = faixa_por_curva(
+            receita_entidade, cortes, nomes_grupos_base,
+        )
 
         if not grupo_balcao.empty:
             # Balcão fica de fora da classificação em grupos (o corte acima
@@ -944,7 +1154,7 @@ def classificar_faixas(df, granularidade="Mensal", campo="Cliente", excluidos=No
                 receita_balcao["Receita"] / receita_total * 100 if receita_total > 0 else 0.0
             )
             receita_balcao["Periodo"] = periodo
-            receita_balcao["Faixa_ABC"] = "Balcão"
+            receita_balcao["Faixa_ABC"] = NOME_FAIXA_BALCAO
             receita_entidade = pd.concat([receita_balcao, receita_entidade], ignore_index=True)
 
         resultados.append(receita_entidade)
@@ -1058,22 +1268,11 @@ def classificar_clientes_agregado(df, clientes_excluidos=None, cortes=(30.0, 50.
         base_normal = base
         base_balcao = pd.DataFrame(columns=base.columns)
 
-    receita_normal = base_normal.groupby("Cliente")["Receita"].sum().sort_values(ascending=False)
-    resultado = receita_normal.reset_index()
-    resultado.columns = ["Cliente", "Receita"]
+    resultado = curva_pareto(base_normal.groupby("Cliente")["Receita"].sum()).reset_index()
+    resultado = resultado.rename(columns={"index": "Cliente"})
     total = resultado["Receita"].sum()
-    resultado["Percentual_Individual"] = (resultado["Receita"] / total * 100) if total > 0 else 0.0
-    resultado["Percentual_Acumulado"] = (resultado["Receita"].cumsum() / total * 100) if total > 0 else 0.0
-
-    nomes_grupos = [f"Grupo {i + 1}" for i in range(len(cortes))] + ["Demais"]
-
-    def faixa(percentual_acumulado):
-        for corte, nome in zip(cortes, nomes_grupos):
-            if percentual_acumulado <= corte:
-                return nome
-        return nomes_grupos[-1]
-
-    resultado["Faixa"] = resultado["Percentual_Acumulado"].apply(faixa)
+    resultado = resultado[["Cliente", "Receita", "Percentual_Individual", "Percentual_Acumulado"]]
+    resultado["Faixa"] = faixa_por_curva(resultado, cortes)
 
     frequencia_normal = (
         base_normal[base_normal["Receita"] > 0].groupby("Cliente")["Periodo_Mensal"].nunique().rename("Frequencia")
@@ -1091,7 +1290,7 @@ def classificar_clientes_agregado(df, clientes_excluidos=None, cortes=(30.0, 50.
         receita_balcao.columns = ["Cliente", "Receita"]
         receita_balcao["Percentual_Individual"] = (receita_balcao["Receita"] / total * 100) if total > 0 else 0.0
         receita_balcao["Percentual_Acumulado"] = None
-        receita_balcao["Faixa"] = "Balcão"
+        receita_balcao["Faixa"] = NOME_FAIXA_BALCAO
         receita_balcao["Frequencia"] = 0
         resultado = pd.concat([receita_balcao, resultado], ignore_index=True)
 
@@ -1108,14 +1307,20 @@ def classificar_produtos_agregado(df, corte_percentual=80.0):
     classificar_produtos_por_receita para a versão por período usada no
     relatório final.
     """
-    receita_produto = df.groupby("descricao")["Receita"].sum().sort_values(ascending=False)
-    resultado = receita_produto.reset_index()
-    resultado.columns = ["descricao", "Receita"]
-    total = resultado["Receita"].sum()
-    resultado["Freq_Simples"] = (resultado["Receita"] / total * 100) if total > 0 else 0.0
-    resultado["Freq_Acumulado"] = resultado["Freq_Simples"].cumsum() if total > 0 else 0.0
-    resultado["Faixa"] = resultado["Freq_Acumulado"].apply(lambda p: "Grupo 1" if p <= corte_percentual else "Demais")
-    return resultado
+    curva = curva_pareto(df.groupby("descricao")["Receita"].sum()).reset_index()
+    curva = curva.rename(columns={
+        "index": "descricao",
+        "Percentual_Individual": "Freq_Simples",
+        "Percentual_Acumulado": "Freq_Acumulado",
+    })
+    curva["Faixa"] = faixa_por_curva(
+        curva.rename(columns={
+            "Freq_Simples": "Percentual_Individual",
+            "Freq_Acumulado": "Percentual_Acumulado",
+        }),
+        (corte_percentual,),
+    )
+    return curva[["descricao", "Receita", "Freq_Simples", "Freq_Acumulado", "Faixa"]]
 
 
 def contar_clientes_por_grupo(df, clientes_excluidos=None, cortes=(30.0, 50.0, 60.0), desconsiderar_balcao=False,
@@ -1138,21 +1343,11 @@ def contar_clientes_por_grupo(df, clientes_excluidos=None, cortes=(30.0, 50.0, 6
     else:
         base_normal = base
 
-    receita_cliente = base_normal.groupby("Cliente")["Receita"].sum().sort_values(ascending=False)
-    total = receita_cliente.sum()
+    receita_cliente = base_normal.groupby("Cliente")["Receita"].sum()
+    if receita_cliente.empty or receita_cliente.sum() <= 0:
+        return [0] * (len(cortes) + 1)
 
-    if total <= 0 or receita_cliente.empty:
-        contagens = [0] * (len(cortes) + 1)
-    else:
-        percentual_acumulado = receita_cliente.cumsum() / total * 100
-        contagens = []
-        limite_inferior = 0.0
-        for corte in cortes:
-            contagens.append(int(((percentual_acumulado > limite_inferior) & (percentual_acumulado <= corte)).sum()))
-            limite_inferior = corte
-        contagens.append(int((percentual_acumulado > limite_inferior).sum()))
-
-    return contagens
+    return contar_por_faixa(curva_pareto(receita_cliente), cortes)
 
 
 def sugerir_cortes_grupos(df, clientes_excluidos=None, cortes_iniciais=(30.0, 50.0, 60.0),
@@ -1176,34 +1371,25 @@ def sugerir_cortes_grupos(df, clientes_excluidos=None, cortes_iniciais=(30.0, 50
     else:
         base_normal = base
 
-    receita_cliente = base_normal.groupby("Cliente")["Receita"].sum().sort_values(ascending=False)
-    total = receita_cliente.sum()
+    receita_cliente = base_normal.groupby("Cliente")["Receita"].sum()
 
     cortes = list(cortes_iniciais)
-    if total <= 0 or receita_cliente.empty:
-        contagens = [0] * (len(cortes) + 1)
-        return cortes, contagens
+    if receita_cliente.empty or receita_cliente.sum() <= 0:
+        return cortes, [0] * (len(cortes) + 1)
 
-    percentual_acumulado = receita_cliente.cumsum() / total * 100
+    curva = curva_pareto(receita_cliente)
 
     limite_inferior = 0.0
-    for i, corte in enumerate(cortes):
-        while True:
-            quantidade = int(((percentual_acumulado > limite_inferior) & (percentual_acumulado <= corte)).sum())
-            if quantidade <= max_por_grupo or corte <= limite_inferior + passo:
-                break
-            corte -= passo
-        cortes[i] = round(corte, 1)
+    for i in range(len(cortes)):
+        cortes[i] = round(
+            _reduzir_corte_ate_caber(
+                curva, cortes, i, limite_inferior, max_por_grupo, passo,
+            ),
+            1,
+        )
         limite_inferior = cortes[i]
 
-    contagens = []
-    limite_inferior = 0.0
-    for corte in cortes:
-        contagens.append(int(((percentual_acumulado > limite_inferior) & (percentual_acumulado <= corte)).sum()))
-        limite_inferior = corte
-    contagens.append(int((percentual_acumulado > limite_inferior).sum()))
-
-    return cortes, contagens
+    return cortes, contar_por_faixa(curva, cortes)
 
 
 def sugerir_corte_produtos(df, corte_inicial=80.0, max_por_grupo=20, passo=0.5):
@@ -1213,22 +1399,19 @@ def sugerir_corte_produtos(df, corte_inicial=80.0, max_por_grupo=20, passo=0.5):
 
     Retorna (corte_ajustado, [qtd_grupo1, qtd_demais]).
     """
-    receita_produto = df.groupby("descricao")["Receita"].sum().sort_values(ascending=False)
-    total = receita_produto.sum()
+    receita_produto = df.groupby("descricao")["Receita"].sum()
     corte = float(corte_inicial)
-    if total <= 0 or receita_produto.empty:
+    if receita_produto.empty or receita_produto.sum() <= 0:
         return round(corte, 1), [0, 0]
 
-    percentual_acumulado = receita_produto.cumsum() / total * 100
-    while True:
-        quantidade = int((percentual_acumulado <= corte).sum())
-        if quantidade <= max_por_grupo or corte <= passo:
-            break
-        corte -= passo
-    corte = round(corte, 1)
-    qtd_grupo1 = int((percentual_acumulado <= corte).sum())
-    qtd_demais = int((percentual_acumulado > corte).sum())
-    return corte, [qtd_grupo1, qtd_demais]
+    curva = curva_pareto(receita_produto)
+    corte = round(
+        _reduzir_corte_ate_caber(
+            curva, [corte], 0, 0.0, max_por_grupo, passo,
+        ),
+        1,
+    )
+    return corte, contar_por_faixa(curva, (corte,))
 
 
 # ---------------------------------------------------------------------------
@@ -1307,7 +1490,25 @@ PONTOS_SUBIU_FAIXA = 3
 PONTOS_DESCEU_FAIXA = -2
 
 
-def pontuacao_migracao_clientes(migracao_df, abc_df):
+def _transicoes_adjacentes_por_cliente(abc_df, granularidade):
+    """Nº de transições em que o cliente aparece nos DOIS períodos vizinhos.
+
+    É a mesma base que `migracao_abc` percorre. Contar simplesmente
+    "períodos - 1" inflava o denominador de quem tem buraco no histórico
+    (transição que ninguém avaliou entrava como período sem migração).
+    """
+    posicao = {
+        p: i for i, p in enumerate(_ordenar_periodos(abc_df["Periodo"].unique(), granularidade))
+    }
+
+    def contar(periodos):
+        indices = sorted({posicao[p] for p in periodos})
+        return sum(1 for a, b in zip(indices, indices[1:]) if b - a == 1)
+
+    return abc_df.groupby("Cliente")["Periodo"].apply(contar)
+
+
+def pontuacao_migracao_clientes(migracao_df, abc_df, granularidade="Mensal"):
     """
     Score de migração por cliente, acumulado ao longo de TODO o histórico de
     transições disponível (não só a mais recente): +3 por subida de faixa,
@@ -1332,9 +1533,8 @@ def pontuacao_migracao_clientes(migracao_df, abc_df):
             contagem_migracoes[direcao] = 0
 
     # "Oportunidades de migrar" por cliente = nº de transições em que ele
-    # aparece nos dois períodos (mesma base usada por migracao_abc: períodos
-    # do cliente - 1, nunca negativo).
-    transicoes_por_cliente = (abc_df.groupby("Cliente")["Periodo"].nunique() - 1).clip(lower=0)
+    # aparece nos dois períodos vizinhos (mesma base usada por migracao_abc).
+    transicoes_por_cliente = _transicoes_adjacentes_por_cliente(abc_df, granularidade)
 
     resultado = transicoes_por_cliente.rename("Transicoes").reset_index()
     resultado = resultado.merge(
@@ -1376,6 +1576,21 @@ def _preparar_contexto_causa_provavel(df, col_periodo):
     }
 
 
+def _listar_produtos_por_receita(contexto, cliente, periodo, produtos, limite=3):
+    """Os `limite` produtos de maior receita do cliente no período, como texto.
+
+    Ordena por receita (desc) e desempata pelo nome: `produtos` chega como set,
+    cuja ordem de iteração muda entre execuções — sem isso a mesma base gera
+    textos de causa diferentes a cada relatório.
+    """
+    receitas = contexto["receita_produto"]
+    ordenados = sorted(
+        produtos,
+        key=lambda p: (-receitas.get((cliente, periodo, p), 0.0), p),
+    )
+    return ", ".join(ordenados[:limite])
+
+
 def _causa_provavel_migracao(contexto, cliente, periodo_anterior, periodo_atual, direcao):
     """
     Heurísticas para explicar a migração de faixa, usando os agregados
@@ -1406,7 +1621,9 @@ def _causa_provavel_migracao(contexto, cliente, periodo_anterior, periodo_atual,
             for produto in produtos_abandonados
         )
         if receita_anterior > 0 and receita_produtos_abandonados / receita_anterior >= 0.7:
-            principal = ", ".join(list(produtos_abandonados)[:3])
+            principal = _listar_produtos_por_receita(
+                contexto, cliente, periodo_anterior, produtos_abandonados,
+            )
             return f"Deixou de comprar produto(s) que respondiam por {receita_produtos_abandonados / receita_anterior * 100:.0f}% da receita anterior ({principal})."
 
     # Frequência de compra caiu pela metade ou mais (não só "caiu um pouco")
@@ -1431,7 +1648,9 @@ def _causa_provavel_migracao(contexto, cliente, periodo_anterior, periodo_atual,
                 for produto in produtos_novos
             )
             if receita_atual > 0 and receita_produtos_novos / receita_atual >= 0.5:
-                principal = ", ".join(list(produtos_novos)[:3])
+                principal = _listar_produtos_por_receita(
+                    contexto, cliente, periodo_atual, produtos_novos,
+                )
                 return f"Novo(s) produto(s) já respondem por {receita_produtos_novos / receita_atual * 100:.0f}% da receita atual ({principal})."
 
     return ""
@@ -1448,7 +1667,8 @@ def gerar_analises_completas(df, granularidades, clientes_excluidos=None,
                               top_n_produtos=None, reducao_minima_erosao=50.0,
                               queda_minima_alerta_rs=0.0, queda_minima_erosao_rs=0.0,
                               reducao_minima_sem_venda=90.0, top_n_poder_compra=None,
-                              clientes_balcao_extra=None, grupos_manuais=None):
+                              clientes_balcao_extra=None, grupos_manuais=None,
+                              erosao_somente_produtos_em_alerta=False):
     """
     Roda as análises solicitadas para cada granularidade escolhida.
 
@@ -1465,10 +1685,22 @@ def gerar_analises_completas(df, granularidades, clientes_excluidos=None,
     base). Não afeta top_produtos/top_fabricantes, que somam a base inteira
     e não fatiam por período.
 
-    top_n_produtos: limite de produtos em evolucao_produtos/alertas_queda
-    (None = todos — ver tendencia_produtos). reducao_minima_erosao: % mínimo
-    de queda para um cliente aparecer em erosao_clientes (ver
-    erosao_clientes_por_produto).
+    top_n_produtos: limite de produtos em evolucao_produtos/alertas_queda e
+    também em top_produtos/top_fabricantes (None = todos — ver
+    tendencia_produtos). reducao_minima_erosao: % mínimo de queda para um
+    cliente aparecer em erosao_clientes (ver erosao_clientes_por_produto).
+
+    desconsiderar_balcao: tira os clientes balcão das análises POR CLIENTE
+    (erosão, sem venda, queda de quantidade, correlação, churn). Em abc e
+    poder de compra eles continuam aparecendo, na faixa "Balcão" própria. Os
+    relatórios por produto sempre somam a receita de balcão: é venda real, só
+    não é cliente rastreável.
+
+    erosao_somente_produtos_em_alerta: por padrão erosão/correlação/churn olham
+    a base inteira (os pisos reducao_minima_erosao/queda_minima_erosao_rs fazem
+    o recorte), o que mantém "Receita Sob Risco" comparável entre períodos. Com
+    True, o escopo fica restrito aos produtos que entraram em alertas_queda —
+    visão mais estreita, e sensível ao top_n_produtos.
 
     callback_log: função opcional callback_log(mensagem) chamada a cada etapa
     concluída, para permitir feedback de progresso na interface.
@@ -1536,6 +1768,15 @@ def gerar_analises_completas(df, granularidades, clientes_excluidos=None,
         else:
             df_periodo = df
 
+        # Análises POR CLIENTE respeitam o filtro de balcão; as por produto
+        # continuam com a base cheia (ver docstring).
+        if desconsiderar_balcao:
+            df_cliente = df_periodo[
+                ~mascara_clientes_balcao(df_periodo["Cliente"], clientes_balcao_extra)
+            ]
+        else:
+            df_cliente = df_periodo
+
         evolucao, alertas = (None, None)
         if precisa_tendencia:
             logar(f"[{granularidade}] Calculando tendência de produtos...")
@@ -1551,9 +1792,13 @@ def gerar_analises_completas(df, granularidades, clientes_excluidos=None,
         erosao = None
         if precisa_erosao:
             logar(f"[{granularidade}] Calculando erosão de clientes por produto...")
-            produtos_em_queda = alertas["descricao"].tolist() if alertas is not None and not alertas.empty else None
+            # None = base inteira. Com o escopo restrito, uma lista vazia
+            # (nenhum alerta) resulta em erosão vazia — nunca em "todos".
+            produtos_alvo = None
+            if erosao_somente_produtos_em_alerta:
+                produtos_alvo = alertas["descricao"].tolist() if alertas is not None else []
             erosao = erosao_clientes_por_produto(
-                df_periodo, granularidade, produtos_alvo=produtos_em_queda,
+                df_cliente, granularidade, produtos_alvo=produtos_alvo,
                 reducao_minima_percentual=reducao_minima_erosao,
                 queda_minima_rs=queda_minima_erosao_rs,
             )
@@ -1563,7 +1808,7 @@ def gerar_analises_completas(df, granularidades, clientes_excluidos=None,
         if precisa("sem_venda"):
             logar(f"[{granularidade}] Calculando clientes sem venda...")
             analises["sem_venda"] = sem_venda_clientes(
-                df_periodo, granularidade, reducao_minima_percentual=reducao_minima_sem_venda,
+                df_cliente, granularidade, reducao_minima_percentual=reducao_minima_sem_venda,
             )
 
         abc = None
@@ -1602,7 +1847,7 @@ def gerar_analises_completas(df, granularidades, clientes_excluidos=None,
                 # Resumo e score não têm checkbox próprio no catálogo — são
                 # subprodutos automáticos sempre que "migracao_abc" é pedido.
                 analises["migracao_resumo"] = resumo_migracao(migracao)
-                analises["migracao_score_clientes"] = pontuacao_migracao_clientes(migracao, abc)
+                analises["migracao_score_clientes"] = pontuacao_migracao_clientes(migracao, abc, granularidade)
 
         if precisa("produtos_em_alta", "produtos_em_queda"):
             logar(f"[{granularidade}] Montando boletim de produtos em alta/queda...")
@@ -1614,20 +1859,23 @@ def gerar_analises_completas(df, granularidades, clientes_excluidos=None,
 
         if precisa("clientes_queda_qtd"):
             logar(f"[{granularidade}] Montando boletim de clientes em queda de quantidade...")
-            analises["clientes_queda_qtd"] = clientes_queda_quantidade(df_periodo, granularidade)
+            analises["clientes_queda_qtd"] = clientes_queda_quantidade(df_cliente, granularidade)
 
         if precisa("correlacao_produto_cliente"):
             logar(f"[{granularidade}] Calculando correlação produto x cliente...")
-            analises["correlacao_produto_cliente"] = correlacao_produto_cliente(df_periodo, erosao, alertas, granularidade)
+            analises["correlacao_produto_cliente"] = correlacao_produto_cliente(df_cliente, erosao, alertas, granularidade)
 
         if precisa("impacto_financeiro_churn"):
             logar(f"[{granularidade}] Calculando impacto financeiro do churn...")
-            analises["impacto_financeiro_churn"] = impacto_financeiro_churn(df_periodo, erosao, granularidade)
+            analises["impacto_financeiro_churn"] = impacto_financeiro_churn(df_cliente, erosao, granularidade)
 
+        # Alinhados ao resto do relatório: mesmo recorte de período
+        # (excluir_periodo_atual) e mesmo limite de itens (top_n_produtos).
+        limite_top = 20 if top_n_produtos is None else int(top_n_produtos)
         if precisa("top_produtos"):
-            analises["top_produtos"] = top_produtos(df)
+            analises["top_produtos"] = top_produtos(df_periodo, limite_top)
         if precisa("top_fabricantes"):
-            analises["top_fabricantes"] = top_fabricantes(df)
+            analises["top_fabricantes"] = top_fabricantes(df_periodo, limite_top)
 
         resultados[granularidade] = analises
         logar(f"[{granularidade}] Concluído.")

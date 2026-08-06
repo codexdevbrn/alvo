@@ -3,16 +3,13 @@ Backend do Analisador de Monitoria (versão web) — reaproveita o motor
 analise_funil.py do app desktop original via FastAPI.
 """
 
-import asyncio
 import json
 import logging
 import os
 import re
 import unicodedata
-import subprocess
 import sys
 import tempfile
-import threading
 import traceback
 import unicodedata
 from collections import OrderedDict
@@ -24,7 +21,7 @@ logger = logging.getLogger("uvicorn.error")
 
 import pandas as pd
 import numpy as np
-from fastapi import Body, Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
@@ -57,8 +54,6 @@ if RAIZ_PROJETO not in sys.path:
 
 from normalizar_base import (  # noqa: E402
     ErroNormalizacao,
-    aplicar_harmonizacao_em_memoria,
-    normalizar,
     parse_numero_flexivel,
     resolver_arquivos_dados,
 )
@@ -123,7 +118,8 @@ def obter_catalogo(usuario: str = Depends(exigir_login)):
 # ---------------------------------------------------------------------------
 # Dois caminhos compartilhados (Dashboard + Analisador)
 #
-# caminho_fonte_dados  — somente leitura: /{cliente}/Dados_Atacado_{cliente}.csv + _Estoque_ + _Vendas_
+# caminho_fonte_dados  — somente leitura: /{empresa}/Dados Mais Atacado.xlsx
+#                         + Estoque/Vendas legados opcionais, na mesma pasta
 # caminho_trabalho     — escrita: /{cliente}/summary_dashboard.json, config.json, harm.xlsx, tags
 #
 # Chaves legadas (caminho_dados_dashboard / caminho_empresas) ainda são lidas
@@ -290,7 +286,7 @@ def _validar_nome_empresa(nome: str) -> str:
 
 
 def _listar_empresas_fonte() -> list[str]:
-    """Subpastas da fonte que têm os 3 CSVs (Atacado/Estoque/Vendas), somente leitura."""
+    """Lista subpastas com Dados Mais Atacado.xlsx diretamente dentro, somente leitura."""
     caminho = _resolver_caminho_fonte()
     if not caminho or not os.path.isdir(caminho):
         return []
@@ -697,7 +693,7 @@ def _grupos_manuais_empresa(empresa: Optional[str], loja: Optional[str] = None) 
 # Máximo de empresas em cache (cada DF/summary pode ser grande).
 _CACHE_EMPRESA_MAX = 3
 
-# Cache por empresa do DataFrame lido direto da fonte (mtime do Dados_Atacado -> df).
+# Cache por empresa do DataFrame lido direto da fonte (mtime do XLSX -> df).
 # LRU via OrderedDict. Não há mais Base.csv em disco — nada é persistido no trabalho
 # além do summary_dashboard.json/config/harm/tags.
 _cache_base_empresa: OrderedDict[str, dict] = OrderedDict()
@@ -724,7 +720,7 @@ def _lru_set(cache: OrderedDict, key: str, value: dict, max_size: int = _CACHE_E
 
 
 def _data_ultimo_movimento_bi(pasta_fonte: str) -> Optional[date]:
-    """Data de modificação de Dados_Atacado_<empresa>.csv na fonte (somente leitura).
+    """Data de modificação da base XLSX na fonte (somente leitura).
 
     O arquivo novo só tem Ano/Mês (sem dia) — usa-se a data de última escrita
     do arquivo como proxy de "última atualização" em vez de tentar extrair
@@ -741,14 +737,13 @@ def _data_ultimo_movimento_bi(pasta_fonte: str) -> Optional[date]:
         return None
 
 
-def _carregar_atacado_df(pasta_fonte: str, pasta_trabalho: str) -> pd.DataFrame:
-    """Lê Dados_Atacado_<empresa>.csv direto da fonte e aplica harmonização em memória.
+def _carregar_atacado_df(pasta_fonte: str) -> pd.DataFrame:
+    """Lê a base XLSX da empresa direto da fonte.
 
-    Não escreve nada em disco (sem mais Base.csv). Levanta ErroNormalizacao se os
-    arquivos da fonte não existirem/faltar coluna."""
+    O arquivo já chega normalizado. Este fluxo só lê, mapeia colunas em memória
+    e nunca cria Base.csv, harm.xlsx ou qualquer outro arquivo na fonte."""
     caminho_atacado, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
-    df = normalizar(caminho_atacado)
-    return aplicar_harmonizacao_em_memoria(df, Path(pasta_trabalho))
+    return af.carregar_excel_base_empresa(caminho_atacado)
 
 
 def _garantir_summary_dashboard_arquivo(
@@ -759,7 +754,7 @@ def _garantir_summary_dashboard_arquivo(
 ) -> Path:
     """Garante summary_dashboard.json(.gz) fresco vs a fonte; regenera se preciso.
 
-    Frescor é comparado contra o mtime de Dados_Atacado_<empresa>.csv na fonte (não
+    Frescor é comparado contra o mtime de Dados Mais Atacado.xlsx na fonte (não
     há mais Base.csv intermediário). Prefere o .gz (pré-comprimido) para evitar
     gzip on-the-fly no hot path.
     """
@@ -921,11 +916,11 @@ def _carregar_base_padrao() -> tuple[pd.DataFrame, int]:
 
 
 def _carregar_base_empresa(empresa: str) -> tuple[pd.DataFrame, int]:
-    """Lê Dados_Atacado_<empresa>.csv direto da fonte (sem Base.csv em disco).
+    """Lê Dados Mais Atacado.xlsx direto da fonte (sem arquivo intermediário).
 
-    Cache LRU em RAM chaveado no mtime do Dados_Atacado na fonte.
+    Cache LRU em RAM chaveado no mtime do XLSX na fonte.
     """
-    pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
+    pasta_fonte, _pasta_trabalho = _pastas_empresa(empresa)
     try:
         caminho_atacado, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
     except ErroNormalizacao as exc:
@@ -938,8 +933,8 @@ def _carregar_base_empresa(empresa: str) -> tuple[pd.DataFrame, int]:
         return em_cache["df"], em_cache["linhas_vazias"]
 
     try:
-        df_bruto = _carregar_atacado_df(pasta_fonte, pasta_trabalho)
-        df, linhas_vazias = af.validar_e_limpar(df_bruto, receita_em_texto_br=True)
+        df_bruto = _carregar_atacado_df(pasta_fonte)
+        df, linhas_vazias = af.validar_e_limpar(df_bruto, receita_em_texto_br=False)
     except ErroNormalizacao as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except af.ErroCarregamentoCSV as exc:
@@ -992,7 +987,7 @@ def _carregar_base(
     empresa: Optional[str] = None,
     loja: Optional[str] = None,
 ) -> tuple[pd.DataFrame, int]:
-    """Com empresa: dados direto da fonte (Dados_Atacado_<empresa>.csv). Sem empresa: Excel padrão da raiz.
+    """Com empresa: dados direto da fonte (Dados Mais Atacado.xlsx). Sem empresa: Excel padrão da raiz.
 
     loja opcional filtra a coluna Loja depois do cache (o cache guarda o DF completo
     com Loja já normalizada).
@@ -1322,152 +1317,70 @@ class CaminhoPasta(BaseModel):
     caminho: str
 
 
-class EscolherPastaBody(BaseModel):
-    titulo: Optional[str] = None
+# ---------------------------------------------------------------------------
+# Navegador de pastas server-side
+#
+# O backend roda como serviço do Windows (NSSM/LocalSystem, sessão 0) e é
+# acessado pelo navegador — possivelmente de outra máquina da rede. Diálogo
+# nativo (tkinter/IFileDialog) não funciona nesse cenário: abriria numa área de
+# trabalho invisível e travaria a requisição até o timeout do proxy. Em vez
+# disso, o frontend navega pelo sistema de arquivos do servidor via listagem
+# somente leitura.
+# ---------------------------------------------------------------------------
+
+def _raizes_sistema() -> list[str]:
+    """Raízes navegáveis: letras de unidade no Windows, "/" no POSIX."""
+    if sys.platform != "win32":
+        return ["/"]
+    raizes = []
+    for letra in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        raiz = f"{letra}:\\"
+        if os.path.isdir(raiz):
+            raizes.append(raiz)
+    return raizes
 
 
-# Evita dois diálogos nativos abertos ao mesmo tempo.
-_escolher_pasta_lock = threading.Lock()
+def _listar_pastas(caminho: Optional[str]) -> dict:
+    """Lista subpastas de `caminho` (somente leitura, nunca escreve nada).
 
-_DIALOGO_PASTA_SCRIPT = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "escolher_pasta_dialog.py",
-)
-_DIALOGO_PASTA_PS1 = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)),
-    "escolher_pasta_explorer.ps1",
-)
-
-
-def _mensagem_erro_dialogo_pasta(detalhe: str) -> str:
-    return (
-        "Não foi possível abrir o diálogo de pasta. "
-        "O backend precisa rodar na máquina local com interface gráfica "
-        f"(não em servidor headless). {detalhe}"
-    ).strip()
-
-
-def _escolher_pasta_powershell(titulo_dialogo: str) -> Optional[str]:
-    """Diálogo nativo estilo Explorer (IFileDialog / FOS_PICKFOLDERS) via PowerShell -STA."""
-    if not os.path.isfile(_DIALOGO_PASTA_PS1):
-        raise FileNotFoundError(_DIALOGO_PASTA_PS1)
-    kwargs: dict = {
-        "args": [
-            "powershell",
-            "-NoProfile",
-            "-STA",
-            "-ExecutionPolicy", "Bypass",
-            "-File", _DIALOGO_PASTA_PS1,
-            titulo_dialogo,
-        ],
-        "capture_output": True,
-        "timeout": 600,
-    }
-    if sys.platform == "win32":
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-    proc = subprocess.run(**kwargs)
-    stderr = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
-    if proc.returncode == 3 or stderr.startswith("ERR_DIALOG:"):
-        raise RuntimeError(stderr or f"PowerShell saiu com código {proc.returncode}")
-    if proc.returncode != 0:
-        raise RuntimeError(stderr or f"PowerShell saiu com código {proc.returncode}")
-    caminho = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
-    return caminho or None
-
-
-def _escolher_pasta_subprocess_tk(titulo_dialogo: str) -> Optional[str]:
-    """Diálogo via processo filho com tkinter (nunca no worker do uvicorn)."""
-    if not os.path.isfile(_DIALOGO_PASTA_SCRIPT):
-        raise FileNotFoundError(_DIALOGO_PASTA_SCRIPT)
-    kwargs: dict = {
-        "args": [sys.executable, _DIALOGO_PASTA_SCRIPT, titulo_dialogo],
-        "capture_output": True,
-        "timeout": 600,
-    }
-    if sys.platform == "win32":
-        kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-    proc = subprocess.run(**kwargs)
-    stderr = (proc.stderr or b"").decode("utf-8", errors="replace").strip()
-    if proc.returncode == 0:
-        caminho = (proc.stdout or b"").decode("utf-8", errors="replace").strip()
-        return caminho or None
-    if proc.returncode == 2 or stderr.startswith("ERR_IMPORT:"):
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "Seleção de pasta indisponível: tkinter não está instalado neste Python. "
-                "Digite o caminho manualmente ou reinstale o Python com suporte a Tcl/Tk."
-            ),
-        )
-    if proc.returncode == 3 or stderr.startswith("ERR_DIALOG:"):
-        raise HTTPException(
-            status_code=503,
-            detail=_mensagem_erro_dialogo_pasta(
-                f"Detalhe: {stderr or f'código {proc.returncode}'}"
-            ),
-        )
-    raise RuntimeError(stderr or f"código {proc.returncode}")
-
-
-def _escolher_pasta_nativa(titulo: Optional[str] = None) -> Optional[str]:
+    Sem `caminho`, devolve as raízes do sistema. `pai` é None quando o caminho
+    já é uma raiz (o frontend usa isso para voltar à lista de unidades).
     """
-    Abre diálogo nativo de pasta em processo separado.
+    bruto = (caminho or "").strip()
+    if not bruto:
+        return {
+            "caminho": None,
+            "pai": None,
+            "pastas": [{"nome": r, "caminho": r} for r in _raizes_sistema()],
+        }
 
-    Nunca roda tkinter no processo do uvicorn (no Windows isso derruba o worker
-    e o proxy devolve 500 genérico sem JSON).
-    """
-    titulo_dialogo = (titulo or "").strip() or "Selecionar pasta"
-    erros: list[str] = []
+    alvo = os.path.abspath(os.path.expandvars(bruto))
+    if not os.path.isdir(alvo):
+        raise HTTPException(status_code=404, detail=f"Pasta não encontrada: {alvo}")
 
-    with _escolher_pasta_lock:
-        if sys.platform == "win32":
-            try:
-                return _escolher_pasta_powershell(titulo_dialogo)
-            except subprocess.TimeoutExpired as exc:
-                raise HTTPException(
-                    status_code=504,
-                    detail="Tempo esgotado aguardando a seleção de pasta.",
-                ) from exc
-            except HTTPException:
-                raise
-            except Exception as exc:
-                logger.warning("Diálogo PowerShell falhou: %s", exc)
-                erros.append(f"PowerShell: {exc}")
-
-        try:
-            return _escolher_pasta_subprocess_tk(titulo_dialogo)
-        except subprocess.TimeoutExpired as exc:
-            raise HTTPException(
-                status_code=504,
-                detail="Tempo esgotado aguardando a seleção de pasta.",
-            ) from exc
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.warning("Diálogo tkinter (subprocess) falhou: %s", exc)
-            erros.append(f"tkinter: {exc}")
-
-        detalhe = " | ".join(erros) if erros else "nenhum provedor disponível"
-        raise HTTPException(
-            status_code=503,
-            detail=_mensagem_erro_dialogo_pasta(
-                f"Digite o caminho manualmente. ({detalhe})"
-            ),
-        )
-
-
-async def _responder_escolher_pasta(titulo: Optional[str] = None) -> dict:
     try:
-        caminho = await asyncio.to_thread(_escolher_pasta_nativa, titulo)
-        return {"caminho": caminho}
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(
-            status_code=503,
-            detail=_mensagem_erro_dialogo_pasta(f"Detalhe: {exc}"),
-        ) from exc
+        with os.scandir(alvo) as entradas:
+            pastas = []
+            for entrada in entradas:
+                if entrada.name.startswith("."):
+                    continue
+                try:
+                    if entrada.is_dir():
+                        pastas.append({"nome": entrada.name, "caminho": entrada.path})
+                except OSError:
+                    continue  # link quebrado / sem permissão
+    except PermissionError:
+        raise HTTPException(status_code=403, detail=f"Sem permissão de leitura em {alvo}")
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Não foi possível ler {alvo}: {exc}")
 
+    pastas.sort(key=lambda p: p["nome"].casefold())
+    pai = os.path.dirname(alvo)
+    return {
+        "caminho": alvo,
+        "pai": None if pai == alvo else pai,
+        "pastas": pastas,
+    }
 
 def _salvar_caminho_fonte(caminho: str) -> str:
     caminho = caminho.strip()
@@ -1555,12 +1468,11 @@ def definir_aguardando_base_dados(
     return {"aguardando": corpo.aguardando}
 
 
-@app.post("/api/config/escolher-pasta")
-async def escolher_pasta_config(
-    corpo: EscolherPastaBody = Body(default_factory=EscolherPastaBody),
-    usuario: str = Depends(exigir_login),
+@app.get("/api/config/listar-pastas")
+def listar_pastas_config(
+    caminho: Optional[str] = None, usuario: str = Depends(exigir_login),
 ):
-    return await _responder_escolher_pasta(corpo.titulo)
+    return _listar_pastas(caminho)
 
 
 # Aliases legados do Analisador (caminho-empresas -> trabalho)
@@ -1771,7 +1683,7 @@ def ensure_base_empresa(
     """
     if forcar:
         return _regenerar_base_empresa(nome)
-    _pastas_empresa(nome)  # 404 se a empresa não tiver os 3 CSVs na fonte
+    _pastas_empresa(nome)  # 404 se a empresa não tiver o XLSX na fonte
     return {"ok": True, "empresa": nome}
 
 
@@ -1805,11 +1717,9 @@ def definir_caminho_trabalho_dashboard(corpo: CaminhoPasta):
     return {"caminho": _salvar_caminho_trabalho(corpo.caminho)}
 
 
-@app.post("/api/dashboard/escolher-pasta")
-async def escolher_pasta_dashboard(
-    corpo: EscolherPastaBody = Body(default_factory=EscolherPastaBody),
-):
-    return await _responder_escolher_pasta(corpo.titulo)
+@app.get("/api/dashboard/listar-pastas")
+def listar_pastas_dashboard(caminho: Optional[str] = None):
+    return _listar_pastas(caminho)
 
 
 # Alias legado: caminho-dados do dash = fonte (somente leitura)
@@ -2252,6 +2162,9 @@ class ParametrosAnalise(BaseModel):
     queda_minima_erosao_rs: float = 0.0
     reducao_minima_sem_venda: float = 90.0
     top_n_poder_compra: Optional[int] = None
+    # False = erosão/correlação/churn olham a base inteira (mantém a Receita
+    # Sob Risco comparável entre períodos). True = só os produtos em alerta.
+    erosao_somente_produtos_em_alerta: bool = False
     nome_empresa: str = ""
     nome_usuario: str = ""
     empresa: Optional[str] = None
@@ -2272,8 +2185,39 @@ def _carregar_df_filtrado(
 CHAVES_ALVOS = frozenset({"mais_atacado", "liquidez"})
 
 
-def _analises_alvos(empresa: Optional[str], chaves: set[str]) -> dict[str, pd.DataFrame]:
-    """Gera os DataFrames da seção Alvos direto da fonte, em memória (sem CSV em disco)."""
+def _filtrar_loja_coluna(
+    df: pd.DataFrame, loja: Optional[str], coluna: str, origem: str,
+) -> pd.DataFrame:
+    """Filtra `df` por `coluna` == loja. loja vazia/None = todas (sem filtro).
+
+    Usado nos Alvos, que leem arquivos próprios da fonte (nomes de coluna de loja
+    diferentes do schema canônico: `Loja` no estoque, `Nome_Loja` nas vendas).
+    """
+    nome = _normalizar_loja(loja)
+    if not nome:
+        return df
+    if df is None or df.empty or coluna not in df.columns:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{origem} não tem a coluna '{coluna}' para filtrar por loja.",
+        )
+    filtrado = df.loc[df[coluna].fillna("").astype(str).str.strip() == nome].copy()
+    if filtrado.empty:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Loja '{nome}' não encontrada em {origem}.",
+        )
+    return filtrado
+
+
+def _analises_alvos(
+    empresa: Optional[str], chaves: set[str], loja: Optional[str] = None,
+) -> dict[str, pd.DataFrame]:
+    """Gera os DataFrames da seção Alvos direto da fonte, em memória (sem CSV em disco).
+
+    `loja` restringe os três arquivos ao escopo selecionado, igual ao resto do
+    Analisador — sem isso os relatórios Alvos mostrariam todas as lojas.
+    """
     if not empresa:
         raise HTTPException(
             status_code=400,
@@ -2288,7 +2232,8 @@ def _analises_alvos(empresa: Optional[str], chaves: set[str]) -> dict[str, pd.Da
     analises: dict[str, pd.DataFrame] = {}
 
     if "mais_atacado" in chaves:
-        df = _carregar_atacado_df(pasta_fonte, pasta_trabalho)
+        df = _carregar_atacado_df(pasta_fonte)
+        df = _filtrar_loja_coluna(df, loja, "Loja", "Dados Mais Atacado.xlsx")
         if "Receita Acumulada 11 Meses" in df.columns:
             df["Receita Acumulada 11 Meses"] = parse_numero_flexivel(df["Receita Acumulada 11 Meses"])
         if "QTD" in df.columns:
@@ -2296,11 +2241,21 @@ def _analises_alvos(empresa: Optional[str], chaves: set[str]) -> dict[str, pd.Da
         analises["mais_atacado"] = df
 
     if "liquidez" in chaves:
+        if caminho_estoque is None or caminho_vendas is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Liquidez exige Dados_Estoque_{Path(pasta_fonte).name}.* "
+                    f"e Dados_Vendas_{Path(pasta_fonte).name}.* na pasta fonte."
+                ),
+            )
         estoque = normalizar_estoque(caminho_estoque)
+        estoque = _filtrar_loja_coluna(estoque, loja, "Loja", caminho_estoque.name)
         for col in ("Qtd_estoque", "Preço_médio_de_venda", "Preço_médio_cmv", "Último_custo"):
             if col in estoque.columns:
                 estoque[col] = parse_numero_flexivel(estoque[col])
         vendas = normalizar_vendas(caminho_vendas)
+        vendas = _filtrar_loja_coluna(vendas, loja, "Nome_Loja", caminho_vendas.name)
         if "QTD" in vendas.columns:
             vendas["QTD"] = parse_numero_flexivel(vendas["QTD"])
         analises["liquidez_estoque"] = estoque
@@ -2342,12 +2297,13 @@ def _rodar_analises(parametros: ParametrosAnalise) -> dict:
             queda_minima_erosao_rs=parametros.queda_minima_erosao_rs,
             reducao_minima_sem_venda=parametros.reducao_minima_sem_venda,
             top_n_poder_compra=parametros.top_n_poder_compra,
+            erosao_somente_produtos_em_alerta=parametros.erosao_somente_produtos_em_alerta,
             clientes_balcao_extra=_clientes_balcao_extra(empresa, loja=parametros.loja),
             grupos_manuais=_grupos_manuais_empresa(empresa, loja=parametros.loja),
         )
 
     if chaves_alvos:
-        resultados["Alvos"] = _analises_alvos(empresa, chaves_alvos)
+        resultados["Alvos"] = _analises_alvos(empresa, chaves_alvos, loja=parametros.loja)
 
     if not resultados:
         raise HTTPException(status_code=400, detail="Nenhum relatório selecionado.")

@@ -172,7 +172,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
           />
           <div className="app-sidebar-brand-text">
             <span className="app-sidebar-brand-nome">Prisma</span>
-            <span className="app-sidebar-brand-sub">Sistema de analises</span>
+            <span className="app-sidebar-brand-sub">Sistema de análises</span>
           </div>
           <button
             type="button"

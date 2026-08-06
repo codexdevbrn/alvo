@@ -122,6 +122,8 @@ export interface ParametrosAnalise {
   queda_minima_erosao_rs: number;
   reducao_minima_sem_venda: number;
   top_n_poder_compra: number | null;
+  /** false = erosão/churn sobre a base inteira; true = só produtos em alerta. */
+  erosao_somente_produtos_em_alerta: boolean;
   nome_empresa: string;
   nome_usuario: string;
   empresa?: string | null;
@@ -269,21 +271,29 @@ export async function definirAguardandoBaseDados(aguardando: boolean, auth = fal
   return dados.aguardando;
 }
 
-/** Abre diálogo nativo de pasta no backend local (tkinter). null = cancelado. */
-export async function escolherPasta(
-  titulo?: string,
+export type PastaItem = { nome: string; caminho: string };
+
+export type ListagemPastas = {
+  /** null = lista de raízes/unidades do servidor. */
+  caminho: string | null;
+  /** null = o caminho atual já é uma raiz. */
+  pai: string | null;
+  pastas: PastaItem[];
+};
+
+/**
+ * Lista subpastas do sistema de arquivos **do servidor** (somente leitura).
+ * O backend roda como serviço sem sessão gráfica, então não há diálogo nativo:
+ * a navegação acontece na UI.
+ */
+export async function listarPastas(
+  caminho?: string | null,
   auth = false,
-): Promise<string | null> {
-  const res = await fetch(
-    auth ? '/api/config/escolher-pasta' : '/api/dashboard/escolher-pasta',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', ...(auth ? authHeaders() : {}) },
-      body: JSON.stringify({ titulo: titulo || null }),
-    },
-  );
-  const dados = await tratarResposta<{ caminho: string | null }>(res);
-  return dados.caminho;
+): Promise<ListagemPastas> {
+  const base = auth ? '/api/config/listar-pastas' : '/api/dashboard/listar-pastas';
+  const qs = caminho ? `?caminho=${encodeURIComponent(caminho)}` : '';
+  const res = await fetch(`${base}${qs}`, { headers: auth ? authHeaders() : {} });
+  return tratarResposta<ListagemPastas>(res);
 }
 
 export async function listarEmpresas(): Promise<string[]> {
@@ -331,6 +341,7 @@ export type ConfigEmpresaSalva = {
   quedaMinimaErosaoRs?: number | '';
   reducaoMinimaSemVenda?: number;
   topNPoderCompra?: number | '';
+  erosaoSomenteProdutosEmAlerta?: boolean;
   clientesExcluidos?: string[];
   produtosExcluidos?: string[];
   chavesSelecionadas?: string[];

@@ -3,9 +3,9 @@ import { Link } from 'react-router-dom';
 import { FolderOpen, Loader2, Pencil, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
 import { NumberStepper } from '../components/analisador/NumberStepper';
+import { PastaPickerModal } from '../components/PastaPickerModal';
 import { EVENTO_EMPRESA } from '../components/SidebarEmpresaSelect';
 import {
-  escolherPasta,
   definirAguardandoBaseDados,
   definirCaminhoFonteDados,
   definirCaminhoTrabalho,
@@ -23,6 +23,7 @@ import {
   type ConfigEmpresaSalva,
   type TagCatalogoItem,
 } from '../api/client';
+import { invalidarSummary } from '../utils/cacheSummary';
 
 const LS_CAMINHO_FONTE = 'prisma_caminho_fonte';
 const LS_CAMINHO_TRABALHO = 'prisma_caminho_trabalho';
@@ -96,6 +97,7 @@ export default function ConfiguracoesPage() {
   const [reducaoMinimaSemVenda, setReducaoMinimaSemVenda] = useState(90);
   const [topNPoderCompra, setTopNPoderCompra] = useState<number | ''>('');
   const [excluirPeriodoAtual, setExcluirPeriodoAtual] = useState(true);
+  const [erosaoSomenteProdutosEmAlerta, setErosaoSomenteProdutosEmAlerta] = useState(false);
   const [granularidade, setGranularidade] = useState('Mensal');
   const [configBase, setConfigBase] = useState<ConfigEmpresaSalva | null>(null);
   const [salvandoParams, setSalvandoParams] = useState(false);
@@ -169,6 +171,7 @@ export default function ConfiguracoesPage() {
           setReducaoMinimaSemVenda(cfg.reducaoMinimaSemVenda ?? 90);
           setTopNPoderCompra(cfg.topNPoderCompra ?? '');
           setExcluirPeriodoAtual(cfg.excluirPeriodoAtual ?? true);
+          setErosaoSomenteProdutosEmAlerta(cfg.erosaoSomenteProdutosEmAlerta ?? false);
           setGranularidade(cfg.granularidade ?? 'Mensal');
         }
       } catch (e) {
@@ -224,7 +227,7 @@ export default function ConfiguracoesPage() {
       const lista = await listarEmpresasDashboard();
       setEmpresas(lista);
       if (lista.length === 0) {
-        setFeedbackDados({ tipo: 'erro', texto: 'Nenhuma empresa com pasta BI/ encontrada na pasta fonte.' });
+        setFeedbackDados({ tipo: 'erro', texto: 'Nenhuma empresa com Dados Mais Atacado.xlsx encontrado na pasta fonte.' });
       } else {
         setFeedbackDados({ tipo: 'ok', texto: `${lista.length} empresa(s) sincronizada(s).` });
       }
@@ -247,6 +250,9 @@ export default function ConfiguracoesPage() {
         await persistirCaminhos();
       }
       await regenerarBaseEmpresa(empresa, false);
+      // O Dashboard mantém o summary em memória durante a sessão — sem isto
+      // ele mostraria os números antigos ao voltar.
+      invalidarSummary(empresa);
       setFeedbackDados({ tipo: 'ok', texto: `Base de ${empresa} regenerada. Abra o Dashboard para ver os dados.` });
     } catch (e) {
       setFeedbackDados({ tipo: 'erro', texto: e instanceof Error ? e.message : 'Falha ao regenerar a base.' });
@@ -255,30 +261,18 @@ export default function ConfiguracoesPage() {
     }
   };
 
-  const buscarPasta = async (campo: 'fonte' | 'trabalho') => {
-    setFeedbackDados(null);
-    setBuscando(campo);
-    try {
-      const titulo = campo === 'fonte'
-        ? 'Selecionar pasta fonte (BI)'
-        : 'Selecionar pasta de trabalho';
-      const escolhido = await escolherPasta(titulo, false);
-      if (escolhido == null) return;
-      if (campo === 'fonte') {
-        setCaminhoFonte(escolhido);
-        gravarLocal(LS_CAMINHO_FONTE, escolhido);
-      } else {
-        setCaminhoTrabalho(escolhido);
-        gravarLocal(LS_CAMINHO_TRABALHO, escolhido);
-      }
-    } catch (e) {
-      setFeedbackDados({ tipo: 'erro', texto: e instanceof Error ? e.message : 'Falha ao abrir o seletor de pasta.' });
-    } finally {
-      setBuscando(null);
+  const escolherPastaNavegada = (caminho: string) => {
+    if (buscando === 'fonte') {
+      setCaminhoFonte(caminho);
+      gravarLocal(LS_CAMINHO_FONTE, caminho);
+    } else if (buscando === 'trabalho') {
+      setCaminhoTrabalho(caminho);
+      gravarLocal(LS_CAMINHO_TRABALHO, caminho);
     }
+    setBuscando(null);
   };
 
-  const ocupado = sincronizando || salvando || regenerando || buscando !== null;
+  const ocupado = sincronizando || salvando || regenerando;
   const analisePronta = logado && Boolean(empresa);
 
   const atualizarTag = (id: string, patch: Partial<TagCatalogoItem>) => {
@@ -332,6 +326,7 @@ export default function ConfiguracoesPage() {
         reducaoMinimaSemVenda,
         topNPoderCompra,
         excluirPeriodoAtual,
+        erosaoSomenteProdutosEmAlerta,
         granularidade,
       };
       await salvarConfiguracaoEmpresa(empresa, dados, null);
@@ -361,11 +356,11 @@ export default function ConfiguracoesPage() {
           <section className="glass-card glass-card-flat config-page-card" aria-labelledby="setor-dados">
             <h2 id="setor-dados" className="config-page-card-titulo">Dados do sistema</h2>
             <p className="config-page-card-desc">
-              Pastas fonte/trabalho, sincronização de empresas e regeneração da Base.csv.
+              Pastas fonte/trabalho, sincronização de empresas e atualização do dashboard.
             </p>
 
             <label className="analisador-campo">
-              <span>Pasta fonte (BI, somente leitura)</span>
+              <span>Pasta fonte (somente leitura)</span>
               <div className="caminho-pasta-row">
                 <input
                   className="analisador-input"
@@ -376,23 +371,21 @@ export default function ConfiguracoesPage() {
                 <button
                   type="button"
                   className="analisador-btn analisador-btn-sec caminho-pasta-btn"
-                  onClick={() => void buscarPasta('fonte')}
+                  onClick={() => setBuscando('fonte')}
                   disabled={ocupado}
                   aria-label="Buscar pasta fonte"
                 >
-                  {buscando === 'fonte'
-                    ? <Loader2 size={14} className="dashboard-filter-spinner" />
-                    : <FolderOpen size={14} />}
+                  <FolderOpen size={14} />
                   Buscar
                 </button>
               </div>
             </label>
             <p className="analisador-hint">
-              Subpastas com BI/. O app nunca altera esta pasta.
+              Selecione a pasta raiz que contém as empresas. Cada empresa deve ter diretamente o arquivo Dados Mais Atacado.xlsx. O app nunca altera esta pasta.
             </p>
 
             <label className="analisador-campo">
-              <span>Pasta de trabalho (Base.csv / config)</span>
+              <span>Pasta de trabalho (summary / config)</span>
               <div className="caminho-pasta-row">
                 <input
                   className="analisador-input"
@@ -403,19 +396,17 @@ export default function ConfiguracoesPage() {
                 <button
                   type="button"
                   className="analisador-btn analisador-btn-sec caminho-pasta-btn"
-                  onClick={() => void buscarPasta('trabalho')}
+                  onClick={() => setBuscando('trabalho')}
                   disabled={ocupado}
                   aria-label="Buscar pasta de trabalho"
                 >
-                  {buscando === 'trabalho'
-                    ? <Loader2 size={14} className="dashboard-filter-spinner" />
-                    : <FolderOpen size={14} />}
+                  <FolderOpen size={14} />
                   Buscar
                 </button>
               </div>
             </label>
             <p className="analisador-hint">
-              Onde o app grava Base.csv, config.json e harm.xlsx. Deve ser distinta da fonte.
+              Onde o app grava summary, config.json e caches. Deve ser distinta da fonte.
             </p>
 
             <label className="analisador-check-linha">
@@ -654,7 +645,9 @@ export default function ConfiguracoesPage() {
                       <NumberStepper value={topNProdutos} onChange={setTopNProdutos} placeholder="Vazio = todos" />
                     </label>
                     <p className="analisador-hint">
-                      Vale para &quot;Alertas de Queda Consecutiva&quot; (usa a mesma tendência interna do gráfico &quot;Evolução no Tempo&quot;).
+                      Vale para &quot;Alertas de Queda Consecutiva&quot; (usa a mesma tendência interna do gráfico &quot;Evolução no Tempo&quot;)
+                      e também limita &quot;Venda por Produto&quot; e &quot;Venda por Fabricante&quot;, que seguem o mesmo
+                      recorte de período do resto do relatório (vazio = top 20).
                     </p>
                   </section>
 
@@ -668,8 +661,19 @@ export default function ConfiguracoesPage() {
                       <span>Queda mínima em R$ p/ erosão</span>
                       <NumberStepper value={quedaMinimaErosaoRs} onChange={setQuedaMinimaErosaoRs} placeholder="0 = sem piso" />
                     </label>
+                    <label className="analisador-check-linha">
+                      <input
+                        type="checkbox"
+                        checked={erosaoSomenteProdutosEmAlerta}
+                        onChange={(e) => setErosaoSomenteProdutosEmAlerta(e.target.checked)}
+                      />
+                      Limitar erosão e churn aos produtos com alerta de queda
+                    </label>
                     <p className="analisador-hint">
-                      Vale para &quot;Erosão de Clientes por Produto&quot;.
+                      Vale para &quot;Erosão de Clientes por Produto&quot;, &quot;Correlação Produto x Cliente&quot; e
+                      &quot;Impacto Financeiro do Churn&quot;. Desmarcado (padrão), o risco é calculado sobre a base
+                      inteira e fica comparável entre períodos. Marcado, o escopo cai só para os produtos que
+                      entraram nos alertas de queda — e passa a depender do &quot;top N por tendência&quot;.
                     </p>
                   </section>
 
@@ -720,6 +724,13 @@ export default function ConfiguracoesPage() {
           </section>
         </div>
       </div>
+      <PastaPickerModal
+        aberto={buscando !== null}
+        titulo={buscando === 'fonte' ? 'Selecionar pasta fonte' : 'Selecionar pasta de trabalho'}
+        caminhoInicial={buscando === 'fonte' ? caminhoFonte : caminhoTrabalho}
+        onCancelar={() => setBuscando(null)}
+        onEscolher={escolherPastaNavegada}
+      />
     </AppShell>
   );
 }

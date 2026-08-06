@@ -27,6 +27,7 @@ interface PreviaClientesTableProps {
   onToggleGrupoManual?: (cliente: string, grupoId: string) => void | Promise<void>;
   onCriarGrupoManual?: (cliente: string, nome: string) => void | Promise<void>;
   desconsiderarBalcao?: boolean;
+  onToggleAll?: (clientes: string[], checkAll: boolean) => void;
 }
 
 type MenuTags = {
@@ -53,6 +54,7 @@ export function PreviaClientesTable({
   onToggleGrupoManual,
   onCriarGrupoManual,
   desconsiderarBalcao = false,
+  onToggleAll,
 }: PreviaClientesTableProps) {
   const [busca, setBusca] = useState('');
   const [grupoFiltro, setGrupoFiltro] = useState('');
@@ -96,6 +98,9 @@ export function PreviaClientesTable({
     if (!desconsiderarBalcao) return 0;
     return lista.filter((item) => item.grupo === 'Balcão' && !excluidos.has(item.cliente)).length;
   }, [lista, desconsiderarBalcao, excluidos]);
+
+  const todosConsideradosFiltro = itensFiltrados.length > 0 && consideradosNoFiltro === itensFiltrados.length;
+  const algumConsideradoFiltro = consideradosNoFiltro > 0;
 
   const tagsDoMenu = menu ? (tagsPorCliente[nomeClienteChave(menu.cliente)] ?? []) : [];
 
@@ -253,7 +258,27 @@ export function PreviaClientesTable({
         <table className="analisador-tabela">
           <thead>
             <tr>
-              <th className="col-check">Incluir?</th>
+              <th className="col-check">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <label className="analisador-check">
+                    <input
+                      type="checkbox"
+                      checked={todosConsideradosFiltro}
+                      ref={(el) => {
+                        if (el) el.indeterminate = algumConsideradoFiltro && !todosConsideradosFiltro;
+                      }}
+                      onChange={() => {
+                        if (onToggleAll) {
+                          const checkAll = !todosConsideradosFiltro;
+                          const chaves = itensFiltrados.map((i) => i.cliente);
+                          onToggleAll(chaves, checkAll);
+                        }
+                      }}
+                    />
+                  </label>
+                  <span>Incluir?</span>
+                </div>
+              </th>
               <th className="col-nome">Cliente</th>
               <th className="col-tags">Tags</th>
               <th className="col-num">Receita</th>

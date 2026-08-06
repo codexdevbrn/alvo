@@ -268,10 +268,33 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
     };
   }, [schema, empresa, loja, dimensoes, metricas, aplicarGrupos, limite, tipoGrafico, bins, modo]);
 
+  const limites = useMemo(() => {
+    if (modo === 'tabela') return { dim: 4, met: 4 };
+    switch (tipoGrafico) {
+      case 'pizza':
+      case 'histograma':
+      case 'boxplot':
+        return { dim: 1, met: 1 };
+      case 'dispersao':
+        return { dim: 1, met: 2 };
+      default:
+        return { dim: 4, met: 4 };
+    }
+  }, [modo, tipoGrafico]);
+
+  useEffect(() => {
+    setDimensoes((d) => (d.length > limites.dim ? d.slice(0, Math.max(1, limites.dim)) : d));
+    setMetricas((m) => (m.length > limites.met ? m.slice(0, Math.max(1, limites.met)) : m));
+  }, [limites]);
+
   const toggleDim = (col: string) => {
     setDimensoes((atual) => {
-      if (atual.includes(col)) return atual.filter((c) => c !== col);
-      if (atual.length >= 4) return atual;
+      if (atual.includes(col)) {
+        const next = atual.filter((c) => c !== col);
+        return next.length ? next : atual;
+      }
+      if (limites.dim === 1) return [col];
+      if (atual.length >= limites.dim) return atual;
       return [...atual, col];
     });
   };
@@ -282,6 +305,8 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
         const next = atual.filter((x) => x !== m);
         return next.length ? next : atual;
       }
+      if (limites.met === 1) return [m];
+      if (atual.length >= limites.met) return atual;
       return [...atual, m];
     });
   };
@@ -737,7 +762,7 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
 
         <div className="analisador-explorar-builder">
           <fieldset className="analisador-explorar-fieldset analisador-explorar-dimensoes">
-            <legend>Dimensões (máx. 4)</legend>
+            <legend>Dimensões (máx. {limites.dim})</legend>
             <div className="analisador-explorar-checks">
               {(schema?.dimensoes ?? []).map((col) => (
                 <label key={col} className="analisador-check-linha">
@@ -753,7 +778,7 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
           </fieldset>
 
           <fieldset className="analisador-explorar-fieldset analisador-explorar-metricas">
-            <legend>Métricas</legend>
+            <legend>Métricas (máx. {limites.met})</legend>
             <div className="analisador-explorar-checks analisador-explorar-checks-metricas">
               {(schema?.metricas ?? METRICAS_PADRAO).map((m) => (
                 <label key={m} className="analisador-check-linha">

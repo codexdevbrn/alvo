@@ -119,6 +119,7 @@ export default function AnalisadorPage() {
   const [desconsiderarDemaisProdutos, setDesconsiderarDemaisProdutos] = useState(false);
   const [desconsiderarNaoHarmonizados, setDesconsiderarNaoHarmonizados] = useState(false);
   const [excluirPeriodoAtual, setExcluirPeriodoAtual] = useState(true);
+  const [erosaoSomenteProdutosEmAlerta, setErosaoSomenteProdutosEmAlerta] = useState(false);
   const [nomeEmpresaManual, setNomeEmpresaManual] = useState('');
   const [topNProdutos, setTopNProdutos] = useState<number | ''>('');
   const [reducaoMinimaErosao, setReducaoMinimaErosao] = useState(50);
@@ -221,6 +222,7 @@ export default function AnalisadorPage() {
     setDesconsiderarDemaisProdutos(Boolean(dados.desconsiderarDemaisProdutos));
     setDesconsiderarNaoHarmonizados(Boolean(dados.desconsiderarNaoHarmonizados));
     setExcluirPeriodoAtual(dados.excluirPeriodoAtual ?? true);
+    setErosaoSomenteProdutosEmAlerta(dados.erosaoSomenteProdutosEmAlerta ?? false);
     setTopNProdutos(dados.topNProdutos ?? '');
     setReducaoMinimaErosao(dados.reducaoMinimaErosao ?? 50);
     setQuedaMinimaAlertaRs(dados.quedaMinimaAlertaRs ?? 3000);
@@ -403,6 +405,7 @@ export default function AnalisadorPage() {
     periodos_queda_consecutiva: periodosQueda,
     desconsiderar_balcao: desconsiderarBalcao,
     excluir_periodo_atual: excluirPeriodoAtual,
+    erosao_somente_produtos_em_alerta: erosaoSomenteProdutosEmAlerta,
     top_n_produtos: topNProdutos === '' ? null : topNProdutos,
     reducao_minima_erosao: reducaoMinimaErosao,
     queda_minima_alerta_rs: quedaMinimaAlertaRs === '' ? 0 : quedaMinimaAlertaRs,
@@ -705,7 +708,7 @@ export default function AnalisadorPage() {
 
   const configAtual = () => ({
     cortesClientes, corteProdutos, periodosQueda, desconsiderarBalcao, desconsiderarDemaisProdutos,
-    desconsiderarNaoHarmonizados, excluirPeriodoAtual,
+    desconsiderarNaoHarmonizados, excluirPeriodoAtual, erosaoSomenteProdutosEmAlerta,
     nomeEmpresa: nomeEmpresaEfetivo, topNProdutos, reducaoMinimaErosao, maxPorGrupo,
     quedaMinimaAlertaRs, quedaMinimaErosaoRs, reducaoMinimaSemVenda, topNPoderCompra,
     clientesExcluidos: Array.from(clientesExcluidos), produtosExcluidos: Array.from(produtosExcluidos),
@@ -1210,6 +1213,13 @@ export default function AnalisadorPage() {
                 itens={itensClientes}
                 excluidos={clientesExcluidos}
                 onToggle={(cliente) => toggleSet(clientesExcluidos, cliente, setClientesExcluidos)}
+                onToggleAll={(chaves, checkAll) => {
+                  setClientesExcluidos((prev) => {
+                    const novo = new Set(prev);
+                    chaves.forEach((c) => (checkAll ? novo.delete(c) : novo.add(c)));
+                    return novo;
+                  });
+                }}
                 carregando={carregandoGrupos}
                 empresa={empresaBase}
                 tagsPorCliente={tagsPorCliente}
@@ -1271,6 +1281,13 @@ export default function AnalisadorPage() {
                 itens={itensProdutos}
                 excluidos={produtosExcluidos}
                 onToggle={(produto) => toggleSet(produtosExcluidos, produto, setProdutosExcluidos)}
+                onToggleAll={(chaves, checkAll) => {
+                  setProdutosExcluidos((prev) => {
+                    const novo = new Set(prev);
+                    chaves.forEach((p) => (checkAll ? novo.delete(p) : novo.add(p)));
+                    return novo;
+                  });
+                }}
                 carregando={carregandoProdutos}
               />
               <p className="analisador-hint" style={{ width: '100%', marginTop: '0.5rem' }}>
