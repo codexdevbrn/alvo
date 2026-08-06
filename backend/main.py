@@ -1087,10 +1087,8 @@ def _float_ou_none(valor) -> Optional[float]:
 
 
 def _eh_produto_nao_harmonizado(nome: str) -> bool:
-    """Espelha o critério do frontend (texto normalizado contém 'harmonizad')."""
-    normalizado = unicodedata.normalize("NFD", str(nome))
-    sem_acento = "".join(c for c in normalizado if unicodedata.category(c) != "Mn")
-    return "harmonizad" in sem_acento.lower()
+    """Regra única, no motor — espelhada também pelo frontend."""
+    return af.eh_produto_nao_harmonizado(nome)
 
 
 # Após sugerir cortes, grupos 1..N já cabem no max; Demais pode ser enorme.

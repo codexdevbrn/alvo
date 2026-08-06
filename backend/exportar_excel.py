@@ -23,6 +23,7 @@ CATALOGO_RELATORIOS = [
     ("Vendas", [
         ("top_fabricantes", "Venda por Fabricante (Top Fabricantes)"),
         ("top_produtos", "Venda por Produto (Top Produtos)"),
+        ("comparativo_receita", "Comparativo de Receita x Ano Anterior (por produto)"),
     ]),
     ("Segmentação e Poder de Compra", [
         ("abc", "Concentrado / Faturamento e Segmentação de Clientes (ABC)"),
@@ -51,6 +52,7 @@ CATALOGO_RELATORIOS = [
 NOMES_ANALISE = {
     "top_produtos": "Top_Produtos",
     "top_fabricantes": "Top_Fabricantes",
+    "comparativo_receita": "Comparativo_Receita",
     "poder_compra_clientes": "Poder_Compra_Clientes",
     "evolucao_produtos": "Evolucao_Produtos",
     "alertas_queda": "Alertas_Queda",
@@ -74,6 +76,7 @@ NOMES_ANALISE = {
 COLUNAS_MOEDA_POR_ANALISE = {
     "top_produtos": ["Receita"],
     "top_fabricantes": ["Receita"],
+    "comparativo_receita": ["Receita_Ano_Anterior", "Receita_Ano_Atual", "Ganho_Perda"],
     "poder_compra_clientes": ["Poder_De_Compra"],
     "evolucao_produtos": ["Receita", "Receita_Periodo_Anterior"],
     "alertas_queda": ["Receita_Ultimo_Periodo", "Receita_Primeiro_Periodo"],

@@ -5,6 +5,8 @@ Sem dependência de GUI - pode ser testado isoladamente via linha de comando
 ou testes automatizados. Todas as funções recebem/retornam DataFrames do pandas.
 """
 
+import unicodedata
+
 import pandas as pd
 import numpy as np
 
@@ -310,6 +312,32 @@ def contar_produtos_nao_harmonizados(df):
     return int((df["descricao"] == DESCRICAO_NAO_HARMONIZADA).sum())
 
 
+def eh_produto_nao_harmonizado(nome):
+    """Produto sem descrição harmonizada.
+
+    Critério por texto normalizado (sem acento, minúsculo) contendo
+    "harmonizad": além do rótulo que o próprio motor cria para descrição vazia
+    ("Não harmonizados"), a fonte manda variações próprias — "NÃO HARMONIZADO",
+    "Nao Harmonizados" etc. Fonte única desta regra: o backend e o frontend
+    espelham este mesmo critério.
+    """
+    normalizado = unicodedata.normalize("NFD", str(nome))
+    sem_acento = "".join(c for c in normalizado if unicodedata.category(c) != "Mn")
+    return "harmonizad" in sem_acento.lower()
+
+
+def mascara_produtos_nao_harmonizados(serie_descricao):
+    """Versão vetorizada de `eh_produto_nao_harmonizado` para uma coluna inteira."""
+    return (
+        serie_descricao.astype(str)
+        .str.normalize("NFD")
+        .str.encode("ascii", "ignore")
+        .str.decode("ascii")
+        .str.lower()
+        .str.contains("harmonizad", na=False)
+    )
+
+
 COLUNA_PERIODO = {
     "Mensal": "Periodo_Mensal",
     "Trimestral": "Periodo_Trimestral",
@@ -600,6 +628,111 @@ def tendencia_produtos(df, granularidade="Mensal", periodos_queda_consecutiva=2,
         alertas_df.reset_index(drop=True, inplace=True)
 
     return evolucao, alertas_df
+
+
+COLUNAS_COMPARATIVO_RECEITA = [
+    "descricao", "Periodo_Ano_Anterior", "Periodo_Ano_Atual",
+    "Receita_Ano_Anterior", "Receita_Ano_Atual", "Ganho_Perda",
+    "Desempenho_Pct", "Participacao_Ano_Anterior_Pct", "Participacao_Ano_Atual_Pct",
+]
+
+ROTULO_TOTAIS = "Totais"
+
+
+def _periodo_ano_anterior(periodo, granularidade):
+    """Mesmo período, um ano antes ("2026-07" -> "2025-07", "2026-T3" -> "2025-T3")."""
+    if granularidade == "Mensal":
+        ano, mes = periodo.split("-")
+        return f"{int(ano) - 1}-{mes}"
+    if granularidade == "Trimestral":
+        ano, tri = periodo.split("-T")
+        return f"{int(ano) - 1}-T{tri}"
+    if granularidade == "Semestral":
+        ano, sem = periodo.split("-S")
+        return f"{int(ano) - 1}-S{sem}"
+    return str(int(periodo) - 1)  # Anual
+
+
+def comparativo_receita_ano_anterior(df, granularidade="Mensal"):
+    """Receita por produto no período mais recente vs. o MESMO período do ano anterior.
+
+    O período comparado acompanha a granularidade escolhida: Mensal compara
+    jul/26 com jul/25, Trimestral compara T3/26 com T3/25, e assim por diante.
+
+    Produtos sem descrição harmonizada ficam de fora (ver
+    `eh_produto_nao_harmonizado`, que cobre as variações que a fonte manda) — o
+    relatório é lido produto a produto e um balde genérico distorce tanto o
+    ranking quanto a participação.
+
+    Entram os produtos dos DOIS lados (quem não vendeu num deles aparece com 0),
+    ordenados pela receita do período atual. A primeira linha é o total.
+
+    Colunas: receita dos dois períodos, ganho/perda em R$, desempenho % e a
+    participação de cada produto na receita do seu próprio período.
+    Desempenho fica vazio quando não havia receita antes (não existe variação
+    percentual a partir de zero).
+    """
+    col_periodo = COLUNA_PERIODO[granularidade]
+    periodos = _ordenar_periodos(df[col_periodo].unique(), granularidade)
+    if not periodos:
+        return pd.DataFrame(columns=COLUNAS_COMPARATIVO_RECEITA)
+
+    periodo_atual = periodos[-1]
+    periodo_anterior = _periodo_ano_anterior(periodo_atual, granularidade)
+
+    base = df[~mascara_produtos_nao_harmonizados(df["descricao"])]
+    base = base[base[col_periodo].isin([periodo_anterior, periodo_atual])]
+
+    receita = (
+        base.groupby(["descricao", col_periodo])["Receita"].sum()
+        .unstack(fill_value=0.0)
+        .reindex(columns=[periodo_anterior, periodo_atual], fill_value=0.0)
+    )
+    if receita.empty:
+        return pd.DataFrame(columns=COLUNAS_COMPARATIVO_RECEITA)
+
+    anterior = receita[periodo_anterior]
+    atual = receita[periodo_atual]
+    total_anterior = float(anterior.sum())
+    total_atual = float(atual.sum())
+
+    resultado = pd.DataFrame({
+        "descricao": receita.index,
+        "Receita_Ano_Anterior": anterior.to_numpy(),
+        "Receita_Ano_Atual": atual.to_numpy(),
+    })
+    resultado["Ganho_Perda"] = resultado["Receita_Ano_Atual"] - resultado["Receita_Ano_Anterior"]
+    resultado["Desempenho_Pct"] = np.where(
+        resultado["Receita_Ano_Anterior"] > 0,
+        resultado["Ganho_Perda"] / resultado["Receita_Ano_Anterior"] * 100,
+        np.nan,
+    )
+    resultado["Participacao_Ano_Anterior_Pct"] = (
+        resultado["Receita_Ano_Anterior"] / total_anterior * 100 if total_anterior > 0 else 0.0
+    )
+    resultado["Participacao_Ano_Atual_Pct"] = (
+        resultado["Receita_Ano_Atual"] / total_atual * 100 if total_atual > 0 else 0.0
+    )
+    resultado.sort_values(
+        ["Receita_Ano_Atual", "descricao"], ascending=[False, True], inplace=True,
+    )
+
+    totais = pd.DataFrame([{
+        "descricao": ROTULO_TOTAIS,
+        "Receita_Ano_Anterior": total_anterior,
+        "Receita_Ano_Atual": total_atual,
+        "Ganho_Perda": total_atual - total_anterior,
+        "Desempenho_Pct": (
+            (total_atual - total_anterior) / total_anterior * 100 if total_anterior > 0 else np.nan
+        ),
+        "Participacao_Ano_Anterior_Pct": np.nan,
+        "Participacao_Ano_Atual_Pct": np.nan,
+    }])
+
+    resultado = pd.concat([totais, resultado], ignore_index=True)
+    resultado["Periodo_Ano_Anterior"] = _formatar_rotulo_periodo(periodo_anterior, granularidade)
+    resultado["Periodo_Ano_Atual"] = _formatar_rotulo_periodo(periodo_atual, granularidade)
+    return resultado[COLUNAS_COMPARATIVO_RECEITA]
 
 
 def produtos_alta_e_queda(df, granularidade="Mensal", top_n=10):
@@ -1732,7 +1865,7 @@ def gerar_analises_completas(df, granularidades, clientes_excluidos=None,
         df = df[~df["Cliente"].isin(set(clientes_excluidos))]
 
     todas_as_chaves = {
-        "top_produtos", "top_fabricantes", "poder_compra_clientes",
+        "top_produtos", "top_fabricantes", "comparativo_receita", "poder_compra_clientes",
         "evolucao_produtos", "alertas_queda", "erosao_clientes", "sem_venda", "abc", "abc_produtos",
         "migracao_abc", "migracao_resumo", "migracao_score_clientes",
         "produtos_em_alta", "produtos_em_queda", "clientes_queda_qtd",
@@ -1872,6 +2005,10 @@ def gerar_analises_completas(df, granularidades, clientes_excluidos=None,
         # Alinhados ao resto do relatório: mesmo recorte de período
         # (excluir_periodo_atual) e mesmo limite de itens (top_n_produtos).
         limite_top = 20 if top_n_produtos is None else int(top_n_produtos)
+        if precisa("comparativo_receita"):
+            logar(f"[{granularidade}] Montando comparativo de receita com o ano anterior...")
+            analises["comparativo_receita"] = comparativo_receita_ano_anterior(df_periodo, granularidade)
+
         if precisa("top_produtos"):
             analises["top_produtos"] = top_produtos(df_periodo, limite_top)
         if precisa("top_fabricantes"):
