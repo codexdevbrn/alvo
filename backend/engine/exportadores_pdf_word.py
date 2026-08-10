@@ -17,10 +17,41 @@ from engine.recursos import CAMINHO_LOGO, NOME_SISTEMA, NOME_EMPRESA
 
 MAX_LINHAS_TABELA = 50
 
-COR_MARCA = "#1F4E78"
-COR_MARCA_CLARA = "#EAF0F6"
+# Paleta da marca, igual à do app (dashboard/src/index.css :root): preto quente
+# + Soft Fawn dourado. A página segue branca — PDF de relatório é impresso e
+# lido em tela clara; fundo escuro chapado gasta tinta e derruba a legibilidade.
+COR_MARCA = "#25252C"
+COR_ACCENT = "#DABB6C"
+COR_ACCENT_ESCURO = "#8A6D1F"   # dourado legível sobre branco (texto/rótulo)
+COR_MARCA_CLARA = "#F7F5F0"     # faixa zebrada, tom quente do tema
 COR_TEXTO_SECUNDARIO = "#6B7280"
-COR_LINHA_SUTIL = "#E2E5E9"
+COR_LINHA_SUTIL = "#E4E1DA"
+COR_POSITIVO = "#2E7D52"
+COR_NEGATIVO = "#B4322A"
+
+#: Mesmo semáforo da tela e dos outros exportadores (ver exportar_html.py).
+COLUNAS_DELTA = {
+    "Desempenho_Pct", "Ganho_Perda", "Variacao_Percentual",
+    "Variacao_Global_Periodo_Pct", "Tendencia_Pct",
+}
+COLUNAS_PERDA = {
+    "Reducao_Receita", "Reducao_Percentual", "Renuncia", "Renuncia_Acumulada",
+    "Renuncia_Percentual", "Perda_Receita", "Receita_Sob_Risco",
+    "Impacto_Financeiro_Churn", "Maior_Retracao_Individual_Pct",
+}
+
+
+def _tom_delta(valor, coluna):
+    """'pos' | 'neg' | None — positivo é bom em DELTA, ruim em PERDA."""
+    if isinstance(valor, bool) or not isinstance(valor, (int, float)):
+        return None
+    if valor != valor or valor == 0:  # NaN ou zero
+        return None
+    if coluna in COLUNAS_DELTA:
+        return "pos" if valor > 0 else "neg"
+    if coluna in COLUNAS_PERDA:
+        return "neg" if valor > 0 else None
+    return None
 
 
 def _limitar(df):
@@ -84,7 +115,11 @@ def exportar_relatorio_pdf(caminho_saida, resultados_analise, nomes_analise, nom
 
     colunas_moeda_por_analise = colunas_moeda_por_analise or {}
     cor_marca = colors.HexColor(COR_MARCA)
+    cor_accent = colors.HexColor(COR_ACCENT)
+    cor_accent_escuro = colors.HexColor(COR_ACCENT_ESCURO)
     cor_marca_clara = colors.HexColor(COR_MARCA_CLARA)
+    cor_positivo = colors.HexColor(COR_POSITIVO)
+    cor_negativo = colors.HexColor(COR_NEGATIVO)
     cor_texto_secundario = colors.HexColor(COR_TEXTO_SECUNDARIO)
     cor_linha_sutil = colors.HexColor(COR_LINHA_SUTIL)
 
@@ -140,8 +175,10 @@ def exportar_relatorio_pdf(caminho_saida, resultados_analise, nomes_analise, nom
         fontSize=13, textColor=cor_marca, spaceBefore=0, spaceAfter=6, leading=16,
     )
     estilo_granularidade = ParagraphStyle(
-        "Granularidade", parent=estilos["Normal"], fontName="Helvetica",
-        fontSize=9.5, textColor=cor_texto_secundario,
+        # Dourado escurecido: o accent do app não tem contraste suficiente sobre
+        # papel branco.
+        "Granularidade", parent=estilos["Normal"], fontName="Helvetica-Bold",
+        fontSize=9, textColor=cor_accent_escuro,
     )
     estilo_aviso = ParagraphStyle(
         "Aviso", parent=estilos["Normal"], fontName="Helvetica-Oblique",
@@ -187,7 +224,7 @@ def exportar_relatorio_pdf(caminho_saida, resultados_analise, nomes_analise, nom
                 Paragraph(titulo, estilo_secao),
                 Paragraph(granularidade, estilo_granularidade),
                 Spacer(1, 6),
-                HRFlowable(width="100%", thickness=1.2, color=cor_marca, spaceAfter=10),
+                HRFlowable(width="100%", thickness=1.4, color=cor_accent, spaceAfter=10),
             ])
             elementos.append(cabecalho_secao)
 
@@ -205,11 +242,21 @@ def exportar_relatorio_pdf(caminho_saida, resultados_analise, nomes_analise, nom
             ]
 
             linhas_formatadas = []
-            for _, linha in df_limitado.iterrows():
+            # (coluna, linha_da_tabela, cor) das células com direção — aplicado
+            # depois via TEXTCOLOR, porque o TableStyle é por coordenada.
+            cores_delta = []
+            for indice_linha, (_, linha) in enumerate(df_limitado.iterrows(), start=1):
                 linhas_formatadas.append([
                     _formatar_valor_celula(linha[coluna], coluna, colunas_moeda)
                     for coluna in colunas
                 ])
+                for indice_coluna, coluna in enumerate(colunas):
+                    tom = _tom_delta(linha[coluna], coluna)
+                    if tom:
+                        cores_delta.append((
+                            indice_coluna, indice_linha,
+                            cor_positivo if tom == "pos" else cor_negativo,
+                        ))
             dados_tabela = [colunas] + linhas_formatadas
 
             n_numericas = sum(eh_numerica)
@@ -225,7 +272,7 @@ def exportar_relatorio_pdf(caminho_saida, resultados_analise, nomes_analise, nom
             tabela = Table(dados_tabela, colWidths=larguras, repeatRows=1)
             estilo_tabela = [
                 ("BACKGROUND", (0, 0), (-1, 0), cor_marca),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("TEXTCOLOR", (0, 0), (-1, 0), cor_accent),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                 ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
                 ("FONTSIZE", (0, 0), (-1, -1), 8.5),
@@ -233,13 +280,16 @@ def exportar_relatorio_pdf(caminho_saida, resultados_analise, nomes_analise, nom
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
                 ("LEFTPADDING", (0, 0), (-1, -1), 8),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-                ("LINEBELOW", (0, 0), (-1, 0), 1.2, cor_marca),
+                ("LINEBELOW", (0, 0), (-1, 0), 1.4, cor_accent),
                 ("LINEBELOW", (0, 1), (-1, -2), 0.4, cor_linha_sutil),
                 ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, cor_marca_clara]),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ]
             for indice, numerica in enumerate(eh_numerica):
                 estilo_tabela.append(("ALIGN", (indice, 0), (indice, -1), "RIGHT" if numerica else "LEFT"))
+            for indice_coluna, indice_linha, cor in cores_delta:
+                estilo_tabela.append(("TEXTCOLOR", (indice_coluna, indice_linha), (indice_coluna, indice_linha), cor))
+                estilo_tabela.append(("FONTNAME", (indice_coluna, indice_linha), (indice_coluna, indice_linha), "Helvetica-Bold"))
             tabela.setStyle(TableStyle(estilo_tabela))
             elementos.append(tabela)
 

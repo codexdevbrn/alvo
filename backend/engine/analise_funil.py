@@ -636,9 +636,6 @@ COLUNAS_COMPARATIVO_RECEITA = [
     "Desempenho_Pct", "Participacao_Ano_Anterior_Pct", "Participacao_Ano_Atual_Pct",
 ]
 
-ROTULO_TOTAIS = "Totais"
-
-
 def _periodo_ano_anterior(periodo, granularidade):
     """Mesmo período, um ano antes ("2026-07" -> "2025-07", "2026-T3" -> "2025-T3")."""
     if granularidade == "Mensal":
@@ -665,7 +662,12 @@ def comparativo_receita_ano_anterior(df, granularidade="Mensal"):
     ranking quanto a participação.
 
     Entram os produtos dos DOIS lados (quem não vendeu num deles aparece com 0),
-    ordenados pela receita do período atual. A primeira linha é o total.
+    ordenados pela receita do período atual.
+
+    Só produtos — o total NÃO vem como linha da tabela. Uma linha "Totais" no
+    meio dos dados entra no autofiltro do Excel, se move ao ordenar e duplica
+    qualquer soma da coluna; ela é montada como faixa acima do cabeçalho na
+    exportação e como resumo acima da tabela na tela (somando estas linhas).
 
     Colunas: receita dos dois períodos, ganho/perda em R$, desempenho % e a
     participação de cada produto na receita do seu próprio período.
@@ -717,19 +719,7 @@ def comparativo_receita_ano_anterior(df, granularidade="Mensal"):
         ["Receita_Ano_Atual", "descricao"], ascending=[False, True], inplace=True,
     )
 
-    totais = pd.DataFrame([{
-        "descricao": ROTULO_TOTAIS,
-        "Receita_Ano_Anterior": total_anterior,
-        "Receita_Ano_Atual": total_atual,
-        "Ganho_Perda": total_atual - total_anterior,
-        "Desempenho_Pct": (
-            (total_atual - total_anterior) / total_anterior * 100 if total_anterior > 0 else np.nan
-        ),
-        "Participacao_Ano_Anterior_Pct": np.nan,
-        "Participacao_Ano_Atual_Pct": np.nan,
-    }])
-
-    resultado = pd.concat([totais, resultado], ignore_index=True)
+    resultado.reset_index(drop=True, inplace=True)
     resultado["Periodo_Ano_Anterior"] = _formatar_rotulo_periodo(periodo_anterior, granularidade)
     resultado["Periodo_Ano_Atual"] = _formatar_rotulo_periodo(periodo_atual, granularidade)
     return resultado[COLUNAS_COMPARATIVO_RECEITA]

@@ -38,6 +38,8 @@ from dashboard_summary import (
 )
 from engine import analise_funil as af
 from engine.exportadores_pdf_word import exportar_relatorio_pdf
+from exportar_html import exportar_relatorio_html
+from monitor_empresas import METRICAS_MONITOR, montar_card, obter_resumo_monitor
 from exportar_excel import (
     CATALOGO_RELATORIOS,
     COLUNAS_MOEDA_POR_ANALISE,
@@ -1749,6 +1751,57 @@ def listar_empresas_dashboard():
     return _listar_empresas_fonte()
 
 
+# ---------------------------------------------------------------------------
+# Monitoramento (visão de todas as empresas)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/monitor/empresas")
+def monitor_empresas(
+    metrica: str = "receita",
+    meses: int = 12,
+    forcar: bool = False,
+):
+    """Uma linha por empresa com a série da métrica pedida e a variação anual.
+
+    Responde SEMPRE 200 com o que conseguiu montar: uma empresa sem base (ou com
+    summary corrompido) entra com `estado` próprio em vez de derrubar a tela toda —
+    com 59 empresas, a chance de uma estar em manutenção é alta.
+    """
+    if metrica not in METRICAS_MONITOR:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Métrica inválida. Use uma de: {', '.join(METRICAS_MONITOR)}.",
+        )
+    meses = max(1, min(int(meses or 12), 60))
+
+    trabalho_root = _exigir_caminho_trabalho()
+    cards: list[dict] = []
+    for empresa in _listar_empresas_fonte():
+        pasta_trabalho = os.path.join(trabalho_root, empresa)
+        try:
+            resumo = obter_resumo_monitor(pasta_trabalho, forcar=forcar)
+        except Exception:
+            logger.error("Falha ao resumir %s para o monitor:\n%s", empresa, traceback.format_exc())
+            cards.append({
+                "empresa": empresa,
+                "estado": "erro",
+                "detalhe": "Não foi possível ler os dados desta empresa.",
+            })
+            continue
+
+        if resumo is None:
+            cards.append({
+                "empresa": empresa,
+                "estado": "sem_base",
+                "detalhe": "Base ainda não gerada para esta empresa.",
+            })
+            continue
+
+        cards.append(montar_card(empresa, resumo, metrica=metrica, meses=meses))
+
+    return {"metrica": metrica, "meses": meses, "empresas": cards}
+
+
 @app.post("/api/dashboard/empresas/{empresa}/regenerar-base")
 def regenerar_base_dashboard(empresa: str):
     """Limpa caches e força reprocessamento direto da fonte (Dashboard público)."""
@@ -1796,6 +1849,55 @@ class ParametrosExplorar(BaseModel):
     # agregar (padrão) | histograma | boxplot | dispersao
     modo_viz: str = "agregar"
     bins: int = 20
+    #: Soma tudo o que ficou fora do top N numa linha "Outros" (só modo agregar).
+    #: Sem isso o corte por `limite` some com o resto sem dizer quanto era.
+    agrupar_resto: bool = False
+    #: Repete a agregação para o ano anterior, gerando as colunas
+    #: `<métrica>_Ano_Anterior` e `Variacao_Percentual`.
+    comparar_ano_anterior: bool = False
+
+
+#: Dimensões que já carregam o ano dentro do valor ("2026-03", "2026-T1", 2026).
+#: Comparar ano anterior com elas no eixo não faz sentido: cada valor pertence a
+#: um único ano, então as duas séries nunca cairiam na mesma categoria.
+DIMENSOES_COM_ANO = ("Ano", "Periodo_Mensal", "Periodo_Trimestral", "Periodo_Semestral", "Periodo_Anual")
+
+#: Rótulo da linha/série que soma o que ficou fora do top N.
+ROTULO_RESTO = "Outros"
+
+#: Sufixo das colunas do ano anterior.
+SUFIXO_ANO_ANTERIOR = "_Ano_Anterior"
+
+
+def _agregar_explorar(df: pd.DataFrame, dimensoes: list[str], agg: dict) -> pd.DataFrame:
+    """groupby + agregações do explorador (ou uma linha só, sem dimensão)."""
+    if dimensoes:
+        return df.groupby(dimensoes, dropna=False).agg(**agg).reset_index()
+    linha = {
+        nome: float(df[src].sum()) if fn == "sum" else int(df[src].nunique())
+        for nome, (src, fn) in agg.items()
+    }
+    return pd.DataFrame([linha])
+
+
+def _linha_resto_explorar(
+    resto: pd.DataFrame, dimensoes: list[str], metricas: list[str],
+) -> dict:
+    """Uma linha "Outros" com a soma do que foi cortado pelo top N.
+
+    `Clientes` fica nulo de propósito: é contagem distinta, e somar os nunique de
+    cada linha cortada contaria o mesmo cliente várias vezes. Melhor vazio do que
+    um número inflado que ninguém consegue conferir.
+    """
+    linha: dict = {}
+    for indice, dim in enumerate(dimensoes):
+        linha[dim] = ROTULO_RESTO if indice == 0 else None
+    for metrica in metricas:
+        if metrica == "Clientes":
+            linha[metrica] = None
+        elif metrica in resto.columns:
+            linha[metrica] = float(pd.to_numeric(resto[metrica], errors="coerce").fillna(0).sum())
+    return linha
 
 
 def _aplicar_filtros_explorar(df: pd.DataFrame, filtros: Optional[dict]) -> pd.DataFrame:
@@ -2107,12 +2209,80 @@ def explorar_agregar(parametros: ParametrosExplorar, usuario: str = Depends(exig
     if "Clientes" in metricas:
         agg["Clientes"] = ("Cliente", "nunique")
 
-    if dimensoes:
-        agrupado = df.groupby(dimensoes, dropna=False).agg(**agg).reset_index()
+    comparar = bool(parametros.comparar_ano_anterior)
+    ano_atual = ano_anterior = None
+    if comparar:
+        if "Ano" not in df.columns:
+            raise HTTPException(
+                status_code=400,
+                detail="A base não tem a coluna Ano — não é possível comparar com o ano anterior.",
+            )
+        conflito = [d for d in dimensoes if d in DIMENSOES_COM_ANO]
+        if conflito:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"'{conflito[0]}' já separa os anos, então não há o que comparar. "
+                    "Para comparar ano contra ano, use a dimensão 'Mês' (ou uma dimensão "
+                    "não temporal, como Fabricante ou Cliente)."
+                ),
+            )
+        anos = sorted({int(a) for a in pd.to_numeric(df["Ano"], errors="coerce").dropna().unique()})
+        if len(anos) < 2:
+            raise HTTPException(
+                status_code=400,
+                detail="A base só tem um ano de dados — não há ano anterior para comparar.",
+            )
+        ano_atual, ano_anterior = anos[-1], anos[-2]
+        coluna_ano = pd.to_numeric(df["Ano"], errors="coerce")
+        df_atual = df[coluna_ano == ano_atual]
+        df_anterior = df[coluna_ano == ano_anterior]
+
+        # YoY justo: o ano anterior entra SÓ com os meses que existem no ano
+        # atual. Sem isso, um ano fechado (12 meses) é comparado com um ano em
+        # curso (ex.: jan–ago) e o "ano anterior" aparece maior por ter 4 meses
+        # extras — não por ter vendido mais. Foi exatamente o que apareceu ao
+        # agregar por Fabricante: NGK "2025 = 1,14 M vs 2026 = 869 k".
+        # A coluna canônica é "Mês" (ver RENOMEAR_COLUNAS em engine/analise_funil.py).
+        if "Mês" in df.columns:
+            meses_atual = {
+                str(m).strip().lower() for m in df_atual["Mês"].dropna().unique()
+            }
+            if meses_atual:
+                df_anterior = df_anterior[
+                    df_anterior["Mês"].astype(str).str.strip().str.lower().isin(meses_atual)
+                ]
+                meses_ignorados = sorted(
+                    {str(m).strip() for m in df["Mês"].dropna().unique()}
+                    - {str(m).strip() for m in df_atual["Mês"].dropna().unique()}
+                )
+            else:
+                meses_ignorados = []
+        else:
+            meses_ignorados = []
+        agrupado = _agregar_explorar(df_atual, dimensoes, agg)
+        anterior = _agregar_explorar(df_anterior, dimensoes, agg)
+        renomear = {m: f"{m}{SUFIXO_ANO_ANTERIOR}" for m in metricas}
+        anterior = anterior.rename(columns=renomear)
+        if dimensoes:
+            agrupado = agrupado.merge(anterior, on=dimensoes, how="outer")
+        else:
+            agrupado = pd.concat([agrupado, anterior], axis=1)
+        for metrica in metricas:
+            for coluna in (metrica, f"{metrica}{SUFIXO_ANO_ANTERIOR}"):
+                if coluna in agrupado.columns:
+                    agrupado[coluna] = pd.to_numeric(agrupado[coluna], errors="coerce").fillna(0)
+        base_metrica = metricas[0]
+        coluna_anterior = f"{base_metrica}{SUFIXO_ANO_ANTERIOR}"
+        # Variação vazia quando não havia base no ano anterior: não existe
+        # percentual de crescimento a partir de zero.
+        agrupado["Variacao_Percentual"] = np.where(
+            agrupado[coluna_anterior] > 0,
+            (agrupado[base_metrica] - agrupado[coluna_anterior]) / agrupado[coluna_anterior] * 100,
+            np.nan,
+        )
     else:
-        linha = {nome: float(df[src].sum()) if fn == "sum" else int(df[src].nunique())
-                 for nome, (src, fn) in agg.items()}
-        agrupado = pd.DataFrame([linha])
+        agrupado = _agregar_explorar(df, dimensoes, agg)
 
     ordenar = parametros.ordenar_por if parametros.ordenar_por in agrupado.columns else (
         metricas[0] if metricas[0] in agrupado.columns else None
@@ -2122,22 +2292,50 @@ def explorar_agregar(parametros: ParametrosExplorar, usuario: str = Depends(exig
         agrupado = agrupado.sort_values(ordenar, ascending=ascending)
 
     total = len(agrupado)
+    resto = agrupado.iloc[limite:]
     agrupado = agrupado.head(limite)
 
-    for col in metricas:
-        if col in agrupado.columns and col != "Clientes":
-            agrupado[col] = pd.to_numeric(agrupado[col], errors="coerce").fillna(0.0)
-        elif col == "Clientes" and col in agrupado.columns:
-            agrupado[col] = pd.to_numeric(agrupado[col], errors="coerce").fillna(0).astype(int)
+    colunas_numericas = list(metricas)
+    if comparar:
+        colunas_numericas += [f"{m}{SUFIXO_ANO_ANTERIOR}" for m in metricas]
 
-    return {
+    if parametros.agrupar_resto and dimensoes and not resto.empty:
+        linha_resto = _linha_resto_explorar(resto, dimensoes, colunas_numericas)
+        if comparar:
+            atual = linha_resto.get(metricas[0]) or 0.0
+            anterior_resto = linha_resto.get(f"{metricas[0]}{SUFIXO_ANO_ANTERIOR}") or 0.0
+            linha_resto["Variacao_Percentual"] = (
+                (atual - anterior_resto) / anterior_resto * 100 if anterior_resto > 0 else None
+            )
+        agrupado = pd.concat([agrupado, pd.DataFrame([linha_resto])], ignore_index=True)
+
+    for col in colunas_numericas:
+        if col not in agrupado.columns:
+            continue
+        if col == "Clientes":
+            # Mantém nulo na linha "Outros" (ver _linha_resto_explorar).
+            agrupado[col] = pd.to_numeric(agrupado[col], errors="coerce").astype("Int64")
+        else:
+            agrupado[col] = pd.to_numeric(agrupado[col], errors="coerce").fillna(0.0)
+
+    resposta = {
         **_df_para_json(agrupado),
         "total_linhas": total,
         "limite": limite,
         "dimensoes": dimensoes,
         "metricas": metricas,
         "modo_viz": "agregar",
+        "resto_agrupado": bool(parametros.agrupar_resto and dimensoes and not resto.empty),
     }
+    if comparar:
+        resposta["comparacao"] = {
+            "ano_atual": ano_atual,
+            "ano_anterior": ano_anterior,
+            # Meses que existem só no ano anterior e ficaram FORA da comparação
+            # (o ano atual ainda não chegou neles). A tela avisa o usuário.
+            "meses_ignorados": meses_ignorados,
+        }
+    return resposta
 
 
 # ---------------------------------------------------------------------------
@@ -2342,8 +2540,8 @@ def analisar(parametros: ParametrosAnalise, usuario: str = Depends(exigir_login)
 
 @app.post("/api/exportar/{formato}")
 def exportar(formato: str, parametros: ParametrosAnalise, usuario: str = Depends(exigir_login)):
-    if formato not in ("excel", "pdf"):
-        raise HTTPException(status_code=400, detail="Formato inválido. Use 'excel' ou 'pdf'.")
+    if formato not in ("excel", "pdf", "html"):
+        raise HTTPException(status_code=400, detail="Formato inválido. Use 'excel', 'pdf' ou 'html'.")
 
     try:
         resultados = _rodar_analises(parametros)
@@ -2355,7 +2553,7 @@ def exportar(formato: str, parametros: ParametrosAnalise, usuario: str = Depends
         logger.error("Falha inesperada ao exportar dados de %s:\n%s", usuario, traceback.format_exc())
         raise HTTPException(status_code=400, detail=f"Falha inesperada ao gerar as análises: {exc}")
 
-    extensao = ".xlsx" if formato == "excel" else ".pdf"
+    extensao = {"excel": ".xlsx", "pdf": ".pdf", "html": ".html"}[formato]
     arquivo_temp = tempfile.NamedTemporaryFile(delete=False, suffix=extensao)
     caminho_saida = arquivo_temp.name
     arquivo_temp.close()
@@ -2366,6 +2564,14 @@ def exportar(formato: str, parametros: ParametrosAnalise, usuario: str = Depends
         )
         media_type = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         nome_arquivo = "relatorio.xlsx"
+    elif formato == "html":
+        exportar_relatorio_html(
+            caminho_saida, resultados, nome_usuario=parametros.nome_usuario,
+            nome_empresa=parametros.nome_empresa,
+            colunas_moeda_por_analise=COLUNAS_MOEDA_POR_ANALISE,
+        )
+        media_type = "text/html; charset=utf-8"
+        nome_arquivo = "relatorio.html"
     else:
         exportar_relatorio_pdf(
             caminho_saida, resultados, NOMES_ANALISE, nome_usuario=parametros.nome_usuario,
