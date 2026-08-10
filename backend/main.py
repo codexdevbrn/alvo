@@ -133,6 +133,10 @@ CHAVE_CAMINHO_TRABALHO = "caminho_trabalho"
 # Flag manual: "1" = ainda aguardando a base de dados ser montada na fonte (mostra
 # aviso no Dashboard público em vez de dados/erro). Liga/desliga em Configurações.
 CHAVE_AGUARDANDO_BASE_DADOS = "aguardando_base_dados"
+#: Empresas favoritas da tela de monitoramento (JSON com lista de nomes).
+#: Fica no SQLite, não no navegador: o app é interno e sem separação de usuário,
+#: então favoritar numa máquina precisa valer na outra.
+CHAVE_EMPRESAS_FAVORITAS = "empresas_favoritas"
 # Legadas — só leitura de fallback / aliases de rota
 CHAVE_CAMINHO_DADOS_DASHBOARD = "caminho_dados_dashboard"
 CHAVE_CAMINHO_EMPRESAS = "caminho_empresas"
@@ -1799,7 +1803,62 @@ def monitor_empresas(
 
         cards.append(montar_card(empresa, resumo, metrica=metrica, meses=meses))
 
-    return {"metrica": metrica, "meses": meses, "empresas": cards}
+    # Favoritas vão na mesma resposta: a tela precisa das duas coisas para o
+    # primeiro render, e duas requisições atrasariam o destaque das favoritas.
+    return {
+        "metrica": metrica,
+        "meses": meses,
+        "empresas": cards,
+        "favoritas": _ler_favoritas(),
+    }
+
+
+def _ler_favoritas() -> list[str]:
+    """Favoritas gravadas, já filtradas pelas empresas que ainda existem na fonte.
+
+    Empresa removida da fonte não deve continuar aparecendo como favorita — mas
+    também não apago a preferência: se a pasta voltar, o favorito volta com ela.
+    """
+    bruto = db.obter_config_app(CHAVE_EMPRESAS_FAVORITAS, "[]")
+    try:
+        salvas = json.loads(bruto or "[]")
+    except json.JSONDecodeError:
+        logger.warning("Favoritas com JSON inválido em config_app; tratando como vazio.")
+        return []
+    if not isinstance(salvas, list):
+        return []
+    existentes = set(_listar_empresas_fonte())
+    return [nome for nome in salvas if isinstance(nome, str) and nome in existentes]
+
+
+class FavoritasBody(BaseModel):
+    empresas: list[str]
+
+
+@app.get("/api/monitor/favoritas")
+def obter_favoritas():
+    return {"empresas": _ler_favoritas()}
+
+
+@app.post("/api/monitor/favoritas")
+def definir_favoritas(corpo: FavoritasBody):
+    """Substitui a lista inteira (a tela manda o estado final, não um diff)."""
+    existentes = set(_listar_empresas_fonte())
+    # dedupe preservando a ordem em que o usuário favoritou
+    limpas: list[str] = []
+    for nome in corpo.empresas:
+        nome = (nome or "").strip()
+        if not nome or nome in limpas:
+            continue
+        if nome not in existentes:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Empresa '{nome}' não existe na pasta fonte.",
+            )
+        limpas.append(nome)
+
+    db.definir_config_app(CHAVE_EMPRESAS_FAVORITAS, json.dumps(limpas, ensure_ascii=False))
+    return {"empresas": limpas}
 
 
 @app.post("/api/dashboard/empresas/{empresa}/regenerar-base")
