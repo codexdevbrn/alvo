@@ -2605,6 +2605,55 @@ h3 {
   width: min(520px, 100%);
 }
 
+/* Faixa de totais acima da tabela de resultado (ver ResultTable) */
+.analisador-faixa-totais {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 1.75rem;
+  margin-bottom: 0.85rem;
+  padding: 0.7rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.6rem;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.analisador-faixa-totais-rotulo {
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.78rem;
+  color: var(--accent);
+}
+
+.analisador-faixa-totais-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.analisador-faixa-totais-item > span {
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+
+.analisador-faixa-totais-item > strong {
+  font-size: 0.98rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Item informacional (ex.: o período comparado): mesmo valor em toda linha, por
+   isso vem pra faixa em vez de virar coluna. Separado dos totais por um filete. */
+.analisador-faixa-totais-item.is-info {
+  padding-right: 1.75rem;
+  border-right: 1px solid var(--border);
+}
+
+.analisador-faixa-totais-item.is-info > strong {
+  color: var(--accent);
+}
+
 /* Navegador de pastas do servidor */
 .pasta-picker-modal {
   width: min(620px, 100%);
@@ -2892,6 +2941,26 @@ h3 {
   border: solid #fff;
   border-width: 0 2px 2px 0;
   transform: rotate(45deg);
+}
+
+/* Seleção parcial: caixa marcada como a de "todos", mas com um traço no lugar
+   do check — o usuário precisa distinguir "todos" de "alguns" de relance. */
+.analisador-check-linha input[type='checkbox']:indeterminate,
+.analisador-check input[type='checkbox']:indeterminate {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.analisador-check-linha input[type='checkbox']:indeterminate::after,
+.analisador-check input[type='checkbox']:indeterminate::after {
+  content: '';
+  position: absolute;
+  left: 0.17rem;
+  top: 0.41rem;
+  width: 0.6rem;
+  height: 2px;
+  border-radius: 1px;
+  background: #fff;
 }
 
 .analisador-check-linha input[type='checkbox']:focus-visible,
@@ -3234,24 +3303,24 @@ h3 {
   table-layout: fixed;
 }
 
+/* Cabeçalho em destaque: texto branco sobre faixa mais clara que o corpo e
+   filete accent embaixo — separa rótulo de dado sem depender só do tamanho. */
 .analisador-tabela th {
   text-align: left;
   padding: 0.6rem 0.5rem;
-  background: transparent;
-  /* light muted labels — --text-muted (#6d6d76) reads as black on #121216 */
-  color: var(--text-secondary);
+  color: #ffffff;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
   position: sticky;
   top: 0;
   z-index: 2;
-  font-weight: 600;
+  font-weight: 700;
   font-size: 0.7rem;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
-  border-bottom: 1px solid var(--border);
-  background-color: #121216;
+  letter-spacing: 0.06em;
+  border-bottom: 2px solid rgba(218, 187, 108, 0.45);
+  background-color: #1e1e25;
 }
 
 .analisador-tabela td {
@@ -3266,12 +3335,68 @@ h3 {
   transition: background 0.12s ease, box-shadow 0.12s ease;
 }
 
+/* Linhas alternadas. Vem ANTES do :hover de propósito: as duas regras têm a
+   mesma especificidade, então quem está depois no arquivo ganha — e o hover
+   precisa vencer a faixa zebrada. */
+.analisador-tabela tbody tr:nth-child(even) td {
+  background-color: rgba(255, 255, 255, 0.032);
+}
+
 .analisador-tabela tbody tr:hover td {
-  background: rgba(255, 255, 255, 0.035);
+  background: rgba(255, 255, 255, 0.075);
 }
 
 .analisador-tabela tbody tr:hover td:first-child {
   box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* Cabeçalho clicável (tabelas dinâmicas). Herda a tipografia do th para o
+   cabeçalho não mudar de aparência só por virar botão. */
+.analisador-tabela-ordenar {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  cursor: pointer;
+}
+
+.analisador-tabela-ordenar:hover {
+  color: var(--accent);
+}
+
+.analisador-tabela-ordenar.is-ativa {
+  color: var(--accent);
+}
+
+/* Semáforo das células com direção (variação, ganho/perda, renúncia, "Subiu"/
+   "Desceu"): cor + seta. Ver COLUNAS_DELTA / COLUNAS_PERDA em ResultTable.tsx —
+   colunas sem direção ficam neutras de propósito. */
+.analisador-celula-delta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.analisador-celula-delta.is-pos {
+  color: var(--success);
+}
+
+.analisador-celula-delta.is-neg {
+  color: var(--danger);
+}
+
+.analisador-celula-delta-seta {
+  font-size: 0.6rem;
+  line-height: 1;
 }
 
 .analisador-tabela tbody tr.is-excluido td {
@@ -3419,13 +3544,237 @@ h3 {
   width: 100%;
 }
 
+/* Três blocos: o que agregar (Dados), como desenhar (Visualização) e o recorte.
+   O de dados é o maior porque tem as listas; os outros são colunas estreitas. */
 .analisador-explorar-builder {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(14rem, 18rem);
-  gap: 1rem;
+  /* Visualização precisa caber a grade de tipos em 2 colunas legíveis (~7rem
+     cada); com 13rem o botão ficava com 100px e o rótulo truncava. */
+  grid-template-columns: minmax(0, 1.4fr) minmax(16rem, 1fr) minmax(14rem, 0.95fr);
+  gap: 0.85rem;
   width: 100%;
   margin-top: 0.25rem;
-  align-items: start;
+  align-items: stretch;
+}
+
+.analisador-explorar-visual,
+.analisador-explorar-recorte {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+/* Subtítulo dentro do fieldset — separa Dimensões / Ordem / Métricas sem
+   aninhar mais bordas. */
+.analisador-explorar-sublegend {
+  margin: 0.75rem 0 0.4rem;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.analisador-explorar-sublegend:first-of-type {
+  margin-top: 0.15rem;
+}
+
+.analisador-explorar-sublegend span {
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+/* Ordem das dimensões: a 1ª é o eixo, a 2ª pode virar série. */
+.analisador-explorar-ordem {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.analisador-explorar-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.25rem 0.35rem 0.25rem 0.25rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.5rem;
+  background: rgba(255, 255, 255, 0.03);
+  font-size: 0.74rem;
+  max-width: 100%;
+}
+
+.analisador-explorar-chip[draggable='true'] {
+  cursor: grab;
+}
+
+.analisador-explorar-chip[draggable='true']:active {
+  cursor: grabbing;
+}
+
+/* Enquanto arrasta: o chip de origem fica apagado e o destino ganha um filete
+   dourado à esquerda, mostrando onde ele vai entrar. */
+.analisador-explorar-chip.is-arrastando {
+  opacity: 0.4;
+}
+
+.analisador-explorar-chip.is-alvo {
+  border-color: var(--accent);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.analisador-explorar-chip-alca {
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.analisador-explorar-chip-num {
+  display: grid;
+  place-items: center;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 0.3rem;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 0.62rem;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.analisador-explorar-chip-nome {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  /* min-width evita o caso em que o flex esmaga o nome até 0px e sobra só o
+     número do chip — foi o que acontecia com 3 dimensões na coluna estreita. */
+  flex: 1 1 auto;
+  min-width: 3.5rem;
+  max-width: 9rem;
+}
+
+.analisador-explorar-chip button {
+  display: grid;
+  place-items: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  padding: 0;
+  border: 0;
+  border-radius: 0.3rem;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.analisador-explorar-chip button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+}
+
+.analisador-explorar-chip button:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+/* Tipo de gráfico: grade de botões com ícone em vez de <select>. Mostra as 7
+   opções de uma vez (um clique em vez de dois) e preenche o bloco, que antes
+   ficava com um select e um vazio. */
+.analisador-explorar-tipos {
+  display: grid;
+  /* auto-fit: 2 colunas quando cabem 7rem cada, 1 coluna quando não cabem —
+     melhor uma lista alta e legível que dois botões truncados. */
+  grid-template-columns: repeat(auto-fit, minmax(7rem, 1fr));
+  gap: 0.35rem;
+}
+
+.analisador-explorar-tipo-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.55rem;
+  background: rgba(255, 255, 255, 0.02);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+  min-width: 0;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.analisador-explorar-tipo-btn span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.analisador-explorar-tipo-btn:hover {
+  border-color: var(--border-strong);
+  color: var(--text-primary);
+}
+
+.analisador-explorar-tipo-btn.is-ativo {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text-primary);
+}
+
+.analisador-explorar-tipo-btn.is-ativo svg {
+  color: var(--accent);
+}
+
+/* Papéis (eixo / séries / métrica das séries) empilhados: são decisões
+   encadeadas, não opções paralelas. */
+.analisador-explorar-papeis {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding-top: 0.15rem;
+  border-top: 1px solid var(--border);
+}
+
+.analisador-explorar-papeis .analisador-select {
+  width: 100%;
+}
+
+.analisador-explorar-dica-tipo {
+  margin: 0;
+  font-size: 0.7rem;
+  line-height: 1.35;
+}
+
+/* Nome da dimensão numa 2ª linha, para o rótulo do checkbox não quebrar torto. */
+.analisador-explorar-check-detalhe {
+  display: block;
+  font-style: normal;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+}
+
+.analisador-explorar-recorte-campos {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.5rem;
+}
+
+.analisador-explorar-ordenar {
+  flex: 1 1 8rem;
+  min-width: 0;
+}
+
+.analisador-explorar-ordenar .analisador-select {
+  width: 100%;
+}
+
+.analisador-explorar-contagem {
+  margin-top: auto;
 }
 
 .analisador-explorar-fieldset {
@@ -3484,6 +3833,17 @@ h3 {
   gap: 0.5rem 1rem;
   align-items: center;
   width: 100%;
+}
+
+/* Dimensões sempre em 2 colunas. Com `auto-fill` + minmax(12rem), a coluna de
+   Dados (≈394px) não cabia duas faixas de 192px + gap e caía para 1 coluna,
+   deixando a lista comprida. Com 2 fixas, o nome longo elipsa (já tem title). */
+/* `:not(...-metricas)` porque as duas listas vivem no mesmo fieldset (Dados):
+   sem isso a regra pegaria as métricas também, e por especificidade venceria o
+   `1fr` delas logo abaixo. */
+.analisador-explorar-dimensoes .analisador-explorar-checks:not(.analisador-explorar-checks-metricas) {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem 0.75rem;
 }
 
 .analisador-explorar-checks-metricas {
@@ -3571,9 +3931,25 @@ h3 {
   justify-content: flex-start;
 }
 
+/* Três colunas só cabem em tela larga; abaixo disso, Visualização e Recorte
+   dividem uma linha, e no celular tudo empilha. */
+@media (max-width: 1200px) {
+  .analisador-explorar-builder {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .analisador-explorar-dimensoes {
+    grid-column: 1 / -1;
+  }
+}
+
 @media (max-width: 900px) {
   .analisador-explorar-builder {
     grid-template-columns: 1fr;
+  }
+
+  .analisador-explorar-dimensoes {
+    grid-column: auto;
   }
 
   .analisador-explorar-checks-metricas {
@@ -4339,4 +4715,102 @@ button.empresa-dropdown-item.is-padrao:hover,
 button.empresa-dropdown-item.is-padrao:focus-visible {
   color: #fff;
   background: rgba(255, 255, 255, 0.1);
+}
+
+/* ==========================================================================
+   Monitoramento de empresas (/monitor)
+   ========================================================================== */
+
+.monitor-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.monitor-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.monitor-header h1 {
+  margin: 0;
+  font-size: 1.6rem;
+  letter-spacing: -0.02em;
+}
+
+.monitor-header p {
+  margin: 0.15rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.monitor-header-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.6rem;
+}
+
+.monitor-header-acoes .analisador-campo {
+  min-width: 7rem;
+}
+
+.monitor-aviso {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.85rem 1.25rem;
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+}
+
+.monitor-vazio {
+  padding: 3rem 2rem;
+  text-align: center;
+}
+
+/* auto-fill em vez de auto-fit: com poucas empresas os cards mantêm a largura de
+   leitura em vez de esticarem para a tela inteira. */
+.monitor-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(15.5rem, 1fr));
+  gap: 0.85rem;
+}
+
+.monitor-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 0.9rem 1rem;
+  min-height: 9rem;
+}
+
+.monitor-card h2 {
+  margin: 0;
+  font-size: 0.92rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Esqueleto de carregamento: pulso discreto, sem spinner por card (59 spinners
+   girando é ruído, não informação). */
+.monitor-card.is-esqueleto {
+  animation: monitor-pulso 1.4s ease-in-out infinite;
+}
+
+@keyframes monitor-pulso {
+  0%, 100% { opacity: 0.45; }
+  50% { opacity: 0.75; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .monitor-card.is-esqueleto {
+    animation: none;
+    opacity: 0.55;
+  }
 }

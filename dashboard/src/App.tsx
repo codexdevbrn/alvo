@@ -1,15 +1,13 @@
-import type { ReactElement } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import DashboardPage from './pages/DashboardPage';
 import LoginPage from './pages/LoginPage';
 import AnalisadorPage from './pages/AnalisadorPage';
 import ConfiguracoesPage from './pages/ConfiguracoesPage';
-import { getToken } from './api/client';
+import MonitorPage from './pages/MonitorPage';
 
-function RotaProtegida({ children }: { children: ReactElement }) {
-  return getToken() ? children : <Navigate to="/login" replace />;
-}
-
+// Login desativado: o Analisador é aberto, como o Dashboard. A tela de login
+// segue existindo em /login (o backend continua emitindo token para quem quiser
+// se identificar), mas nenhuma rota é bloqueada.
 export default function App() {
   return (
     <BrowserRouter>
@@ -17,14 +15,8 @@ export default function App() {
         <Route path="/" element={<DashboardPage />} />
         <Route path="/login" element={<LoginPage />} />
         <Route path="/config" element={<ConfiguracoesPage />} />
-        <Route
-          path="/analisador"
-          element={
-            <RotaProtegida>
-              <AnalisadorPage />
-            </RotaProtegida>
-          }
-        />
+        <Route path="/monitor" element={<MonitorPage />} />
+        <Route path="/analisador" element={<AnalisadorPage />} />
       </Routes>
     </BrowserRouter>
   );

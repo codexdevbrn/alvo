@@ -504,6 +504,10 @@ export type ParametrosExplorar = {
   ordem?: 'asc' | 'desc';
   modo_viz?: 'agregar' | 'histograma' | 'boxplot' | 'dispersao';
   bins?: number;
+  /** Soma o que ficou fora do top N numa linha "Outros". */
+  agrupar_resto?: boolean;
+  /** Traz também o ano anterior (colunas `<métrica>_Ano_Anterior` + variação). */
+  comparar_ano_anterior?: boolean;
 };
 
 export type ExplorarAgregado = {
@@ -516,6 +520,10 @@ export type ExplorarAgregado = {
   modo_viz?: string;
   eixos?: { x: string; y: string };
   escala?: string;
+  /** true quando o backend acrescentou a linha "Outros" com o que ficou fora do top N. */
+  resto_agrupado?: boolean;
+  /** Anos usados quando `comparar_ano_anterior` está ligado. */
+  comparacao?: { ano_atual: number; ano_anterior: number; meses_ignorados?: string[] };
 };
 
 export async function obterExplorarSchema(
@@ -614,7 +622,10 @@ export async function analisar(parametros: ParametrosAnalise): Promise<Resultado
   return tratarResposta(res);
 }
 
-export async function exportarRelatorio(formato: 'excel' | 'pdf', parametros: ParametrosAnalise): Promise<Blob> {
+/** Formatos aceitos por POST /api/exportar/{formato}. */
+export type FormatoExportacao = 'excel' | 'pdf' | 'html';
+
+export async function exportarRelatorio(formato: FormatoExportacao, parametros: ParametrosAnalise): Promise<Blob> {
   const res = await fetch(`/api/exportar/${formato}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
@@ -625,4 +636,61 @@ export async function exportarRelatorio(formato: 'excel' | 'pdf', parametros: Pa
     throw new Error(corpo.detail || `Erro ${res.status}`);
   }
   return res.blob();
+}
+
+// ---------------------------------------------------------------------------
+// Monitoramento de empresas
+// ---------------------------------------------------------------------------
+
+export type MetricaMonitor = 'receita' | 'qtd' | 'clientes';
+
+/** Um card da tela de monitoramento. `estado` diferente de 'ok' vem sem serie:
+ *  empresa sem base gerada ou com summary ilegivel entra na lista mesmo assim,
+ *  para o usuario saber que ela existe e esta pendente. */
+export type EmpresaMonitor = {
+  empresa: string;
+  estado: 'ok' | 'sem_base' | 'erro';
+  detalhe?: string;
+  metrica?: MetricaMonitor;
+  rotulos?: (string | null)[];
+  valores?: number[];
+  total?: number;
+  media?: number;
+  variacao_pct?: number | null;
+  /** Lados da comparacao anual — cobrem so os meses do ano mais recente. */
+  total_comparado?: number | null;
+  total_ano_anterior?: number | null;
+  ano_comparado?: number | null;
+  meses_comparados?: number;
+  updated_at?: string | null;
+  ultimo_periodo?: number | null;
+  meses_serie?: number;
+};
+
+export type MonitorResposta = {
+  metrica: MetricaMonitor;
+  meses: number;
+  empresas: EmpresaMonitor[];
+  favoritas: string[];
+};
+
+export async function obterMonitorEmpresas(
+  parametros: { metrica?: MetricaMonitor; meses?: number; forcar?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<MonitorResposta> {
+  const query = new URLSearchParams();
+  if (parametros.metrica) query.set('metrica', parametros.metrica);
+  if (parametros.meses) query.set('meses', String(parametros.meses));
+  if (parametros.forcar) query.set('forcar', 'true');
+  const res = await fetch(`/api/monitor/empresas?${query}`, { headers: authHeaders(), signal });
+  return tratarResposta(res);
+}
+
+export async function salvarFavoritas(empresas: string[]): Promise<{ empresas: string[] }> {
+  const res = await fetch('/api/monitor/favoritas', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ empresas }),
+  });
+  return tratarResposta(res);
 }

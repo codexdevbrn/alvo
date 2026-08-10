@@ -10,6 +10,7 @@ import {
   LogOut,
   Settings,
   BarChart3,
+  Gauge,
   Wallet,
   PanelLeftClose,
   PanelLeftOpen,
@@ -91,6 +92,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   const navigate = useNavigate();
   const logado = Boolean(getToken());
   const emAnalisador = location.pathname.startsWith('/analisador');
+  const emMonitor = location.pathname.startsWith('/monitor');
   const emConfig = location.pathname.startsWith('/config');
   const emDashboard = location.pathname === '/';
   const initialCollapsed = lerCollapsed();
@@ -201,7 +203,14 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
             label="Analisador de Monitoria"
             collapsed={colapsado}
             ativo={emAnalisador}
-            onClick={() => navigate(logado ? '/analisador' : '/login')}
+            onClick={() => navigate('/analisador')}
+          />
+          <NavItem
+            icon={<Gauge size={17} />}
+            label="Monitoramento"
+            collapsed={colapsado}
+            ativo={emMonitor}
+            onClick={() => navigate('/monitor')}
           />
         </nav>
 
@@ -231,6 +240,8 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
               onClick={sair}
             />
           )}
+          {/* "Sair" só aparece para quem tem token: com o login desativado
+              ninguém precisa entrar, mas quem entrou pode sair. */}
         </nav>
 
         {ultimoMovimento && (
