@@ -613,22 +613,40 @@ export interface TabelaResultado {
 
 export type ResultadoAnalise = Record<string, Record<string, TabelaResultado>>;
 
-export async function analisar(parametros: ParametrosAnalise): Promise<ResultadoAnalise> {
+export interface RespostaAnalise {
+  resultados: ResultadoAnalise;
+  /** Token opaco e temporário: permite exportar exatamente o resultado já calculado. */
+  resultadoId: string | null;
+}
+
+export async function analisar(parametros: ParametrosAnalise): Promise<RespostaAnalise> {
   const res = await fetch('/api/analisar', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(parametros),
   });
-  return tratarResposta(res);
+  const resultados = await tratarResposta<ResultadoAnalise>(res);
+  return {
+    resultados,
+    resultadoId: res.headers.get('X-Resultado-Analise'),
+  };
 }
 
 /** Formatos aceitos por POST /api/exportar/{formato}. */
 export type FormatoExportacao = 'excel' | 'pdf' | 'html';
 
-export async function exportarRelatorio(formato: FormatoExportacao, parametros: ParametrosAnalise): Promise<Blob> {
+export async function exportarRelatorio(
+  formato: FormatoExportacao,
+  parametros: ParametrosAnalise,
+  resultadoId?: string | null,
+): Promise<Blob> {
   const res = await fetch(`/api/exportar/${formato}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    headers: {
+      'Content-Type': 'application/json',
+      ...authHeaders(),
+      ...(resultadoId ? { 'X-Resultado-Analise': resultadoId } : {}),
+    },
     body: JSON.stringify(parametros),
   });
   if (!res.ok) {

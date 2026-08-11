@@ -106,6 +106,9 @@ export default function AnalisadorPage() {
   const [previa, setPrevia] = useState<PreviaBase | null>(null);
   const [catalogo, setCatalogo] = useState<CategoriaCatalogo[]>([]);
   const [resultados, setResultados] = useState<ResultadoAnalise | null>(null);
+  // Identifica o resultado mantido temporariamente no backend para exportação
+  // sem repetir todos os agrupamentos e análises pesadas.
+  const [resultadoId, setResultadoId] = useState<string | null>(null);
   const [abaAtiva, setAbaAtiva] = useState<string | null>(null);
   const [formatoParaConfirmar, setFormatoParaConfirmar] = useState<FormatoExportacao | null>(null);
 
@@ -818,8 +821,9 @@ export default function AnalisadorPage() {
     setErro(null);
     setCarregando(true);
     try {
-      const resultado = await analisar(montarParametros());
-      setResultados(resultado);
+      const resposta = await analisar(montarParametros());
+      setResultados(resposta.resultados);
+      setResultadoId(resposta.resultadoId);
       setEtapa('resultados');
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Falha ao gerar análises.');
@@ -833,7 +837,7 @@ export default function AnalisadorPage() {
     setCarregando(true);
     try {
       const parametros = { ...montarParametros(), chaves_selecionadas: chavesParaExportar };
-      const blob = await exportarRelatorio(formato, parametros);
+      const blob = await exportarRelatorio(formato, parametros, resultadoId);
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;

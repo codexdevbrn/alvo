@@ -7,9 +7,12 @@ import json
 import logging
 import os
 import re
+import secrets
 import unicodedata
 import sys
 import tempfile
+import threading
+import time
 import traceback
 import unicodedata
 from collections import OrderedDict
@@ -21,7 +24,7 @@ logger = logging.getLogger("uvicorn.error")
 
 import pandas as pd
 import numpy as np
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
@@ -80,7 +83,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["X-Ultimo-Movimento"],
+    expose_headers=["X-Ultimo-Movimento", "X-Resultado-Analise", "X-Resultado-Cache"],
 )
 
 
@@ -698,6 +701,10 @@ def _grupos_manuais_empresa(empresa: Optional[str], loja: Optional[str] = None) 
 
 # Máximo de empresas em cache (cada DF/summary pode ser grande).
 _CACHE_EMPRESA_MAX = 3
+# DataFrame aberto ocupa muitas vezes o tamanho do XLSX comprimido. O Analisador
+# usa uma empresa por vez; manter três bases foi observado levando o processo a
+# gigabytes em repouso. Summaries compactos continuam com o LRU maior acima.
+_CACHE_BASE_EMPRESA_MAX = 1
 
 # Cache por empresa do DataFrame lido direto da fonte (mtime do XLSX -> df).
 # LRU via OrderedDict. Não há mais Base.csv em disco — nada é persistido no trabalho
@@ -950,8 +957,14 @@ def _carregar_base_empresa(empresa: str) -> tuple[pd.DataFrame, int]:
         raise HTTPException(status_code=400, detail=f"Falha inesperada ao carregar a base: {exc}")
 
     df = _normalizar_coluna_loja_inplace(df)
-    # Master DF no cache (não cópia descartável); callers via _carregar_base recebem cópia.
-    _lru_set(_cache_base_empresa, empresa, {"mtime": mtime, "df": df, "linhas_vazias": linhas_vazias})
+    # Master DF no cache. Callers mutáveis recebem cópia por padrão; as rotas
+    # explicitamente somente-leitura podem compartilhar este objeto.
+    _lru_set(
+        _cache_base_empresa,
+        empresa,
+        {"mtime": mtime, "df": df, "linhas_vazias": linhas_vazias},
+        max_size=_CACHE_BASE_EMPRESA_MAX,
+    )
     return df, linhas_vazias
 
 
@@ -992,11 +1005,14 @@ def _filtrar_loja(df: pd.DataFrame, loja: Optional[str]) -> pd.DataFrame:
 def _carregar_base(
     empresa: Optional[str] = None,
     loja: Optional[str] = None,
+    *,
+    copiar: bool = True,
 ) -> tuple[pd.DataFrame, int]:
     """Com empresa: dados direto da fonte (Dados Mais Atacado.xlsx). Sem empresa: Excel padrão da raiz.
 
     loja opcional filtra a coluna Loja depois do cache (o cache guarda o DF completo
-    com Loja já normalizada).
+    com Loja já normalizada). `copiar=False` é reservado a callers somente-leitura;
+    o padrão defensivo continua isolando o cache contra mutações acidentais.
     """
     if empresa and empresa.strip():
         df, linhas_vazias = _carregar_base_empresa(empresa.strip())
@@ -1012,11 +1028,10 @@ def _carregar_base(
                 status_code=400,
                 detail=f"Loja '{nome}' não encontrada na base.",
             )
-        # Cópia: o cache guarda o DF completo; view filtrada não pode ser mutada
-        # por callers (aplicar_grupos / filtros) sem contaminar o cache.
-        return df.loc[mask].copy(), linhas_vazias
+        filtrado = df.loc[mask]
+        return (filtrado.copy() if copiar else filtrado), linhas_vazias
     # Sem filtro de loja: cópia defensiva para callers nunca mutarem o DF em cache.
-    return df.copy(), linhas_vazias
+    return (df.copy() if copiar else df), linhas_vazias
 
 
 @app.get("/api/base")
@@ -1025,7 +1040,8 @@ def obter_base(
     loja: Optional[str] = None,
     usuario: str = Depends(exigir_login),
 ):
-    df_completo, linhas_vazias = _carregar_base(empresa)
+    # A rota apenas lista/conta; não precisa duplicar centenas de milhares de linhas.
+    df_completo, linhas_vazias = _carregar_base(empresa, copiar=False)
     lojas = _listar_lojas(df_completo)
     loja_norm = _normalizar_loja(loja)
     if loja_norm and loja_norm not in lojas:
@@ -1229,7 +1245,8 @@ def _previa_grupos_resposta(
 @app.post("/api/grupos/previa")
 def previa_grupos(parametros: ParametrosGrupos, usuario: str = Depends(exigir_login)):
     """Prévia de grupos; por padrão recalcula cortes para caber em max_itens_por_grupo."""
-    df, _ = _carregar_base(parametros.empresa, loja=parametros.loja)
+    # As funções abaixo agregam em novos DataFrames; a base cacheada é somente lida.
+    df, _ = _carregar_base(parametros.empresa, loja=parametros.loja, copiar=False)
     return _previa_grupos_resposta(
         df,
         parametros.clientes_excluidos,
@@ -1284,7 +1301,8 @@ class ParametrosProdutos(BaseModel):
 
 @app.post("/api/produtos/previa")
 def previa_produtos(parametros: ParametrosProdutos, usuario: str = Depends(exigir_login)):
-    df, _ = _carregar_base(parametros.empresa, loja=parametros.loja)
+    # Classificação usa groupby e devolve outro frame; não altera a base cacheada.
+    df, _ = _carregar_base(parametros.empresa, loja=parametros.loja, copiar=False)
     # Classifica todos os produtos (sem filtrar excluídos) para a tabela de
     # prévia poder marcar/desmarcar "Considerar?" como no app desktop.
     if parametros.ajustar_cortes:
@@ -2426,6 +2444,127 @@ class ParametrosAnalise(BaseModel):
     loja: Optional[str] = None
 
 
+# O resultado recém-calculado pode ser reaproveitado pela exportação. Guardamos
+# apenas uma análise, por pouco tempo e com teto de memória: o objetivo é evitar
+# o segundo cálculo imediato sem transformar o processo num depósito de bases.
+_CACHE_RESULTADO_ANALISE_TTL_S = 10 * 60
+_CACHE_RESULTADO_ANALISE_MAX_BYTES = 256 * 1024 * 1024
+_cache_resultado_analise: OrderedDict[str, dict] = OrderedDict()
+_cache_resultado_analise_lock = threading.Lock()
+
+
+def _dados_parametros_analise(parametros: ParametrosAnalise) -> dict:
+    """Converte o modelo Pydantic 1/2 para dados simples e comparáveis."""
+    if hasattr(parametros, "model_dump"):
+        return parametros.model_dump()
+    return parametros.dict()
+
+
+def _assinatura_parametros_analise(parametros: ParametrosAnalise) -> str:
+    """Assinatura do cálculo, sem campos que só mudam apresentação/exportação."""
+    dados = _dados_parametros_analise(parametros)
+    for campo in ("chaves_selecionadas", "nome_empresa", "nome_usuario"):
+        dados.pop(campo, None)
+    return json.dumps(dados, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def _tamanho_resultados_analise(resultados: dict) -> int:
+    """Estima memória profunda dos DataFrames antes de admitir o cache."""
+    total = 0
+    for analises in resultados.values():
+        for dataframe in analises.values():
+            if isinstance(dataframe, pd.DataFrame):
+                total += int(dataframe.memory_usage(index=True, deep=True).sum())
+    return total
+
+
+def _expurgar_cache_resultado_analise(agora: Optional[float] = None) -> None:
+    """Remove entradas vencidas. Deve ser chamado com o lock já adquirido."""
+    instante = time.monotonic() if agora is None else agora
+    vencidos = [
+        token for token, entrada in _cache_resultado_analise.items()
+        if instante - entrada["criado_em"] > _CACHE_RESULTADO_ANALISE_TTL_S
+    ]
+    for token in vencidos:
+        _cache_resultado_analise.pop(token, None)
+
+
+def _guardar_resultado_analise(
+    usuario: str, parametros: ParametrosAnalise, resultados: dict,
+) -> Optional[str]:
+    """Guarda a análise recém-gerada e devolve token opaco para a exportação."""
+    tamanho_bytes = _tamanho_resultados_analise(resultados)
+    if tamanho_bytes > _CACHE_RESULTADO_ANALISE_MAX_BYTES:
+        logger.info(
+            "Resultado de %s não cacheado: %.1f MB excedem o teto de %.1f MB.",
+            usuario, tamanho_bytes / 1024 / 1024,
+            _CACHE_RESULTADO_ANALISE_MAX_BYTES / 1024 / 1024,
+        )
+        return None
+
+    token = secrets.token_urlsafe(24)
+    entrada = {
+        "usuario": usuario,
+        "assinatura": _assinatura_parametros_analise(parametros),
+        "chaves": frozenset(parametros.chaves_selecionadas or []),
+        "resultados": resultados,
+        "criado_em": time.monotonic(),
+        "tamanho_bytes": tamanho_bytes,
+    }
+    with _cache_resultado_analise_lock:
+        _expurgar_cache_resultado_analise(entrada["criado_em"])
+        # Uma entrada global limita o pico de RAM. Se outro usuário gerar uma
+        # análise, o token anterior simplesmente fará fallback para recálculo.
+        _cache_resultado_analise.clear()
+        _cache_resultado_analise[token] = entrada
+    return token
+
+
+def _filtrar_resultados_cache(resultados: dict, chaves_solicitadas: set[str]) -> dict:
+    """Replica o recorte de _rodar_analises sem copiar os DataFrames."""
+    chaves_resultado = set(chaves_solicitadas)
+    if "migracao_abc" in chaves_solicitadas:
+        chaves_resultado.update({"migracao_resumo", "migracao_score_clientes"})
+    if "liquidez" in chaves_solicitadas:
+        chaves_resultado.update({"liquidez_estoque", "liquidez_vendas"})
+
+    return {
+        granularidade: {
+            chave: dataframe
+            for chave, dataframe in analises.items()
+            if chave in chaves_resultado
+        }
+        for granularidade, analises in resultados.items()
+        if any(chave in chaves_resultado for chave in analises)
+    }
+
+
+def _obter_resultado_analise(
+    token: Optional[str], usuario: str, parametros: ParametrosAnalise,
+) -> Optional[dict]:
+    """Valida dono, prazo, parâmetros e subconjunto antes de reutilizar dados."""
+    if not token:
+        return None
+    agora = time.monotonic()
+    with _cache_resultado_analise_lock:
+        _expurgar_cache_resultado_analise(agora)
+        entrada = _cache_resultado_analise.get(token)
+        if entrada is None:
+            return None
+        if entrada["usuario"] != usuario:
+            return None
+        if entrada["assinatura"] != _assinatura_parametros_analise(parametros):
+            return None
+        solicitadas = set(parametros.chaves_selecionadas or [])
+        if not solicitadas:
+            return None
+        if not solicitadas.issubset(entrada["chaves"]):
+            return None
+        _cache_resultado_analise.move_to_end(token)
+        resultados = entrada["resultados"]
+    return _filtrar_resultados_cache(resultados, solicitadas)
+
+
 def _carregar_df_filtrado(
     produtos_excluidos: list[str],
     empresa: Optional[str] = None,
@@ -2577,7 +2716,12 @@ def _df_para_json(df: pd.DataFrame) -> dict:
 
 
 @app.post("/api/analisar")
-def analisar(parametros: ParametrosAnalise, usuario: str = Depends(exigir_login)):
+def analisar(
+    parametros: ParametrosAnalise,
+    response: Response,
+    usuario: str = Depends(exigir_login),
+):
+    inicio = time.perf_counter()
     try:
         resultados = _rodar_analises(parametros)
     except HTTPException:
@@ -2587,6 +2731,13 @@ def analisar(parametros: ParametrosAnalise, usuario: str = Depends(exigir_login)
     except Exception as exc:
         logger.error("Falha inesperada ao analisar dados de %s:\n%s", usuario, traceback.format_exc())
         raise HTTPException(status_code=400, detail=f"Falha inesperada ao gerar as análises: {exc}")
+    resultado_id = _guardar_resultado_analise(usuario, parametros, resultados)
+    if resultado_id:
+        response.headers["X-Resultado-Analise"] = resultado_id
+    logger.info(
+        "Análise concluída para %s em %.2fs; cache=%s.",
+        usuario, time.perf_counter() - inicio, "armazenado" if resultado_id else "ignorado",
+    )
     return {
         granularidade: {chave: _df_para_json(df_analise) for chave, df_analise in analises.items()}
         for granularidade, analises in resultados.items()
@@ -2598,12 +2749,21 @@ def analisar(parametros: ParametrosAnalise, usuario: str = Depends(exigir_login)
 # ---------------------------------------------------------------------------
 
 @app.post("/api/exportar/{formato}")
-def exportar(formato: str, parametros: ParametrosAnalise, usuario: str = Depends(exigir_login)):
+def exportar(
+    formato: str,
+    parametros: ParametrosAnalise,
+    usuario: str = Depends(exigir_login),
+    resultado_id: Optional[str] = Header(None, alias="X-Resultado-Analise"),
+):
     if formato not in ("excel", "pdf", "html"):
         raise HTTPException(status_code=400, detail="Formato inválido. Use 'excel', 'pdf' ou 'html'.")
 
+    inicio = time.perf_counter()
+    resultados = _obter_resultado_analise(resultado_id, usuario, parametros)
+    cache_hit = resultados is not None
     try:
-        resultados = _rodar_analises(parametros)
+        if resultados is None:
+            resultados = _rodar_analises(parametros)
     except HTTPException:
         raise
     except af.ErroCarregamentoCSV as exc:
@@ -2639,7 +2799,12 @@ def exportar(formato: str, parametros: ParametrosAnalise, usuario: str = Depends
         media_type = "application/pdf"
         nome_arquivo = "relatorio.pdf"
 
+    logger.info(
+        "Exportação %s concluída para %s em %.2fs; cache=%s.",
+        formato, usuario, time.perf_counter() - inicio, "HIT" if cache_hit else "MISS",
+    )
     return FileResponse(
         caminho_saida, media_type=media_type, filename=nome_arquivo,
         background=BackgroundTask(os.remove, caminho_saida),
+        headers={"X-Resultado-Cache": "HIT" if cache_hit else "MISS"},
     )
