@@ -642,7 +642,7 @@ export async function exportarRelatorio(formato: FormatoExportacao, parametros: 
 // Monitoramento de empresas
 // ---------------------------------------------------------------------------
 
-export type MetricaMonitor = 'receita' | 'qtd' | 'clientes';
+export type MetricaMonitor = 'receita' | 'qtd' | 'clientes' | 'receita_dia';
 
 /** Um card da tela de monitoramento. `estado` diferente de 'ok' vem sem serie:
  *  empresa sem base gerada ou com summary ilegivel entra na lista mesmo assim,
@@ -654,9 +654,11 @@ export type EmpresaMonitor = {
   metrica?: MetricaMonitor;
   rotulos?: (string | null)[];
   valores?: number[];
-  total?: number;
+  total?: number | null;
   media?: number;
   variacao_pct?: number | null;
+  /** false = base anterior menor que 1% da atual; percentual seria enganoso. */
+  base_comparavel?: boolean | null;
   /** Lados da comparacao anual — cobrem so os meses do ano mais recente. */
   total_comparado?: number | null;
   total_ano_anterior?: number | null;
@@ -664,6 +666,8 @@ export type EmpresaMonitor = {
   meses_comparados?: number;
   updated_at?: string | null;
   ultimo_periodo?: number | null;
+  ultimo_periodo_parcial?: boolean;
+  dias_uteis_janela?: number | null;
   meses_serie?: number;
 };
 

@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, RefreshCw } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
+import { AlertTriangle, RefreshCw, Search } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
+import { EmpresaMiniCard } from '../components/monitor/EmpresaMiniCard';
+import { selecionarEmpresaGlobal } from '../utils/empresaSelecionada';
 import {
   obterMonitorEmpresas,
   salvarFavoritas,
@@ -11,24 +14,48 @@ import {
 
 const LS_METRICA = 'monitor_metrica';
 const LS_MESES = 'monitor_meses';
-
-/** Janela padrão: 12 períodos com movimento cobrem o ano corrente e dão base de
- *  comparação com o ano anterior nos cards. */
+const LS_BUSCA = 'monitor_busca';
+const LS_ORDENACAO = 'monitor_ordenacao';
+const LS_ESCOPO = 'monitor_escopo';
 const MESES_PADRAO = 12;
 
+type OrdenacaoMonitor = 'nome' | 'valor' | 'variacao';
+type EscopoMonitor = 'favoritas' | 'todas';
+
 function lerMetrica(): MetricaMonitor {
-  const v = localStorage.getItem(LS_METRICA);
-  return v === 'qtd' || v === 'clientes' ? v : 'receita';
+  const valor = localStorage.getItem(LS_METRICA);
+  return valor === 'qtd' || valor === 'clientes' || valor === 'receita_dia'
+    ? valor
+    : 'receita';
 }
 
 function lerMeses(): number {
-  const n = Number(localStorage.getItem(LS_MESES));
-  return Number.isFinite(n) && n >= 1 && n <= 60 ? n : MESES_PADRAO;
+  const valor = Number(localStorage.getItem(LS_MESES));
+  return Number.isFinite(valor) && valor >= 1 && valor <= 60 ? valor : MESES_PADRAO;
+}
+
+function lerOrdenacao(): OrdenacaoMonitor {
+  const valor = localStorage.getItem(LS_ORDENACAO);
+  return valor === 'valor' || valor === 'variacao' ? valor : 'nome';
+}
+
+function normalizarBusca(valor: string): string {
+  return valor.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
+}
+
+function valorPrincipal(item: EmpresaMonitor, metrica: MetricaMonitor): number {
+  return metrica === 'receita_dia' ? (item.media ?? 0) : (item.total ?? 0);
 }
 
 export default function MonitorPage() {
+  const navigate = useNavigate();
   const [metrica, setMetrica] = useState<MetricaMonitor>(lerMetrica);
   const [meses, setMeses] = useState<number>(lerMeses);
+  const [busca, setBusca] = useState(() => localStorage.getItem(LS_BUSCA) || '');
+  const [ordenacao, setOrdenacao] = useState<OrdenacaoMonitor>(lerOrdenacao);
+  const [escopo, setEscopo] = useState<EscopoMonitor>(() =>
+    localStorage.getItem(LS_ESCOPO) === 'favoritas' ? 'favoritas' : 'todas',
+  );
   const [dados, setDados] = useState<MonitorResposta | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
@@ -38,7 +65,10 @@ export default function MonitorPage() {
   useEffect(() => {
     localStorage.setItem(LS_METRICA, metrica);
     localStorage.setItem(LS_MESES, String(meses));
-  }, [metrica, meses]);
+    localStorage.setItem(LS_BUSCA, busca);
+    localStorage.setItem(LS_ORDENACAO, ordenacao);
+    localStorage.setItem(LS_ESCOPO, escopo);
+  }, [metrica, meses, busca, ordenacao, escopo]);
 
   const carregar = useCallback((forcar = false, signal?: AbortSignal) => {
     setCarregando(true);
@@ -63,10 +93,10 @@ export default function MonitorPage() {
     return () => controller.abort();
   }, [carregar]);
 
-  /** Otimista: a estrela responde na hora e volta atrás se o servidor recusar. */
+  /** Atualização otimista: estrela reage sem esperar rede e reverte se salvar falhar. */
   const alternarFavorita = async (empresa: string) => {
     const proximas = favoritas.includes(empresa)
-      ? favoritas.filter((n) => n !== empresa)
+      ? favoritas.filter((nome) => nome !== empresa)
       : [...favoritas, empresa];
     const anteriores = favoritas;
     setFavoritas(proximas);
@@ -82,7 +112,32 @@ export default function MonitorPage() {
     }
   };
 
+  /** O card promete "abrir o Dashboard da empresa" — selecionar sem navegar
+   *  deixava o usuario na mesma tela achando que nada aconteceu. Usa a mesma
+   *  porta de entrada da sidebar, para o Dashboard montar ja com a empresa certa
+   *  em vez de carregar a anterior e trocar depois. */
+  const abrirDashboard = useCallback((empresa: string) => {
+    selecionarEmpresaGlobal(empresa);
+    navigate('/');
+  }, [navigate]);
+
   const empresas = useMemo<EmpresaMonitor[]>(() => dados?.empresas ?? [], [dados]);
+  const empresasVisiveis = useMemo(() => {
+    const termo = normalizarBusca(busca.trim());
+    return empresas
+      .filter((item) => escopo === 'todas' || favoritas.includes(item.empresa))
+      .filter((item) => !termo || normalizarBusca(item.empresa).includes(termo))
+      .sort((a, b) => {
+        if (ordenacao === 'valor') {
+          return valorPrincipal(b, metrica) - valorPrincipal(a, metrica);
+        }
+        if (ordenacao === 'variacao') {
+          return (b.variacao_pct ?? Number.NEGATIVE_INFINITY)
+            - (a.variacao_pct ?? Number.NEGATIVE_INFINITY);
+        }
+        return a.empresa.localeCompare(b.empresa, 'pt-BR', { sensitivity: 'base' });
+      });
+  }, [busca, empresas, escopo, favoritas, metrica, ordenacao]);
 
   return (
     <AppShell>
@@ -91,68 +146,122 @@ export default function MonitorPage() {
           <div>
             <h1>Monitoramento</h1>
             <p>
-              {/* Sem dados por causa de erro, a contagem seria "0 empresas" — o que
-                  soa como base vazia, não como falha de conexão. */}
               {carregando && !dados
                 ? 'Carregando empresas…'
                 : erro && !dados
                   ? 'Não foi possível carregar'
-                  : `${empresas.length} empresas · ${favoritas.length} favorita${favoritas.length === 1 ? '' : 's'}`}
+                  : `${empresasVisiveis.length} de ${empresas.length} empresas · ${favoritas.length} favorita${favoritas.length === 1 ? '' : 's'}`}
             </p>
           </div>
-          {/* Controles mínimos para o esqueleto funcionar de ponta a ponta. A
-              barra completa (busca, ordenação, alternador Favoritas/Todas) é da
-              Tarefa 5 do plano. */}
-          <div className="monitor-header-acoes">
-            <label className="analisador-campo">
-              <span>Métrica</span>
-              <select
-                className="custom-select analisador-select"
-                value={metrica}
-                onChange={(e) => setMetrica(e.target.value as MetricaMonitor)}
-              >
-                <option value="receita">Receita</option>
-                <option value="qtd">Quantidade</option>
-                <option value="clientes">Clientes</option>
-              </select>
-            </label>
+          <button
+            type="button"
+            className="analisador-btn analisador-btn-sec analisador-btn-compact"
+            onClick={() => void carregar(true)}
+            disabled={carregando}
+            title="Recalcular resumos a partir dos dados mais recentes"
+          >
+            <RefreshCw size={14} aria-hidden="true" className={carregando ? 'is-girando' : ''} />
+            {carregando ? 'Atualizando…' : 'Recalcular'}
+          </button>
+        </header>
 
-            <label className="analisador-campo">
-              <span>Períodos</span>
+        <section className="glass-card monitor-filtros" aria-label="Filtros do monitoramento">
+          <label className="analisador-campo monitor-busca">
+            <span>Buscar empresa</span>
+            <span className="monitor-input-icon-wrap">
+              <Search size={15} aria-hidden="true" />
               <input
                 className="analisador-input"
-                type="number"
-                min={1}
-                max={60}
-                value={meses}
-                onChange={(e) => setMeses(Math.max(1, Math.min(60, Number(e.target.value) || MESES_PADRAO)))}
+                type="search"
+                value={busca}
+                onChange={(evento) => setBusca(evento.target.value)}
+                placeholder="Nome da empresa"
               />
-            </label>
+            </span>
+          </label>
 
-            <button
-              type="button"
-              className="analisador-btn analisador-btn-sec analisador-btn-compact"
-              onClick={() => void carregar(true)}
-              disabled={carregando}
-              title="Recalcula o resumo de todas as empresas a partir dos summaries"
+          <label className="analisador-campo">
+            <span>Métrica</span>
+            <select
+              className="custom-select analisador-select"
+              value={metrica}
+              onChange={(evento) => setMetrica(evento.target.value as MetricaMonitor)}
             >
-              <RefreshCw size={14} />
-              {carregando ? 'Atualizando…' : 'Recalcular'}
-            </button>
+              <option value="receita">Receita</option>
+              <option value="receita_dia">Média de receita por dia útil</option>
+              <option value="qtd">Quantidade</option>
+              <option value="clientes">Clientes</option>
+            </select>
+          </label>
+
+          <label className="analisador-campo monitor-periodos">
+            <span>Últimos períodos</span>
+            <input
+              className="analisador-input"
+              type="number"
+              min={1}
+              max={60}
+              value={meses}
+              onChange={(evento) => setMeses(
+                Math.max(1, Math.min(60, Number(evento.target.value) || MESES_PADRAO)),
+              )}
+            />
+          </label>
+
+          <label className="analisador-campo">
+            <span>Ordenar por</span>
+            <select
+              className="custom-select analisador-select"
+              value={ordenacao}
+              onChange={(evento) => setOrdenacao(evento.target.value as OrdenacaoMonitor)}
+            >
+              <option value="nome">Nome</option>
+              <option value="valor">Maior valor</option>
+              <option value="variacao">Maior variação</option>
+            </select>
+          </label>
+
+          <div className="analisador-campo monitor-escopo">
+            <span>Exibir</span>
+            <div className="monitor-segmentado" role="group" aria-label="Empresas exibidas">
+              <button
+                type="button"
+                className={escopo === 'favoritas' ? 'is-ativo' : ''}
+                aria-pressed={escopo === 'favoritas'}
+                onClick={() => setEscopo('favoritas')}
+              >
+                Favoritas
+              </button>
+              <button
+                type="button"
+                className={escopo === 'todas' ? 'is-ativo' : ''}
+                aria-pressed={escopo === 'todas'}
+                onClick={() => setEscopo('todas')}
+              >
+                Todas
+              </button>
+            </div>
           </div>
-        </header>
+        </section>
+
+        {metrica === 'receita_dia' && (
+          <p className="monitor-nota">
+            Receita mensal ÷ dias úteis do mês. Sábados e domingos são excluídos;
+            feriados não. Último período pode estar incompleto.
+          </p>
+        )}
 
         {erro && (
           <div className="glass-card monitor-aviso" role="alert">
-            <AlertTriangle size={18} color="#e0645c" />
+            <AlertTriangle size={18} aria-hidden="true" />
             <span>{erro}</span>
           </div>
         )}
 
         {carregando && !dados && (
           <div className="monitor-grid" aria-hidden="true">
-            {Array.from({ length: 8 }, (_, i) => (
-              <div key={i} className="glass-card monitor-card is-esqueleto" />
+            {Array.from({ length: 8 }, (_, indice) => (
+              <div key={indice} className="glass-card monitor-card is-esqueleto" />
             ))}
           </div>
         )}
@@ -160,38 +269,41 @@ export default function MonitorPage() {
         {!carregando && !erro && empresas.length === 0 && (
           <div className="glass-card monitor-vazio">
             <p>Nenhuma empresa encontrada na pasta fonte.</p>
+            <p className="analisador-hint">Confira os caminhos em Configurações.</p>
+          </div>
+        )}
+
+        {!carregando && empresas.length > 0 && empresasVisiveis.length === 0 && (
+          <div className="glass-card monitor-vazio">
+            <p>{escopo === 'favoritas' && favoritas.length === 0
+              ? 'Você ainda não favoritou nenhuma empresa.'
+              : 'Nenhuma empresa corresponde aos filtros.'}</p>
             <p className="analisador-hint">
-              Confira os caminhos em Configurações — a lista sai das subpastas com
-              o arquivo de dados do BI.
+              {escopo === 'favoritas' && favoritas.length === 0
+                ? 'Abra “Todas” e use a estrela para montar seu painel principal.'
+                : 'Limpe a busca ou altere os filtros.'}
             </p>
           </div>
         )}
 
-        {/* Cards entram na Tarefa 4; aqui só a grade e os estados. */}
-        {empresas.length > 0 && (
+        {empresasVisiveis.length > 0 && (
           <div className="monitor-grid">
-            {empresas.map((item) => (
-              <article key={item.empresa} className="glass-card monitor-card">
-                <h2>{item.empresa}</h2>
-                <p className="analisador-hint">
-                  {item.estado === 'ok'
-                    ? `${item.valores?.length ?? 0} períodos · ${item.updated_at ?? '—'}`
-                    : item.detalhe}
-                </p>
-                <button
-                  type="button"
-                  onClick={() => void alternarFavorita(item.empresa)}
-                  disabled={salvandoFavorita}
-                >
-                  {favoritas.includes(item.empresa) ? 'Favorita' : 'Favoritar'}
-                </button>
-              </article>
+            {empresasVisiveis.map((item) => (
+              <EmpresaMiniCard
+                key={item.empresa}
+                item={item}
+                metrica={metrica}
+                favorita={favoritas.includes(item.empresa)}
+                salvandoFavorita={salvandoFavorita}
+                onAlternarFavorita={(empresa) => void alternarFavorita(empresa)}
+                onAbrir={abrirDashboard}
+              />
             ))}
           </div>
         )}
 
-        <p className="analisador-hint">
-          Métrica {metrica} · últimos {meses} períodos com movimento
+        <p className="analisador-hint monitor-rodape-nota">
+          Últimos {meses} períodos com movimento. Clique num card para abrir o Dashboard da empresa.
         </p>
       </div>
     </AppShell>

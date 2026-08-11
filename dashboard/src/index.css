@@ -4747,15 +4747,78 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   font-size: 0.85rem;
 }
 
-.monitor-header-acoes {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 0.6rem;
+.monitor-header .analisador-btn {
+  min-height: 2.5rem;
 }
 
-.monitor-header-acoes .analisador-campo {
-  min-width: 7rem;
+.monitor-filtros {
+  display: grid;
+  grid-template-columns: minmax(12rem, 1.5fr) minmax(13rem, 1.2fr) minmax(7rem, 0.55fr) minmax(9rem, 0.8fr) auto;
+  align-items: end;
+  gap: 0.75rem;
+  padding: 0.9rem 1rem;
+}
+
+.monitor-filtros .analisador-campo {
+  min-width: 0;
+}
+
+.monitor-input-icon-wrap {
+  position: relative;
+  display: block;
+}
+
+.monitor-input-icon-wrap > svg {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 0.7rem;
+  color: var(--text-muted);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.monitor-input-icon-wrap .analisador-input {
+  width: 100%;
+  padding-left: 2rem;
+}
+
+.monitor-segmentado {
+  display: flex;
+  padding: 0.2rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.monitor-segmentado button {
+  min-height: 2rem;
+  padding: 0.35rem 0.65rem;
+  border: 0;
+  border-radius: 0.48rem;
+  color: var(--text-secondary);
+  background: transparent;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.monitor-segmentado button.is-ativo {
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+}
+
+.monitor-segmentado button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.monitor-nota,
+.monitor-rodape-nota {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.78rem;
 }
 
 .monitor-aviso {
@@ -4767,34 +4830,250 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   font-size: 0.9rem;
 }
 
+.monitor-aviso svg {
+  flex: 0 0 auto;
+  color: var(--danger);
+}
+
 .monitor-vazio {
   padding: 3rem 2rem;
   text-align: center;
 }
 
-/* auto-fill em vez de auto-fit: com poucas empresas os cards mantêm a largura de
-   leitura em vez de esticarem para a tela inteira. */
 .monitor-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(15.5rem, 1fr));
-  gap: 0.85rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
 }
 
 .monitor-card {
+  position: relative;
+  min-width: 0;
+  min-height: 17.5rem;
+  padding: 0;
+  overflow: hidden;
+  transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+}
+
+.monitor-card:hover,
+.monitor-card:focus-within {
+  border-color: rgba(111, 140, 196, 0.55);
+  transform: translateY(-2px);
+}
+
+.monitor-card.is-favorita {
+  border-color: rgba(218, 187, 108, 0.48);
+  box-shadow: inset 0 1px 0 rgba(218, 187, 108, 0.08);
+}
+
+.monitor-card.is-sem-base {
+  min-height: 11rem;
+  opacity: 0.78;
+}
+
+.monitor-card-link {
   display: flex;
   flex-direction: column;
-  gap: 0.4rem;
-  padding: 0.9rem 1rem;
-  min-height: 9rem;
+  min-height: inherit;
+  padding: 0.95rem 1rem;
+  color: inherit;
+  text-decoration: none;
+}
+
+.monitor-card-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -3px;
+}
+
+/* O alvo de clique do card e um <button> (o conteudo tem titulo e texto, e
+   navegacao interna nao e link externo): sem estes resets ele herdaria a
+   aparencia de botao do navegador. */
+.monitor-card-link {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* Serie de um unico periodo: sem linha para desenhar, mostra o numero. */
+.monitor-sparkline-unico {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 0.15rem;
+}
+
+.monitor-sparkline-unico strong {
+  color: var(--text-primary);
+  font-size: 1.05rem;
+}
+
+.monitor-card-topo {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+  padding-right: 2rem;
 }
 
 .monitor-card h2 {
+  min-width: 0;
   margin: 0;
   font-size: 0.92rem;
   font-weight: 700;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.monitor-favorita-tag {
+  flex: 0 0 auto;
+  padding: 0.12rem 0.4rem;
+  border-radius: 999px;
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.monitor-favorito-btn {
+  position: absolute;
+  z-index: 2;
+  top: 0.7rem;
+  right: 0.7rem;
+  display: grid;
+  place-items: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.monitor-favorito-btn[aria-pressed="true"] {
+  color: var(--accent);
+}
+
+.monitor-favorito-btn:hover,
+.monitor-favorito-btn:focus-visible {
+  color: var(--accent-hover);
+  background: var(--accent-soft);
+  outline: none;
+}
+
+.monitor-favorito-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent);
+}
+
+.monitor-favorito-btn:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.monitor-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 0.12rem;
+  margin-top: 0.85rem;
+}
+
+.monitor-kpi span {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.monitor-kpi strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: clamp(1.25rem, 2vw, 1.65rem);
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-sparkline {
+  height: 7.4rem;
+  min-height: 7.4rem;
+  margin: 0.35rem -0.35rem 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.monitor-sparkline .recharts-cartesian-axis-tick-value {
+  fill: var(--text-muted);
+  font-size: 0.58rem;
+}
+
+.monitor-grafico-tooltip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.5rem;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  font-size: 0.68rem;
+}
+
+.monitor-grafico-tooltip strong {
+  color: var(--text-primary);
+  font-size: 0.76rem;
+}
+
+.monitor-card-rodape {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-top: auto;
+  color: var(--text-muted);
+  font-size: 0.67rem;
+}
+
+.monitor-variacao {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.18rem;
+  min-width: 0;
+  font-weight: 700;
+}
+
+.monitor-variacao.is-positiva { color: var(--success); }
+.monitor-variacao.is-negativa { color: var(--danger); }
+.monitor-variacao.is-neutra { color: var(--text-muted); }
+
+.monitor-parcial {
+  margin-top: 0.45rem;
+  color: var(--accent-hover);
+  font-size: 0.65rem;
+}
+
+.monitor-card-sem-base {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  margin: auto 0;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.monitor-card-sem-base strong {
+  color: var(--text-primary);
+  font-size: 0.9rem;
+}
+
+.is-girando {
+  animation: monitor-girar 0.9s linear infinite;
 }
 
 /* Esqueleto de carregamento: pulso discreto, sem spinner por card (59 spinners
@@ -4808,9 +5087,37 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   50% { opacity: 0.75; }
 }
 
+@keyframes monitor-girar {
+  to { transform: rotate(360deg); }
+}
+
+@media (max-width: 1100px) {
+  .monitor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .monitor-filtros { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .monitor-busca { grid-column: 1 / -1; }
+}
+
+@media (max-width: 820px) {
+  .monitor-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 560px) {
+  .monitor-header { align-items: stretch; }
+  .monitor-header .analisador-btn { width: 100%; }
+  .monitor-filtros { grid-template-columns: minmax(0, 1fr); }
+  .monitor-busca { grid-column: auto; }
+  .monitor-grid { grid-template-columns: minmax(0, 1fr); }
+  .monitor-segmentado button { flex: 1; }
+  .monitor-card-rodape { align-items: flex-start; flex-direction: column; }
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .monitor-card.is-esqueleto {
+  .monitor-card,
+  .monitor-card.is-esqueleto,
+  .is-girando {
     animation: none;
-    opacity: 0.55;
+    transition: none;
   }
+
+  .monitor-card.is-esqueleto { opacity: 0.55; }
 }
