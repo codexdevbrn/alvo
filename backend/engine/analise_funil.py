@@ -5,6 +5,9 @@ Sem dependência de GUI - pode ser testado isoladamente via linha de comando
 ou testes automatizados. Todas as funções recebem/retornam DataFrames do pandas.
 """
 
+import errno
+import os
+import time
 import unicodedata
 
 import pandas as pd
@@ -183,6 +186,87 @@ def _normalizar_numero_excel(serie):
     return pd.to_numeric(convertido, errors="coerce")
 
 
+#: Atributos NTFS que o OneDrive usa para arquivo que existe só na nuvem.
+_ATTR_OFFLINE = 0x1000
+_ATTR_RECALL_ON_DATA_ACCESS = 0x400000
+
+#: Tentativas extras quando o erro tem cara de transitório (lock de sincronização,
+#: hidratação em curso). Espera curta: se em ~5s não liberou, o usuário precisa
+#: agir (fechar o Excel, esperar o download), e travar a requisição não ajuda.
+_TENTATIVAS_LEITURA = 3
+_ESPERA_ENTRE_TENTATIVAS = (1.5, 3.0)
+
+
+def _arquivo_somente_na_nuvem(caminho_arquivo) -> bool:
+    """True quando o arquivo é placeholder do OneDrive ainda não baixado."""
+    try:
+        atributos = os.stat(caminho_arquivo).st_file_attributes  # type: ignore[attr-defined]
+    except (AttributeError, OSError):
+        return False  # não-Windows ou stat falhou: não dá para afirmar
+    return bool(atributos & (_ATTR_OFFLINE | _ATTR_RECALL_ON_DATA_ACCESS))
+
+
+def _mensagem_erro_leitura(caminho_arquivo, exc: Exception) -> str | None:
+    """Traduz erro de I/O do Windows em instrução acionável.
+
+    A pasta fonte fica no OneDrive e as planilhas são abertas no Excel pelas
+    equipes, então dois erros aparecem com frequência e o texto cru do sistema
+    ("[Errno 13] Permission denied") não diz o que fazer:
+
+    * Errno 13 — outro processo tem o arquivo aberto (Excel, ou o OneDrive
+      subindo a versão nova).
+    * Errno 22 — leitura interrompida no meio da hidratação de um placeholder.
+      Costuma vir acompanhada do atributo OFFLINE.
+
+    Retorna None quando o erro não é um desses (aí o texto original é melhor
+    do que um chute).
+    """
+    nome = os.path.basename(str(caminho_arquivo))
+    errno_exc = getattr(exc, "errno", None)
+
+    if _arquivo_somente_na_nuvem(caminho_arquivo) or errno_exc == errno.EINVAL:
+        return (
+            f"{nome} ainda não está baixado nesta máquina — o OneDrive o mantém só "
+            "na nuvem. No Explorador de Arquivos, clique com o botão direito na pasta "
+            "e escolha “Sempre manter neste dispositivo”, aguarde o download e tente "
+            "de novo."
+        )
+
+    if isinstance(exc, PermissionError) or errno_exc == errno.EACCES:
+        return (
+            f"{nome} está aberto em outro programa (normalmente o Excel) ou sendo "
+            "sincronizado pelo OneDrive. Feche a planilha, aguarde a sincronização "
+            "terminar e tente de novo."
+        )
+
+    return None
+
+
+def _ler_excel_com_retry(caminho_arquivo, **kwargs):
+    """`pd.read_excel` com algumas tentativas para erros transitórios de I/O.
+
+    Lock de sincronização e hidratação do OneDrive costumam liberar em segundos;
+    falhar na primeira tentativa obrigava o usuário a recarregar a tela sem saber
+    por quê. Erro de formato/estrutura não é repetido — só I/O.
+    """
+    ultimo_erro: Exception | None = None
+    for tentativa in range(_TENTATIVAS_LEITURA):
+        try:
+            return pd.read_excel(caminho_arquivo, **kwargs)
+        except OSError as exc:
+            ultimo_erro = exc
+            if _mensagem_erro_leitura(caminho_arquivo, exc) is None:
+                break  # não é um dos casos conhecidos: não insiste
+            if tentativa < len(_ESPERA_ENTRE_TENTATIVAS):
+                time.sleep(_ESPERA_ENTRE_TENTATIVAS[tentativa])
+
+    assert ultimo_erro is not None
+    mensagem = _mensagem_erro_leitura(caminho_arquivo, ultimo_erro)
+    if mensagem:
+        raise ErroCarregamentoCSV(mensagem) from ultimo_erro
+    raise ultimo_erro
+
+
 def carregar_excel_base_empresa(caminho_arquivo):
     """Lê ``Dados Mais Atacado.xlsx`` no schema pronto da empresa.
 
@@ -200,7 +284,9 @@ def carregar_excel_base_empresa(caminho_arquivo):
         "NOME_FABRICANTE": str,
     }
     try:
-        df = pd.read_excel(caminho_arquivo, sheet_name=0, dtype=tipos_texto)
+        df = _ler_excel_com_retry(caminho_arquivo, dtype=tipos_texto)
+    except ErroCarregamentoCSV:
+        raise
     except Exception as exc:
         raise ErroCarregamentoCSV(
             f"Não foi possível ler Dados Mais Atacado.xlsx: {exc}"
