@@ -359,7 +359,7 @@ export async function carregarConfiguracaoEmpresa<T = ConfigEmpresaSalva>(
   return tratarResposta(res);
 }
 
-/** Retorna null se o escopo (loja / todas) não tem config.json salvo (404). */
+/** Retorna null se o escopo (loja / todas) ainda não tem config.json salvo. */
 export async function tentarCarregarConfiguracaoEmpresa(
   nome: string,
   loja?: string | null,
@@ -368,8 +368,9 @@ export async function tentarCarregarConfiguracaoEmpresa(
     `/api/empresas/${encodeURIComponent(nome)}/configuracao${queryLoja(loja)}`,
     { headers: authHeaders() },
   );
+  // Compatibilidade com backends antigos que ainda sinalizam ausência com 404.
   if (res.status === 404) return null;
-  return tratarResposta(res);
+  return tratarResposta<ConfigEmpresaSalva | null>(res);
 }
 
 export type TagCliente = string;

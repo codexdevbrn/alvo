@@ -34,6 +34,10 @@ import {
 import type { AggregateResult, ChartPoint, DashboardData, GranularidadeDash, ProductStats, Row, TrendItem } from '../types/dashboard';
 import '../index.css';
 
+/** Limites de UX: falhas de animação ou proxy nunca podem prender a navegação. */
+const TEMPO_MAX_SPLASH_MS = 10_000;
+const TEMPO_MAX_SUMMARY_EMPRESA_MS = 45_000;
+
 function parseGranularidade(raw: string | null): GranularidadeDash {
   if (raw && (GRANULARIDADES_DASH as string[]).includes(raw)) return raw as GranularidadeDash;
   return 'Mensal';
@@ -152,6 +156,15 @@ export default function DashboardPage() {
     marcarSplashTelaCheiaExibida();
     setIntroDone(true);
   }, []);
+
+  // Segunda trava fora do componente de animação. Mesmo se anime.js falhar ou
+  // o componente reiniciar, a splash nunca bloqueia a aplicação para sempre.
+  useEffect(() => {
+    if (modoCarregamento !== 'splash-inicial' || introDone) return;
+    const timeoutId = window.setTimeout(handleFirstLoopDone, TEMPO_MAX_SPLASH_MS);
+    return () => window.clearTimeout(timeoutId);
+  }, [handleFirstLoopDone, introDone, modoCarregamento]);
+
   const [historyType, setHistoryType] = useState<null | 'revenue' | 'mfr' | 'desc'>(null);
   const [isComputing, startComputeTransition] = useTransition();
 
@@ -270,6 +283,8 @@ export default function DashboardPage() {
     localStorage.setItem('alvo_empresa', empresa);
 
     let cancelado = false;
+    let timeoutEmpresaId: number | undefined;
+    let timeoutEmpresaEsgotado = false;
 
     const carregarEstatico = async (): Promise<DashboardData> => {
       const res = await fetch('/data/summary.json');
@@ -296,6 +311,13 @@ export default function DashboardPage() {
       if (data !== null) setEmpresaLoading(true);
 
       try {
+        if (empresa) {
+          timeoutEmpresaId = window.setTimeout(() => {
+            timeoutEmpresaEsgotado = true;
+            controller.abort();
+          }, TEMPO_MAX_SUMMARY_EMPRESA_MS);
+        }
+
         const d = empresa
           ? await obterSummaryEmpresa(empresa, controller.signal)
           : await carregarEstatico();
@@ -304,11 +326,16 @@ export default function DashboardPage() {
           setData(d);
         }
       } catch (err) {
-        if (err instanceof DOMException && err.name === 'AbortError') return;
+        if (err instanceof DOMException && err.name === 'AbortError' && !timeoutEmpresaEsgotado) return;
         console.error('Error loading data:', err);
         if (cancelado) return;
         if (empresa) {
-          setEmpresaError(err instanceof Error ? err.message : 'Falha ao carregar os dados da empresa.');
+          const mensagem = timeoutEmpresaEsgotado
+            ? 'A empresa demorou mais de 45 segundos para responder. Exibindo a base padrão.'
+            : err instanceof Error
+              ? err.message
+              : 'Falha ao carregar os dados da empresa.';
+          setEmpresaError(mensagem);
           if (data === null) {
             try {
               const d = await carregarEstatico();
@@ -317,6 +344,7 @@ export default function DashboardPage() {
           }
         }
       } finally {
+        if (timeoutEmpresaId !== undefined) window.clearTimeout(timeoutEmpresaId);
         if (!cancelado) {
           setLoading(false);
           setEmpresaLoading(false);
@@ -327,6 +355,7 @@ export default function DashboardPage() {
     carregar();
     return () => {
       cancelado = true;
+      if (timeoutEmpresaId !== undefined) window.clearTimeout(timeoutEmpresaId);
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -399,6 +428,16 @@ export default function DashboardPage() {
   // Data Processing & Business Logic
   // ==========================================
 
+  // A remoção de "Consumidor Final" só depende da base. Mantê-la fora do
+  // cálculo de filtros evita recriar esse array grande a cada interação.
+  const baseRows = useMemo<Row[]>(() => {
+    if (!data) return [];
+    const consumerFinalId = data.maps.c.indexOf("Consumidor Final");
+    return consumerFinalId === -1
+      ? data.rows
+      : data.rows.filter((row) => row[2] !== consumerFinalId);
+  }, [data]);
+
   const processed = useMemo(() => {
     if (!data || loading || !introDone) return { stats: null, filterOptions: null, noDataMessage: null } as any;
 
@@ -425,12 +464,6 @@ export default function DashboardPage() {
     const pBSet = new Set(pB);
     const pAChartSet = new Set(pAChart);
 
-    // 2. Population Filtering (Direct Filters)
-    const consumerFinalId = data.maps.c.indexOf("Consumidor Final");
-    const baseRows = consumerFinalId !== -1
-      ? data.rows.filter(r => r[2] !== consumerFinalId)
-      : data.rows;
-
     // Severity Calculation Setup (Needs to happen before client filter to populate client options correctly)
     let validClients: Set<number> | null = null;
     const clientSet = client.length ? new Set(client) : null;
@@ -442,12 +475,9 @@ export default function DashboardPage() {
     if (severitySet) {
       // Calculate validity based on Context (Mfr, Desc, Store) but IGNORING Client filter
       // This ensures the Client Filter Options list correctly reflects clients that match the severity
-      let rowsForSev = baseRows;
       // Severity should be based on GLOBAL client performance (per store), 
       // NOT restricted by the specific product/mfr being viewed.
       // mfr/desc filters are removed here so "Critical" means "Critical Overall".
-      if (storeSet) rowsForSev = rowsForSev.filter(r => storeSet.has(r[1]));
-
       // Fixed Reference Logic: Use Global Year vs Previous Year
       // Find the two most recent years in the dataset (e.g. 2025 and 2024)
       // This ensures the severity status ("Critical" etc) is a PROPERTY of the client based on Annual Performance
@@ -461,13 +491,18 @@ export default function DashboardPage() {
         // (meses fechados por padrão, ou seleção manual).
         const refPA = data.monthly.map((m, i) => m.year === yOld && period.includes(i) ? i : -1).filter(i => i !== -1);
         const refPB = data.monthly.map((m, i) => m.year === yNew && period.includes(i) ? i : -1).filter(i => i !== -1);
+        const refPASet = new Set(refPA);
+        const refPBSet = new Set(refPB);
 
         const perf: Record<number, { vA: number, vB: number }> = {};
-        rowsForSev.forEach(r => {
+        // Uma passagem sem arrays intermediários. `Set.has` também troca o
+        // `includes` linear por consulta constante para cada linha da base.
+        baseRows.forEach(r => {
+          if (storeSet && !storeSet.has(r[1])) return;
           const pId = r[0], cId = r[2], revVal = r[6];
           if (!perf[cId]) perf[cId] = { vA: 0, vB: 0 };
-          if (refPA.includes(pId)) perf[cId].vA += revVal;
-          if (refPB.includes(pId)) perf[cId].vB += revVal;
+          if (refPASet.has(pId)) perf[cId].vA += revVal;
+          if (refPBSet.has(pId)) perf[cId].vB += revVal;
         });
 
         const vClients = new Set<number>();
@@ -498,17 +533,14 @@ export default function DashboardPage() {
       }
     }
 
-    let populationRows = baseRows;
-    // Apply filters (OR dentro da dimensão; AND entre dimensões)
-    if (clientSet) populationRows = populationRows.filter(r => clientSet.has(r[2]));
-    if (mfrSet) populationRows = populationRows.filter(r => mfrSet.has(r[3]));
-    if (descSet) populationRows = populationRows.filter(r => descSet.has(r[4]));
-    if (storeSet) populationRows = populationRows.filter(r => storeSet.has(r[1]));
-
-    // Apply Severity Filter (Intersection)
-    if (validClients !== null) {
-      populationRows = populationRows.filter(r => validClients!.has(r[2]));
-    }
+    // Uma varredura para interseção dos filtros, sem criar um array por dimensão.
+    const populationRows = baseRows.filter((r) => (
+      (!clientSet || clientSet.has(r[2]))
+      && (!mfrSet || mfrSet.has(r[3]))
+      && (!descSet || descSet.has(r[4]))
+      && (!storeSet || storeSet.has(r[1]))
+      && (validClients === null || validClients.has(r[2]))
+    ));
 
     // 5. Aggregation Logic
     const aggregate = (targetRows: Row[], targetPeriod: number[], forceAverage?: boolean): AggregateResult => {
@@ -519,6 +551,7 @@ export default function DashboardPage() {
       const products_all: Record<number, number> = {};
 
       const periodSet = new Set(targetPeriod);
+      const clients_all = new Set<number>();
       for (const r of targetRows) {
         if (!periodSet.has(r[0])) continue;
         const pId = r[0], mId = r[3], dId = r[4], rId = r[5], revVal = r[6];
@@ -526,6 +559,7 @@ export default function DashboardPage() {
         cnt++;
         mfrs_all.add(mId);
         descs_all.add(dId);
+        clients_all.add(r[2]);
         products_all[rId] = (products_all[rId] || 0) + revVal;
 
         if (!monthlyNodes[pId]) monthlyNodes[pId] = { rev: 0, mfrs: new Set(), descs: new Set(), products: {}, clients: new Set(), cnt: 0 };
@@ -535,11 +569,6 @@ export default function DashboardPage() {
         monthlyNodes[pId].descs.add(dId);
         monthlyNodes[pId].products[rId] = (monthlyNodes[pId].products[rId] || 0) + revVal;
         monthlyNodes[pId].clients.add(r[2]);
-      }
-
-      const clients_all = new Set();
-      for (const r of targetRows) {
-        if (periodSet.has(r[0])) clients_all.add(r[2]);
       }
 
       const len = countBucketsInIndices(data, targetPeriod, computeGranularidade) || 1;
@@ -614,41 +643,25 @@ export default function DashboardPage() {
     // 6. Filter Options (population context - Independent per dimension)
     const clientOpts = new Set<number>(), mfrOpts = new Set<number>(), descOpts = new Set<number>(), storeOpts = new Set<number>();
 
-    // For clients: ignore current client filter
-    let rowsC = baseRows;
-    if (mfrSet) rowsC = rowsC.filter(r => mfrSet.has(r[3]));
-    if (descSet) rowsC = rowsC.filter(r => descSet.has(r[4]));
-    if (storeSet) rowsC = rowsC.filter(r => storeSet.has(r[1]));
-    // Apply Severity Filter to Client Options
-    if (validClients !== null) rowsC = rowsC.filter(r => validClients!.has(r[2]));
-    rowsC.forEach(r => clientOpts.add(r[2]));
+    // Opções independentes em uma única varredura. Cada dimensão ignora o
+    // próprio filtro, preservando comportamento anterior sem 4× arrays grandes.
+    baseRows.forEach((r) => {
+      const passaGravidade = validClients === null || validClients.has(r[2]);
+      if (!passaGravidade) return;
 
-    // For manufacturers: ignore current mfr filter
-    let rowsM = baseRows;
-    if (clientSet) rowsM = rowsM.filter(r => clientSet.has(r[2]));
-    if (descSet) rowsM = rowsM.filter(r => descSet.has(r[4]));
-    if (storeSet) rowsM = rowsM.filter(r => storeSet.has(r[1]));
-    // Apply Severity Filter to Mfr Options
-    if (validClients !== null) rowsM = rowsM.filter(r => validClients!.has(r[2]));
-    rowsM.forEach(r => mfrOpts.add(r[3]));
-
-    // For descriptions: ignore current desc filter
-    let rowsD = baseRows;
-    if (clientSet) rowsD = rowsD.filter(r => clientSet.has(r[2]));
-    if (mfrSet) rowsD = rowsD.filter(r => mfrSet.has(r[3]));
-    if (storeSet) rowsD = rowsD.filter(r => storeSet.has(r[1]));
-    // Apply Severity Filter to Desc Options
-    if (validClients !== null) rowsD = rowsD.filter(r => validClients!.has(r[2]));
-    rowsD.forEach(r => descOpts.add(r[4]));
-
-    // For stores: ignore current store filter
-    let rowsS = baseRows;
-    if (clientSet) rowsS = rowsS.filter(r => clientSet.has(r[2]));
-    if (mfrSet) rowsS = rowsS.filter(r => mfrSet.has(r[3]));
-    if (descSet) rowsS = rowsS.filter(r => descSet.has(r[4]));
-    // Apply Severity Filter to Store Options
-    if (validClients !== null) rowsS = rowsS.filter(r => validClients!.has(r[2]));
-    rowsS.forEach(r => storeOpts.add(r[1]));
+      if ((!mfrSet || mfrSet.has(r[3])) && (!descSet || descSet.has(r[4])) && (!storeSet || storeSet.has(r[1]))) {
+        clientOpts.add(r[2]);
+      }
+      if ((!clientSet || clientSet.has(r[2])) && (!descSet || descSet.has(r[4])) && (!storeSet || storeSet.has(r[1]))) {
+        mfrOpts.add(r[3]);
+      }
+      if ((!clientSet || clientSet.has(r[2])) && (!mfrSet || mfrSet.has(r[3])) && (!storeSet || storeSet.has(r[1]))) {
+        descOpts.add(r[4]);
+      }
+      if ((!clientSet || clientSet.has(r[2])) && (!mfrSet || mfrSet.has(r[3])) && (!descSet || descSet.has(r[4]))) {
+        storeOpts.add(r[1]);
+      }
+    });
 
     // 7. Rankings: total do ÚLTIMO mês do período B (e o mesmo mês no ano A),
     // para bater com o BI/mês que o usuário está conferindo (ex.: jun/26 =
@@ -840,7 +853,7 @@ export default function DashboardPage() {
       filterOptions: { clientOpts, mfrOpts, descOpts, storeOpts },
       noDataMessage: populationRows.length === 0 ? "Nenhum dado encontrado para os filtros selecionados." : null
     };
-  }, [data, computeFilters, historyType, computeUsarMesesFechados, computeGranularidade, visaoDetalhada, loading, introDone]);
+  }, [data, baseRows, computeFilters, historyType, computeUsarMesesFechados, computeGranularidade, visaoDetalhada, loading, introDone]);
 
   // ==========================================
   // Render

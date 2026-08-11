@@ -1,10 +1,29 @@
-import type { ReactNode } from 'react';
+import { useMemo, useState, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp } from 'lucide-react';
 import type { TabelaResultado } from '../../api/client';
 import { formatCurrency, formatNumber, formatPercent } from '../../utils/formatters';
 import { rotuloColuna } from '../../utils/rotulosColuna';
 
 export type OrdenacaoTabela = { coluna: string; direcao: 'asc' | 'desc' };
+
+const COMPARADOR_TEXTO = new Intl.Collator('pt-BR', {
+  numeric: true,
+  sensitivity: 'base',
+});
+
+function compararValores(a: unknown, b: unknown): number {
+  const aVazio = valorVazio(a);
+  const bVazio = valorVazio(b);
+  // Vazios ficam sempre no fim, em ambas as direções.
+  if (aVazio || bVazio) return aVazio === bVazio ? 0 : aVazio ? 1 : -1;
+  if (typeof a === 'number' && typeof b === 'number') return a - b;
+  if (typeof a === 'boolean' && typeof b === 'boolean') return Number(a) - Number(b);
+  return COMPARADOR_TEXTO.compare(String(a), String(b));
+}
+
+function valorVazio(valor: unknown): boolean {
+  return valor === null || valor === undefined || (typeof valor === 'number' && Number.isNaN(valor));
+}
 
 // Colunas em R$ nos relatórios do motor (mesmo critério de
 // COLUNAS_MOEDA_POR_ANALISE em backend/exportar_excel.py, unificado por nome
@@ -16,6 +35,7 @@ const COLUNAS_MOEDA = new Set([
   'Receita_Ano_Anterior',
   'Receita_Ano_Atual',
   'Ganho_Perda',
+  'Diferenca_Receita',
   'Receita_Ultimo_Periodo',
   'Receita_Primeiro_Periodo',
   'Reducao_Receita',
@@ -53,6 +73,7 @@ function ehColunaPercentual(coluna: string) {
 const COLUNAS_DELTA = new Set([
   'Desempenho_Pct',
   'Ganho_Perda',
+  'Diferenca_Receita',
   'Variacao_Percentual',
   'Variacao_Global_Periodo_Pct',
   'Tendencia_Pct',
@@ -222,12 +243,45 @@ export function ResultTable({
   chave?: string;
   /** Coluna/direção atual — só para desenhar a seta no cabeçalho. */
   ordenacao?: OrdenacaoTabela | null;
-  /** Quando presente, o cabeçalho vira botão de ordenar. Ausente = tabela estática
-   *  (é o caso dos relatórios do catálogo, que já vêm ordenados pelo motor). */
+  /** Ordenação controlada pelo componente pai (usada no Explorar). Quando
+   *  ausente, a própria tabela ordena localmente os relatórios já carregados. */
   onOrdenar?: (coluna: string) => void;
   /** Faixa própria acima da tabela (ex.: totais das tabelas dinâmicas). */
   faixaExtra?: ReactNode;
 }) {
+  const [ordenacaoInterna, setOrdenacaoInterna] = useState<OrdenacaoTabela | null>(null);
+  const ordenacaoEfetiva = onOrdenar ? ordenacao ?? null : ordenacaoInterna;
+
+  const linhasExibidas = useMemo(() => {
+    // No modo controlado, o pai já devolve a tabela na ordem solicitada.
+    if (onOrdenar || !ordenacaoInterna) return tabela.linhas;
+    const indice = tabela.colunas.indexOf(ordenacaoInterna.coluna);
+    if (indice < 0) return tabela.linhas;
+    const fator = ordenacaoInterna.direcao === 'asc' ? 1 : -1;
+    return tabela.linhas
+      .map((linha, ordemOriginal) => ({ linha, ordemOriginal }))
+      .sort((a, b) => {
+        const comparacao = compararValores(a.linha[indice], b.linha[indice]);
+        // Mantém vazios no fim também no descendente.
+        const aVazio = valorVazio(a.linha[indice]);
+        const bVazio = valorVazio(b.linha[indice]);
+        if (aVazio || bVazio) return aVazio === bVazio ? a.ordemOriginal - b.ordemOriginal : aVazio ? 1 : -1;
+        return comparacao === 0 ? a.ordemOriginal - b.ordemOriginal : comparacao * fator;
+      })
+      .map(({ linha }) => linha);
+  }, [onOrdenar, ordenacaoInterna, tabela.colunas, tabela.linhas]);
+
+  const ordenar = (coluna: string) => {
+    if (onOrdenar) {
+      onOrdenar(coluna);
+      return;
+    }
+    setOrdenacaoInterna((atual) => ({
+      coluna,
+      direcao: atual?.coluna === coluna && atual.direcao === 'asc' ? 'desc' : 'asc',
+    }));
+  };
+
   if (tabela.colunas.length === 0) {
     return <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem' }}>Sem dados para esta análise.</p>;
   }
@@ -253,34 +307,36 @@ export function ResultTable({
           <tr>
             {visiveis.map((indiceColuna) => {
               const nome = tabela.colunas[indiceColuna];
-              const ativa = ordenacao?.coluna === nome;
+              const ativa = ordenacaoEfetiva?.coluna === nome;
               return (
                 <th
                   key={nome}
                   style={{ textAlign: numerica[indiceColuna] ? 'right' : 'left' }}
                   title={nome}
+                  aria-sort={ativa
+                    ? ordenacaoEfetiva?.direcao === 'asc' ? 'ascending' : 'descending'
+                    : 'none'}
                 >
-                  {onOrdenar ? (
-                    <button
-                      type="button"
-                      className={`analisador-tabela-ordenar${ativa ? ' is-ativa' : ''}`}
-                      style={{ justifyContent: numerica[indiceColuna] ? 'flex-end' : 'flex-start' }}
-                      onClick={() => onOrdenar(nome)}
-                      title={`Ordenar por ${rotuloColuna(nome)}`}
-                    >
-                      {rotuloColuna(nome)}
-                      {ativa && (ordenacao?.direcao === 'asc'
-                        ? <ArrowUp size={11} aria-hidden="true" />
-                        : <ArrowDown size={11} aria-hidden="true" />)}
-                    </button>
-                  ) : rotuloColuna(nome)}
+                  <button
+                    type="button"
+                    className={`analisador-tabela-ordenar${ativa ? ' is-ativa' : ''}`}
+                    style={{ justifyContent: numerica[indiceColuna] ? 'flex-end' : 'flex-start' }}
+                    onClick={() => ordenar(nome)}
+                    title={`Ordenar por ${rotuloColuna(nome)}`}
+                    aria-label={`Ordenar por ${rotuloColuna(nome)}${ativa ? `, ordem ${ordenacaoEfetiva?.direcao === 'asc' ? 'crescente' : 'decrescente'}` : ''}`}
+                  >
+                    {rotuloColuna(nome)}
+                    {ativa && (ordenacaoEfetiva?.direcao === 'asc'
+                      ? <ArrowUp size={11} aria-hidden="true" />
+                      : <ArrowDown size={11} aria-hidden="true" />)}
+                  </button>
                 </th>
               );
             })}
           </tr>
         </thead>
         <tbody>
-          {tabela.linhas.map((linha, indiceLinha) => (
+          {linhasExibidas.map((linha, indiceLinha) => (
             <tr key={indiceLinha}>
               {visiveis.map((indiceColuna) => (
                 <td

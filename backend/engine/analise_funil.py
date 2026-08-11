@@ -815,14 +815,14 @@ def produtos_alta_e_queda(df, granularidade="Mensal", top_n=10):
     """
     Compara os dois períodos mais recentes da granularidade escolhida e monta
     duas listas (estilo "boletim executivo"): produtos em alta e em queda,
-    com quantidade período anterior/atual, variação % e total acumulado no
-    ano corrente (YTD).
+    com quantidade e receita do período anterior/atual, diferença absoluta
+    de receita, variação % e total acumulado no ano corrente (YTD).
     """
     col_periodo = COLUNA_PERIODO[granularidade]
     periodos_ordenados = _ordenar_periodos(df[col_periodo].unique(), granularidade)
     colunas_vazias = ["descricao", "QTD_Periodo_Anterior", "QTD_Periodo_Atual",
                        "Receita_Periodo_Anterior", "Receita_Periodo_Atual",
-                       "Variacao_Percentual", "Total_Ano_Atual"]
+                       "Diferenca_Receita", "Variacao_Percentual", "Total_Ano_Atual"]
     if len(periodos_ordenados) < 2:
         vazio = pd.DataFrame(columns=colunas_vazias)
         return vazio, vazio.copy()
@@ -850,6 +850,11 @@ def produtos_alta_e_queda(df, granularidade="Mensal", top_n=10):
         "Receita_Periodo_Anterior": pivot_receita.get(periodo_anterior, 0).values,
         "Receita_Periodo_Atual": pivot_receita.get(periodo_atual, 0).values,
     })
+    # Sinal único nos dois boletins: atual - anterior. Assim alta é positiva
+    # e queda é negativa, além do percentual já existente.
+    resultado["Diferenca_Receita"] = (
+        resultado["Receita_Periodo_Atual"] - resultado["Receita_Periodo_Anterior"]
+    )
     resultado["Variacao_Percentual"] = np.where(
         resultado["Receita_Periodo_Anterior"] > 0,
         (resultado["Receita_Periodo_Atual"] - resultado["Receita_Periodo_Anterior"])

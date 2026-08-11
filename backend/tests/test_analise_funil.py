@@ -83,13 +83,16 @@ def test_produtos_alta_e_queda():
     
     assert len(em_alta) == 1
     assert em_alta["descricao"].iloc[0] == "Prod B"
+    assert em_alta["Diferenca_Receita"].iloc[0] == 90.0
     assert em_alta["Variacao_Percentual"].iloc[0] == 900.0
     
     assert len(em_queda) == 2
     assert em_queda["descricao"].iloc[0] == "Prod C"
+    assert em_queda["Diferenca_Receita"].iloc[0] == -200.0
     assert em_queda["Variacao_Percentual"].iloc[0] == -100.0
     
     assert em_queda["descricao"].iloc[1] == "Prod A"
+    assert em_queda["Diferenca_Receita"].iloc[1] == -50.0
     assert em_queda["Variacao_Percentual"].iloc[1] == -50.0
 
 def test_erosao_clientes_por_produto():

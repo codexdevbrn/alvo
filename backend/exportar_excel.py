@@ -30,7 +30,7 @@ COR_NEGATIVO = "B4322A"
 #: (positivo é ruim). Espelha COLUNAS_DELTA / COLUNAS_PERDA de exportar_html.py
 #: e de ResultTable.tsx.
 COLUNAS_DELTA = {
-    "Desempenho_Pct", "Ganho_Perda", "Variacao_Percentual",
+    "Desempenho_Pct", "Ganho_Perda", "Diferenca_Receita", "Variacao_Percentual",
     "Variacao_Global_Periodo_Pct", "Tendencia_Pct",
 }
 COLUNAS_PERDA = {
@@ -117,8 +117,8 @@ COLUNAS_MOEDA_POR_ANALISE = {
     "migracao_abc": [],
     "migracao_resumo": [],
     "migracao_score_clientes": [],
-    "produtos_em_alta": ["Receita_Periodo_Anterior", "Receita_Periodo_Atual", "Total_Ano_Atual"],
-    "produtos_em_queda": ["Receita_Periodo_Anterior", "Receita_Periodo_Atual", "Total_Ano_Atual"],
+    "produtos_em_alta": ["Receita_Periodo_Anterior", "Receita_Periodo_Atual", "Diferenca_Receita", "Total_Ano_Atual"],
+    "produtos_em_queda": ["Receita_Periodo_Anterior", "Receita_Periodo_Atual", "Diferenca_Receita", "Total_Ano_Atual"],
     "clientes_queda_qtd": ["Perda_Receita"],
     "correlacao_produto_cliente": ["Reducao_Receita"],
     "impacto_financeiro_churn": ["Receita_Sob_Risco"],
@@ -158,11 +158,16 @@ def _eh_coluna_percentual(nome_coluna):
     return "Percentual" in str(nome_coluna) or str(nome_coluna).endswith("_Pct")
 
 
-def _ajustar_largura_colunas(planilha):
-    for coluna in planilha.columns:
+def _ajustar_largura_colunas(planilha, max_linhas=2000):
+    """Estima larguras sem reler planilhas gigantes por completo."""
+    ultima_linha_amostra = min(planilha.max_row, max_linhas)
+    for indice_coluna in range(1, planilha.max_column + 1):
         maior_comprimento = 0
-        letra_coluna = get_column_letter(coluna[0].column)
-        for celula in coluna:
+        letra_coluna = get_column_letter(indice_coluna)
+        # Não usar ``planilha.columns``: o openpyxl materializa a coluna
+        # inteira antes do slice, consumindo tempo e memória em relatórios grandes.
+        for indice_linha in range(1, ultima_linha_amostra + 1):
+            celula = planilha.cell(row=indice_linha, column=indice_coluna)
             valor = str(celula.value) if celula.value is not None else ""
             maior_comprimento = max(maior_comprimento, len(valor))
         planilha.column_dimensions[letra_coluna].width = min(maior_comprimento + 2, 45)
@@ -272,8 +277,10 @@ def _escrever_dataframe(workbook, nome_aba, df, colunas_moeda=None, faixa_totais
         linha_cabecalho = 2
 
     planilha.append(list(map(str, df_para_exportar.columns)))
-    for _, linha in df_para_exportar.iterrows():
-        planilha.append(list(linha))
+    # itertuples evita criar uma Series por linha; diferença grande em bases
+    # com centenas de milhares de registros.
+    for linha in df_para_exportar.itertuples(index=False, name=None):
+        planilha.append(linha)
 
     linhas_com_valor = [
         linha for linha in range(1, planilha.max_row + 1) if linha != linha_cabecalho

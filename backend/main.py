@@ -717,6 +717,22 @@ _cache_base: dict = {"mtime": None, "df": None, "linhas_vazias": 0}
 # Cache do summary do dashboard por empresa. LRU via OrderedDict.
 _cache_summary_dashboard: OrderedDict[str, dict] = OrderedDict()
 
+# Uma mesma empresa pode ser solicitada várias vezes em paralelo (F5, StrictMode,
+# vários clientes na LAN). Sem single-flight, cada request relê o XLSX e gera o
+# mesmo summary, multiplicando CPU/RAM e deixando até o seletor sem resposta.
+_travas_summary_empresa: dict[str, threading.RLock] = {}
+_travas_summary_empresa_guard = threading.Lock()
+
+
+def _trava_summary_empresa(empresa: str):
+    """Retorna trava reentrante estável para geração/cache de uma empresa."""
+    with _travas_summary_empresa_guard:
+        trava = _travas_summary_empresa.get(empresa)
+        if trava is None:
+            trava = threading.RLock()
+            _travas_summary_empresa[empresa] = trava
+        return trava
+
 def _lru_touch(cache: OrderedDict, key: str) -> None:
     """Marca key como mais recentemente usada (hit)."""
     if key in cache:
@@ -760,6 +776,22 @@ def _carregar_atacado_df(pasta_fonte: str) -> pd.DataFrame:
 
 
 def _garantir_summary_dashboard_arquivo(
+    empresa: str,
+    pasta_fonte: str,
+    pasta_trabalho: str,
+    caminho_atacado: str,
+) -> Path:
+    """Single-flight: somente uma geração do summary por empresa por vez."""
+    with _trava_summary_empresa(empresa):
+        return _garantir_summary_dashboard_arquivo_sem_trava(
+            empresa,
+            pasta_fonte,
+            pasta_trabalho,
+            caminho_atacado,
+        )
+
+
+def _garantir_summary_dashboard_arquivo_sem_trava(
     empresa: str,
     pasta_fonte: str,
     pasta_trabalho: str,
@@ -892,13 +924,16 @@ def _regenerar_base_empresa(empresa: str) -> dict:
     except ErroNormalizacao as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    _cache_summary_dashboard.pop(empresa, None)
-    _cache_base_empresa.pop(empresa, None)
-    invalidar_summary_dashboard(pasta_trabalho)
+    # A trava também cobre invalidação; evita apagar arquivo enquanto outra
+    # request ainda o lê. É RLock porque a função garantir reutiliza a mesma trava.
+    with _trava_summary_empresa(empresa):
+        _cache_summary_dashboard.pop(empresa, None)
+        _cache_base_empresa.pop(empresa, None)
+        invalidar_summary_dashboard(pasta_trabalho)
 
-    caminho_summary = _garantir_summary_dashboard_arquivo(
-        empresa, pasta_fonte, pasta_trabalho, str(caminho_atacado),
-    )
+        caminho_summary = _garantir_summary_dashboard_arquivo(
+            empresa, pasta_fonte, pasta_trabalho, str(caminho_atacado),
+        )
     return {
         "ok": True,
         "empresa": empresa,
@@ -929,6 +964,12 @@ def _carregar_base_padrao() -> tuple[pd.DataFrame, int]:
 
 
 def _carregar_base_empresa(empresa: str) -> tuple[pd.DataFrame, int]:
+    """Single-flight compartilhado por Dashboard e Analisador."""
+    with _trava_summary_empresa(empresa):
+        return _carregar_base_empresa_sem_trava(empresa)
+
+
+def _carregar_base_empresa_sem_trava(empresa: str) -> tuple[pd.DataFrame, int]:
     """Lê Dados Mais Atacado.xlsx direto da fonte (sem arquivo intermediário).
 
     Cache LRU em RAM chaveado no mtime do XLSX na fonte.
@@ -1303,17 +1344,45 @@ class ParametrosProdutos(BaseModel):
 def previa_produtos(parametros: ParametrosProdutos, usuario: str = Depends(exigir_login)):
     # Classificação usa groupby e devolve outro frame; não altera a base cacheada.
     df, _ = _carregar_base(parametros.empresa, loja=parametros.loja, copiar=False)
-    # Classifica todos os produtos (sem filtrar excluídos) para a tabela de
-    # prévia poder marcar/desmarcar "Considerar?" como no app desktop.
+    excluidos = {
+        str(produto).strip()
+        for produto in (parametros.produtos_excluidos or [])
+        if str(produto).strip()
+    }
+    nomes_produtos = df["descricao"].astype(str)
+    mascara_excluidos = nomes_produtos.isin(excluidos)
+    base_incluida = df.loc[~mascara_excluidos]
+
+    # A análise final remove produtos excluídos antes de montar a curva. A
+    # prévia precisa usar exatamente a mesma base para grupo e percentuais.
     if parametros.ajustar_cortes:
         corte, _ = af.sugerir_corte_produtos(
-            df, parametros.corte_produtos, max_por_grupo=parametros.max_itens_por_grupo,
+            base_incluida,
+            parametros.corte_produtos,
+            max_por_grupo=parametros.max_itens_por_grupo,
         )
     else:
         corte = float(parametros.corte_produtos)
-    classificado = af.classificar_produtos_agregado(df, corte)
+    classificado = af.classificar_produtos_agregado(base_incluida, corte)
     contagens = classificado["Faixa"].value_counts()
     demais = classificado.loc[classificado["Faixa"] == "Demais", "descricao"].astype(str)
+
+    # Mantém excluídos visíveis para permitir reativação, mas sem atribuir uma
+    # faixa incorreta. Receita continua informativa; percentuais ficam vazios
+    # porque esses produtos não participam do denominador da curva.
+    if bool(mascara_excluidos.any()):
+        fora = (
+            df.loc[mascara_excluidos]
+            .groupby("descricao", as_index=False)["Receita"]
+            .sum()
+        )
+        fora["Faixa"] = ""
+        fora["Freq_Simples"] = None
+        fora["Freq_Acumulado"] = None
+        classificado_tabela = pd.concat([classificado, fora], ignore_index=True)
+    else:
+        classificado_tabela = classificado
+
     return {
         "corte_produtos": corte,
         "grupos": [
@@ -1321,11 +1390,11 @@ def previa_produtos(parametros: ParametrosProdutos, usuario: str = Depends(exigi
              "quantidade": int(contagens.get("Grupo 1", 0))},
             {"nome": "Demais", "ate_percentual": None, "quantidade": int(contagens.get("Demais", 0))},
         ],
-        "itens": _itens_produtos_previa(classificado),
+        "itens": _itens_produtos_previa(classificado_tabela),
         # Listas completas (sem teto da prévia) para toggles de exclusão em massa.
         "produtos_demais": demais.tolist(),
         "produtos_nao_harmonizados": [
-            nome for nome in classificado["descricao"].astype(str).tolist()
+            nome for nome in classificado_tabela["descricao"].astype(str).tolist()
             if _eh_produto_nao_harmonizado(nome)
         ],
     }
@@ -1550,10 +1619,9 @@ def carregar_configuracao_empresa(
     nome = _validar_nome_empresa(nome)
     dados = _ler_config_escopo(nome, loja)
     if dados is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Configuração não encontrada para este escopo de loja.",
-        )
+        # Ausência é estado inicial normal, não falha HTTP. Retornar null evita
+        # ruído 404 no console e mantém o contrato opcional usado pelo frontend.
+        return None
     return dados
 
 
@@ -2449,6 +2517,7 @@ class ParametrosAnalise(BaseModel):
 # o segundo cálculo imediato sem transformar o processo num depósito de bases.
 _CACHE_RESULTADO_ANALISE_TTL_S = 10 * 60
 _CACHE_RESULTADO_ANALISE_MAX_BYTES = 256 * 1024 * 1024
+_CACHE_RESULTADO_ANALISE_MAX_ENTRADAS = 4
 _cache_resultado_analise: OrderedDict[str, dict] = OrderedDict()
 _cache_resultado_analise_lock = threading.Lock()
 
@@ -2489,6 +2558,20 @@ def _expurgar_cache_resultado_analise(agora: Optional[float] = None) -> None:
         _cache_resultado_analise.pop(token, None)
 
 
+def _limitar_cache_resultado_analise() -> None:
+    """Aplica limites globais de quantidade e memória; remove LRU primeiro."""
+    total_bytes = sum(
+        int(entrada.get("tamanho_bytes", 0))
+        for entrada in _cache_resultado_analise.values()
+    )
+    while _cache_resultado_analise and (
+        len(_cache_resultado_analise) > _CACHE_RESULTADO_ANALISE_MAX_ENTRADAS
+        or total_bytes > _CACHE_RESULTADO_ANALISE_MAX_BYTES
+    ):
+        _token, removida = _cache_resultado_analise.popitem(last=False)
+        total_bytes -= int(removida.get("tamanho_bytes", 0))
+
+
 def _guardar_resultado_analise(
     usuario: str, parametros: ParametrosAnalise, resultados: dict,
 ) -> Optional[str]:
@@ -2513,10 +2596,10 @@ def _guardar_resultado_analise(
     }
     with _cache_resultado_analise_lock:
         _expurgar_cache_resultado_analise(entrada["criado_em"])
-        # Uma entrada global limita o pico de RAM. Se outro usuário gerar uma
-        # análise, o token anterior simplesmente fará fallback para recálculo.
-        _cache_resultado_analise.clear()
         _cache_resultado_analise[token] = entrada
+        # Várias exportações/usuários recentes podem coexistir, mas nunca acima
+        # do teto global. Evita recalcular ao alternar entre relatórios.
+        _limitar_cache_resultado_analise()
     return token
 
 
@@ -2570,9 +2653,11 @@ def _carregar_df_filtrado(
     empresa: Optional[str] = None,
     loja: Optional[str] = None,
 ) -> pd.DataFrame:
-    df, _ = _carregar_base(empresa, loja=loja)
+    # Motor somente lê o DataFrame; compartilha master cacheado. Quando há
+    # exclusão, o filtro já materializa DataFrame separado.
+    df, _ = _carregar_base(empresa, loja=loja, copiar=False)
     if produtos_excluidos:
-        df = df[~df["descricao"].isin(produtos_excluidos)]
+        df = df.loc[~df["descricao"].isin(produtos_excluidos)].copy()
     return df
 
 
@@ -2626,13 +2711,15 @@ def _analises_alvos(
     analises: dict[str, pd.DataFrame] = {}
 
     if "mais_atacado" in chaves:
-        df = _carregar_atacado_df(pasta_fonte)
+        # Reutiliza XLSX já validado e normalizado no cache; antes esta análise
+        # relia dezenas de MB mesmo após Dashboard/Analisador carregarem a base.
+        df, _linhas_vazias = _carregar_base_empresa(empresa)
         df = _filtrar_loja_coluna(df, loja, "Loja", "Dados Mais Atacado.xlsx")
-        if "Receita Acumulada 11 Meses" in df.columns:
-            df["Receita Acumulada 11 Meses"] = parse_numero_flexivel(df["Receita Acumulada 11 Meses"])
-        if "QTD" in df.columns:
-            df["QTD"] = parse_numero_flexivel(df["QTD"])
-        analises["mais_atacado"] = df
+        colunas_origem = [
+            "Loja", "NOME_FABRICANTE", "Cliente", "descricao", "Ano", "Mês",
+            "Código Interno", "Código de referêcia", "Receita Acumulada 11 Meses", "QTD",
+        ]
+        analises["mais_atacado"] = df.loc[:, [c for c in colunas_origem if c in df.columns]].copy()
 
     if "liquidez" in chaves:
         if caminho_estoque is None or caminho_vendas is None:

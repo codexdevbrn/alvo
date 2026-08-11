@@ -1,9 +1,8 @@
 """Exportação HTML dos relatórios do motor — um arquivo único, estático e autocontido.
 
 Pensado para ENVIAR (e-mail, WhatsApp, drive): o destinatário abre no navegador
-sem instalar nada, sem servidor e sem internet. Por isso o arquivo não tem
-JavaScript, não tem imagem externa e não tem link para CSS: o `<style>` vai
-embutido.
+sem instalar nada, sem servidor e sem internet. CSS e o pequeno script de
+ordenação ficam embutidos; não há imagem, biblioteca ou link externo.
 
 Visual = o do app (tema escuro, acento dourado, cards, abas por relatório). As
 abas são CSS puro (`input[type=radio]:checked ~ painel`): trocar de relatório sem
@@ -55,6 +54,7 @@ TITULOS_RELATORIOS.update({
 COLUNAS_DELTA = {
     "Desempenho_Pct",
     "Ganho_Perda",
+    "Diferenca_Receita",
     "Variacao_Percentual",
     "Variacao_Global_Periodo_Pct",
     "Tendencia_Pct",
@@ -200,6 +200,16 @@ th {
   padding: 0.6rem 0.5rem; white-space: nowrap;
   border-bottom: 2px solid rgba(218, 187, 108, 0.45);
 }
+.sort-btn {
+  display: flex; align-items: center; gap: 0.35rem; width: 100%;
+  padding: 0; border: 0; background: transparent; color: inherit;
+  font: inherit; letter-spacing: inherit; text-transform: inherit;
+  cursor: pointer; text-align: inherit;
+}
+th.num .sort-btn { justify-content: flex-end; }
+.sort-btn:hover, .sort-btn:focus-visible { color: var(--accent); }
+.sort-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.sort-indicator { color: var(--accent); min-width: 0.8rem; text-align: center; }
 td {
   padding: 0.5rem 0.75rem; color: var(--text-secondary);
   border-bottom: 1px solid var(--border); white-space: nowrap;
@@ -236,7 +246,58 @@ footer {
   .faixa-item > span { color: #555; }
   .delta.is-pos { color: #157347; }
   .delta.is-neg { color: #b42318; }
+  .sort-indicator { display: none; }
 }
+"""
+
+
+SCRIPT_ORDENACAO = r"""
+document.addEventListener('click', function (evento) {
+  const botao = evento.target.closest('.sort-btn');
+  if (!botao) return;
+  const tabela = botao.closest('table[data-sortable]');
+  if (!tabela) return;
+  const coluna = Number(botao.dataset.column);
+  const tipo = botao.dataset.type;
+  const cabecalho = botao.closest('th');
+  const direcao = cabecalho.getAttribute('aria-sort') === 'ascending'
+    ? 'descending' : 'ascending';
+  const linhas = Array.from(tabela.tBodies[0].rows);
+
+  linhas.sort(function (linhaA, linhaB) {
+    const celulaA = linhaA.cells[coluna];
+    const celulaB = linhaB.cells[coluna];
+    const vazioA = celulaA.dataset.sortEmpty === '1';
+    const vazioB = celulaB.dataset.sortEmpty === '1';
+    if (vazioA || vazioB) {
+      if (vazioA !== vazioB) return vazioA ? 1 : -1;
+      return Number(linhaA.dataset.originalIndex) - Number(linhaB.dataset.originalIndex);
+    }
+
+    let comparacao;
+    if (tipo === 'number') {
+      comparacao = Number(celulaA.dataset.sortValue) - Number(celulaB.dataset.sortValue);
+    } else {
+      comparacao = celulaA.dataset.sortValue.localeCompare(
+        celulaB.dataset.sortValue, 'pt-BR', { numeric: true, sensitivity: 'base' }
+      );
+    }
+    if (comparacao === 0) {
+      return Number(linhaA.dataset.originalIndex) - Number(linhaB.dataset.originalIndex);
+    }
+    return direcao === 'ascending' ? comparacao : -comparacao;
+  });
+
+  tabela.querySelectorAll('th').forEach(function (th) {
+    th.setAttribute('aria-sort', 'none');
+    const indicador = th.querySelector('.sort-indicator');
+    if (indicador) indicador.textContent = '↕';
+  });
+  cabecalho.setAttribute('aria-sort', direcao);
+  cabecalho.querySelector('.sort-indicator').textContent =
+    direcao === 'ascending' ? '▲' : '▼';
+  linhas.forEach(function (linha) { tabela.tBodies[0].appendChild(linha); });
+});
 """
 
 
@@ -317,6 +378,27 @@ def _eh_coluna_numerica(df, coluna, colunas_moeda):
     )
 
 
+def _atributos_ordenacao(valor):
+    """Valor bruto seguro para o sorter, sem depender do texto pt-BR exibido."""
+    vazio = valor is None or valor is pd.NaT
+    if not vazio:
+        try:
+            vazio = bool(pd.isna(valor))
+        except (TypeError, ValueError):
+            vazio = False
+    if vazio:
+        return 'data-sort-empty="1" data-sort-value=""'
+    if isinstance(valor, bool):
+        bruto = "1" if valor else "0"
+    elif isinstance(valor, (int, float)) or pd.api.types.is_number(valor):
+        bruto = str(float(valor))
+    elif hasattr(valor, "isoformat"):
+        bruto = valor.isoformat()
+    else:
+        bruto = str(valor)
+    return f'data-sort-empty="0" data-sort-value="{escape(bruto, quote=True)}"'
+
+
 def _informacionais(chave, df):
     """[(coluna, texto)] das colunas constantes que saem da tabela."""
     itens = []
@@ -364,21 +446,29 @@ def _tabela_html(chave, df, colunas_moeda):
         return '<p class="vazio">Sem colunas para exibir.</p>'
 
     numericas = {c: _eh_coluna_numerica(df, c, colunas_moeda) for c in colunas}
-    cabecalho = "".join(
-        f'<th class="{"num" if numericas[c] else ""}">{escape(str(c))}</th>' for c in colunas
-    )
+    cabecalhos = []
+    for indice, coluna in enumerate(colunas):
+        tipo = "number" if numericas[coluna] else "text"
+        cabecalhos.append(
+            f'<th class="{"num" if numericas[coluna] else ""}" aria-sort="none">'
+            f'<button type="button" class="sort-btn" data-column="{indice}" data-type="{tipo}"'
+            f' aria-label="Ordenar por {escape(str(coluna), quote=True)}">'
+            f'{escape(str(coluna))}<span class="sort-indicator" aria-hidden="true">↕</span>'
+            f'</button></th>'
+        )
+    cabecalho = "".join(cabecalhos)
 
     linhas = []
-    for registro in df[colunas].itertuples(index=False, name=None):
+    for indice_linha, registro in enumerate(df[colunas].itertuples(index=False, name=None)):
         celulas = "".join(
-            f'<td class="{"num" if numericas[coluna] else ""}">'
+            f'<td class="{"num" if numericas[coluna] else ""}" {_atributos_ordenacao(valor)}>'
             f"{_celula(valor, coluna, colunas_moeda)}</td>"
             for coluna, valor in zip(colunas, registro)
         )
-        linhas.append(f"<tr>{celulas}</tr>")
+        linhas.append(f'<tr data-original-index="{indice_linha}">{celulas}</tr>')
 
     return (
-        '<div class="tabela-wrap"><table>'
+        '<div class="tabela-wrap"><table data-sortable="true">'
         f"<thead><tr>{cabecalho}</tr></thead>"
         f'<tbody>{"".join(linhas)}</tbody>'
         "</table></div>"
@@ -472,6 +562,7 @@ def exportar_relatorio_html(
 {conteudo}
 <footer>Documento estático gerado pelo {escape(NOME_SISTEMA)} em {gerado_em}. Os números refletem os parâmetros usados nesta geração.</footer>
 </div>
+<script>{SCRIPT_ORDENACAO}</script>
 </body>
 </html>
 """

@@ -30,6 +30,7 @@ const ROTULOS: Record<string, string> = {
   Percentual_Acumulado: '% acumulado',
   Percentual_Individual: '% individual',
   Ganho_Perda: 'Ganho / perda',
+  Diferenca_Receita: 'Diferença de receita',
   Variacao_Percentual: 'Variação',
   Tendencia_Pct: 'Tendência',
   Periodos_Consecutivos_Em_Queda: 'Períodos em queda',

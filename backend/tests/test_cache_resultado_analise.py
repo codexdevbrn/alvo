@@ -102,6 +102,19 @@ def test_nao_cacheia_resultado_acima_do_teto(monkeypatch):
     assert not api._cache_resultado_analise
 
 
+def test_cache_mantem_varias_analises_recentes_sem_estourar_limite():
+    """Gerar outro relatório não deve invalidar imediatamente export anterior."""
+    primeira = parametros(["top_produtos"])
+    segunda = parametros(["top_fabricantes"])
+
+    token_primeiro = api._guardar_resultado_analise("admin", primeira, resultados_exemplo())
+    token_segundo = api._guardar_resultado_analise("admin", segunda, resultados_exemplo())
+
+    assert token_primeiro in api._cache_resultado_analise
+    assert token_segundo in api._cache_resultado_analise
+    assert api._obter_resultado_analise(token_primeiro, "admin", primeira) is not None
+
+
 def test_analisar_entrega_token_e_exportar_evitaria_recalculo(monkeypatch):
     """Cobre o contrato HTTP usado pelo frontend entre as duas chamadas."""
     geracao = parametros(["top_produtos"])
