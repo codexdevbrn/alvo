@@ -815,14 +815,14 @@ def produtos_alta_e_queda(df, granularidade="Mensal", top_n=10):
     """
     Compara os dois períodos mais recentes da granularidade escolhida e monta
     duas listas (estilo "boletim executivo"): produtos em alta e em queda,
-    com quantidade e receita do período anterior/atual, diferença absoluta
-    de receita, variação % e total acumulado no ano corrente (YTD).
+    com quantidade período anterior/atual, variação % e total acumulado no
+    ano corrente (YTD).
     """
     col_periodo = COLUNA_PERIODO[granularidade]
     periodos_ordenados = _ordenar_periodos(df[col_periodo].unique(), granularidade)
     colunas_vazias = ["descricao", "QTD_Periodo_Anterior", "QTD_Periodo_Atual",
                        "Receita_Periodo_Anterior", "Receita_Periodo_Atual",
-                       "Diferenca_Receita", "Variacao_Percentual", "Total_Ano_Atual"]
+                       "Variacao_Percentual", "Total_Ano_Atual"]
     if len(periodos_ordenados) < 2:
         vazio = pd.DataFrame(columns=colunas_vazias)
         return vazio, vazio.copy()
@@ -850,11 +850,6 @@ def produtos_alta_e_queda(df, granularidade="Mensal", top_n=10):
         "Receita_Periodo_Anterior": pivot_receita.get(periodo_anterior, 0).values,
         "Receita_Periodo_Atual": pivot_receita.get(periodo_atual, 0).values,
     })
-    # Sinal único nos dois boletins: atual - anterior. Assim alta é positiva
-    # e queda é negativa, além do percentual já existente.
-    resultado["Diferenca_Receita"] = (
-        resultado["Receita_Periodo_Atual"] - resultado["Receita_Periodo_Anterior"]
-    )
     resultado["Variacao_Percentual"] = np.where(
         resultado["Receita_Periodo_Anterior"] > 0,
         (resultado["Receita_Periodo_Atual"] - resultado["Receita_Periodo_Anterior"])
@@ -1003,7 +998,8 @@ def clientes_queda_quantidade(df, granularidade="Mensal", top_n=10):
     periodos_ordenados = _ordenar_periodos(df[col_periodo].unique(), granularidade)
     if len(periodos_ordenados) < 2:
         return pd.DataFrame(columns=[
-            "Cliente", "QTD_Periodo_Anterior", "QTD_Periodo_Atual", "Variacao_Percentual",
+            "Cliente", "QTD_Periodo_Anterior", "QTD_Periodo_Atual", "Diferenca_QTD",
+            "Variacao_Percentual",
             "Perda_Receita", "Produto_Critico",
         ])
 
@@ -1022,6 +1018,12 @@ def clientes_queda_quantidade(df, granularidade="Mensal", top_n=10):
         "QTD_Periodo_Anterior": pivot_qtd.get(periodo_anterior, 0).values,
         "QTD_Periodo_Atual": pivot_qtd.get(periodo_atual, 0).values,
     })
+    # Diferença com sinal: quantidade atual - anterior. Como este boletim lista
+    # quedas, o resultado normalmente é negativo e mostra diretamente quantas
+    # unidades o cliente deixou de comprar.
+    resultado["Diferenca_QTD"] = (
+        resultado["QTD_Periodo_Atual"] - resultado["QTD_Periodo_Anterior"]
+    )
     resultado["Variacao_Percentual"] = np.where(
         resultado["QTD_Periodo_Anterior"] > 0,
         (resultado["QTD_Periodo_Atual"] - resultado["QTD_Periodo_Anterior"])

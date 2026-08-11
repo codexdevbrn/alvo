@@ -54,7 +54,7 @@ TITULOS_RELATORIOS.update({
 COLUNAS_DELTA = {
     "Desempenho_Pct",
     "Ganho_Perda",
-    "Diferenca_Receita",
+    "Diferenca_QTD",
     "Variacao_Percentual",
     "Variacao_Global_Periodo_Pct",
     "Tendencia_Pct",

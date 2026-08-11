@@ -30,7 +30,7 @@ COR_NEGATIVO = "B4322A"
 #: (positivo é ruim). Espelha COLUNAS_DELTA / COLUNAS_PERDA de exportar_html.py
 #: e de ResultTable.tsx.
 COLUNAS_DELTA = {
-    "Desempenho_Pct", "Ganho_Perda", "Diferenca_Receita", "Variacao_Percentual",
+    "Desempenho_Pct", "Ganho_Perda", "Diferenca_QTD", "Variacao_Percentual",
     "Variacao_Global_Periodo_Pct", "Tendencia_Pct",
 }
 COLUNAS_PERDA = {
@@ -117,8 +117,8 @@ COLUNAS_MOEDA_POR_ANALISE = {
     "migracao_abc": [],
     "migracao_resumo": [],
     "migracao_score_clientes": [],
-    "produtos_em_alta": ["Receita_Periodo_Anterior", "Receita_Periodo_Atual", "Diferenca_Receita", "Total_Ano_Atual"],
-    "produtos_em_queda": ["Receita_Periodo_Anterior", "Receita_Periodo_Atual", "Diferenca_Receita", "Total_Ano_Atual"],
+    "produtos_em_alta": ["Receita_Periodo_Anterior", "Receita_Periodo_Atual", "Total_Ano_Atual"],
+    "produtos_em_queda": ["Receita_Periodo_Anterior", "Receita_Periodo_Atual", "Total_Ano_Atual"],
     "clientes_queda_qtd": ["Perda_Receita"],
     "correlacao_produto_cliente": ["Reducao_Receita"],
     "impacto_financeiro_churn": ["Receita_Sob_Risco"],

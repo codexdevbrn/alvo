@@ -13,6 +13,7 @@ from engine.analise_funil import (
     classificar_clientes_agregado,
     tendencia_produtos,
     produtos_alta_e_queda,
+    clientes_queda_quantidade,
     erosao_clientes_por_produto,
     sem_venda_clientes,
     impacto_financeiro_churn,
@@ -83,17 +84,32 @@ def test_produtos_alta_e_queda():
     
     assert len(em_alta) == 1
     assert em_alta["descricao"].iloc[0] == "Prod B"
-    assert em_alta["Diferenca_Receita"].iloc[0] == 90.0
     assert em_alta["Variacao_Percentual"].iloc[0] == 900.0
     
     assert len(em_queda) == 2
     assert em_queda["descricao"].iloc[0] == "Prod C"
-    assert em_queda["Diferenca_Receita"].iloc[0] == -200.0
     assert em_queda["Variacao_Percentual"].iloc[0] == -100.0
     
     assert em_queda["descricao"].iloc[1] == "Prod A"
-    assert em_queda["Diferenca_Receita"].iloc[1] == -50.0
     assert em_queda["Variacao_Percentual"].iloc[1] == -50.0
+
+
+def test_clientes_queda_quantidade_exibe_diferenca_antes_depois():
+    df = pd.DataFrame({
+        "Cliente": ["Cliente A", "Cliente A", "Cliente B", "Cliente B"],
+        "descricao": ["Produto", "Produto", "Produto", "Produto"],
+        "Periodo_Trimestral": ["2025-T1", "2025-T2", "2025-T1", "2025-T2"],
+        "Receita": [1000.0, 600.0, 500.0, 750.0],
+        "QTD": [10, 6, 5, 7],
+    })
+
+    resultado = clientes_queda_quantidade(df, granularidade="Trimestral")
+
+    assert len(resultado) == 1
+    assert resultado["Cliente"].iloc[0] == "Cliente A"
+    assert resultado["QTD_Periodo_Anterior"].iloc[0] == 10
+    assert resultado["QTD_Periodo_Atual"].iloc[0] == 6
+    assert resultado["Diferenca_QTD"].iloc[0] == -4
 
 def test_erosao_clientes_por_produto():
     df = pd.DataFrame({

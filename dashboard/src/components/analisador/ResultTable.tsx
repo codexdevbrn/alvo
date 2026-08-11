@@ -35,7 +35,6 @@ const COLUNAS_MOEDA = new Set([
   'Receita_Ano_Anterior',
   'Receita_Ano_Atual',
   'Ganho_Perda',
-  'Diferenca_Receita',
   'Receita_Ultimo_Periodo',
   'Receita_Primeiro_Periodo',
   'Reducao_Receita',
@@ -73,7 +72,7 @@ function ehColunaPercentual(coluna: string) {
 const COLUNAS_DELTA = new Set([
   'Desempenho_Pct',
   'Ganho_Perda',
-  'Diferenca_Receita',
+  'Diferenca_QTD',
   'Variacao_Percentual',
   'Variacao_Global_Periodo_Pct',
   'Tendencia_Pct',
