@@ -21,7 +21,8 @@ from __future__ import annotations
 import gzip
 import json
 import logging
-from datetime import datetime
+import calendar
+from datetime import date, datetime
 from pathlib import Path
 
 from dashboard_summary import (
@@ -38,12 +39,44 @@ NOME_RESUMO_MONITOR = "resumo_monitor.json"
 VERSAO_RESUMO = 1
 
 #: Métricas oferecidas pela tela. A chave é o que vem do filtro; o valor é o campo
-#: correspondente na série do resumo.
+#: correspondente na série do resumo. `receita_dia` é DERIVADA (receita ÷ dias úteis
+#: do mês): fica fora do cache de propósito, porque depende só do calendário — assim
+#: os resumos já gravados continuam valendo sem bump de versão.
 METRICAS_MONITOR = {
     "receita": "rev",
     "qtd": "qty",
     "clientes": "clientes",
+    "receita_dia": "rev",
 }
+
+#: Métricas cuja soma não faz sentido (média não se soma) — o card mostra a média
+#: ponderada da janela em vez do total.
+METRICAS_MEDIA = {"receita_dia"}
+
+
+def dias_uteis_do_mes(ano: int, mes: int) -> int:
+    """Dias do mês menos sábados e domingos.
+
+    Feriado NÃO é descontado: o pedido foi "dias menos finais de semana", e um
+    calendário de feriados (nacional + estadual + municipal, variando por loja)
+    seria uma fonte de dado que o projeto não tem. A tela declara isso.
+    """
+    _, total_dias = calendar.monthrange(ano, mes)
+    return sum(
+        1
+        for dia in range(1, total_dias + 1)
+        if date(ano, mes, dia).weekday() < 5
+    )
+
+
+def _dias_uteis_do_periodo(periodo: int | None) -> int:
+    """Dias úteis de um período YYYYMM. 0 quando o período não é reconhecível."""
+    if not periodo:
+        return 0
+    ano, mes = int(periodo) // 100, int(periodo) % 100
+    if not 1 <= mes <= 12 or ano < 1900:
+        return 0
+    return dias_uteis_do_mes(ano, mes)
 
 
 def caminho_resumo_monitor(pasta_trabalho: str | Path) -> Path:
@@ -189,16 +222,32 @@ def montar_card(
     """
     campo = METRICAS_MONITOR.get(metrica, "rev")
     inteiro = campo in ("qty", "clientes")
+    eh_media = metrica in METRICAS_MEDIA
     serie = resumo.get("serie") or []
     janela = _janela(serie, meses)
 
     def valor(ponto: dict) -> float | int:
         bruto = ponto.get(campo) or 0
+        if metrica == "receita_dia":
+            dias_uteis = _dias_uteis_do_periodo(ponto.get("periodo"))
+            return round(float(bruto) / dias_uteis, 2) if dias_uteis else 0.0
         return int(bruto) if inteiro else round(float(bruto), 2)
 
     valores = [valor(ponto) for ponto in janela]
     rotulos = [ponto.get("rotulo") for ponto in janela]
-    total = sum(valores) if inteiro else round(sum(valores), 2)
+    dias_uteis_janela = sum(
+        _dias_uteis_do_periodo(ponto.get("periodo")) for ponto in janela
+    )
+    receita_janela = sum(float(ponto.get("rev") or 0) for ponto in janela)
+    total = None if eh_media else (
+        sum(valores) if inteiro else round(sum(valores), 2)
+    )
+    media = (
+        round(receita_janela / dias_uteis_janela, 2)
+        if eh_media and dias_uteis_janela
+        else round(float(total) / len(valores), 2) if valores and total is not None
+        else 0
+    )
 
     # Variação: SÓ os meses do ano mais recente da janela contra os MESMOS meses do
     # ano anterior. Somar a janela inteira (que pode atravessar dois anos) contra
@@ -208,8 +257,8 @@ def montar_card(
     ano_atual = max((p // 100 for p in periodos_janela), default=None)
     meses_atuais = {p % 100 for p in periodos_janela if p // 100 == ano_atual}
 
-    total_atual = 0.0
-    total_anterior = 0.0
+    pontos_atuais: list[dict] = []
+    pontos_anteriores: list[dict] = []
     tem_anterior = False
     if ano_atual is not None:
         for ponto in serie:
@@ -218,14 +267,34 @@ def montar_card(
             if mes not in meses_atuais:
                 continue
             if ano == ano_atual:
-                total_atual += float(ponto.get(campo) or 0)
+                pontos_atuais.append(ponto)
             elif ano == ano_atual - 1:
-                total_anterior += float(ponto.get(campo) or 0)
+                pontos_anteriores.append(ponto)
                 tem_anterior = True
+
+    def agregar_comparacao(pontos: list[dict]) -> float:
+        if metrica != "receita_dia":
+            return sum(float(ponto.get(campo) or 0) for ponto in pontos)
+        dias = sum(_dias_uteis_do_periodo(ponto.get("periodo")) for ponto in pontos)
+        receita = sum(float(ponto.get("rev") or 0) for ponto in pontos)
+        return receita / dias if dias else 0.0
+
+    total_atual = agregar_comparacao(pontos_atuais)
+    total_anterior = agregar_comparacao(pontos_anteriores)
+
+    # Bases menores que 1% do valor atual produzem percentuais gigantes que não
+    # ajudam decisão (caso real: R$ 1.073 contra R$ 3,5 mi). O dado permanece nos
+    # lados da comparação, mas o card sinaliza que a base não é comparável.
+    base_comparavel = (
+        total_anterior > 0
+        and not (total_atual > total_anterior and total_anterior < total_atual * 0.01)
+        if tem_anterior
+        else None
+    )
 
     variacao = (
         round((total_atual - total_anterior) / total_anterior * 100, 2)
-        if tem_anterior and total_anterior > 0
+        if base_comparavel
         else None
     )
 
@@ -238,13 +307,18 @@ def montar_card(
         # `total` é a soma do que o gráfico mostra; os dois totais abaixo são os
         # lados da comparação anual, que cobrem só os meses do ano mais recente.
         "total": total,
-        "media": (round(total / len(valores), 2) if valores else 0),
+        "media": media,
         "variacao_pct": variacao,
+        "base_comparavel": base_comparavel,
         "total_comparado": round(total_atual, 2) if tem_anterior else None,
         "total_ano_anterior": round(total_anterior, 2) if tem_anterior else None,
         "ano_comparado": ano_atual if tem_anterior else None,
         "meses_comparados": len(meses_atuais) if tem_anterior else 0,
         "updated_at": resumo.get("updated_at"),
         "ultimo_periodo": janela[-1].get("periodo") if janela else None,
+        # O summary informa apenas mês/ano de atualização; sem o dia não dá para
+        # dividir o mês corrente só pelos dias úteis já transcorridos.
+        "ultimo_periodo_parcial": bool(janela) if metrica == "receita_dia" else False,
+        "dias_uteis_janela": dias_uteis_janela if metrica == "receita_dia" else None,
         "meses_serie": len(serie),
     }
