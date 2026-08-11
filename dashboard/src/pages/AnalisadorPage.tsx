@@ -33,6 +33,7 @@ import { PreviaClientesTable } from '../components/analisador/PreviaClientesTabl
 import { PreviaProdutosTable } from '../components/analisador/PreviaProdutosTable';
 import { NumberStepper } from '../components/analisador/NumberStepper';
 import { ResultTable } from '../components/analisador/ResultTable';
+import { TendenciaProdutosView } from '../components/analisador/TendenciaProdutosView';
 import { ExportarModal } from '../components/analisador/ExportarModal';
 import { ExplorarBuilder } from '../components/analisador/ExplorarBuilder';
 import { ClientesGruposPanel } from '../components/analisador/ClientesGruposPanel';
@@ -1456,7 +1457,9 @@ export default function AnalisadorPage() {
           {abasResultados.map((aba) => (
             aba.chaveAba === abaAtiva && (
               <div key={aba.chaveAba} className="glass-card glass-card-flat analisador-stack-inner">
-                <ResultTable tabela={aba.tabela} chave={aba.chave} />
+                {aba.chave === 'evolucao_produtos'
+                  ? <TendenciaProdutosView tabela={aba.tabela} />
+                  : <ResultTable tabela={aba.tabela} chave={aba.chave} />}
               </div>
             )
           ))}

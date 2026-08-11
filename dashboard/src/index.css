@@ -3407,6 +3407,149 @@ h3 {
   color: var(--accent);
 }
 
+/* Tendência de produtos: a tabela repetitiva vira leitura temporal por produto. */
+.tendencia-produtos {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.tendencia-produtos-cabecalho {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.tendencia-produtos-cabecalho h3 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+
+.tendencia-produtos-cabecalho p {
+  margin: 0.2rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.tendencia-produtos-controles {
+  display: grid;
+  grid-template-columns: minmax(11rem, 0.8fr) minmax(15rem, 1.2fr);
+  gap: 0.65rem;
+  width: min(42rem, 65%);
+}
+
+.tendencia-produtos-seletor,
+.tendencia-produtos-classificacao {
+  min-width: 0;
+}
+
+.tendencia-produtos-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+
+.tendencia-produtos-kpi {
+  display: grid;
+  gap: 0.18rem;
+  min-width: 0;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.tendencia-produtos-kpi > span,
+.tendencia-produtos-kpi > small {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.tendencia-produtos-kpi > span {
+  text-transform: uppercase;
+  letter-spacing: 0.045em;
+  font-weight: 650;
+}
+
+.tendencia-produtos-kpi > strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: clamp(0.95rem, 1.6vw, 1.2rem);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tendencia-produtos-kpi.is-positivo > strong { color: var(--success); }
+.tendencia-produtos-kpi.is-negativo > strong { color: var(--danger); }
+
+.tendencia-produtos-grafico {
+  min-width: 0;
+  padding: 0.65rem 0.6rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: #121216;
+}
+
+.tendencia-produtos-tooltip {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 11rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.55rem;
+  background: rgba(19, 19, 22, 0.97);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+}
+
+.tendencia-produtos-tooltip strong { color: var(--text-primary); }
+
+.tendencia-produtos-legenda {
+  display: flex;
+  justify-content: center;
+  gap: 1.2rem;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+}
+
+.tendencia-produtos-legenda span { display: inline-flex; align-items: center; gap: 0.35rem; }
+.tendencia-produtos-legenda i { width: 1rem; height: 0.18rem; border-radius: 999px; }
+.tendencia-produtos-legenda i.is-receita { background: #dabb6c; }
+.tendencia-produtos-legenda i.is-quantidade { background: #60a5fa; }
+
+.tendencia-produtos-detalhes {
+  border-top: 1px solid var(--border);
+  padding-top: 0.75rem;
+}
+
+.tendencia-produtos-detalhes summary {
+  width: fit-content;
+  margin-bottom: 0.75rem;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.tendencia-produtos-detalhes summary:hover,
+.tendencia-produtos-detalhes summary:focus-visible { color: var(--accent); }
+
+@media (max-width: 900px) {
+  .tendencia-produtos-cabecalho { align-items: stretch; flex-direction: column; }
+  .tendencia-produtos-controles { width: 100%; }
+  .tendencia-produtos-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (max-width: 640px) {
+  .tendencia-produtos-controles { grid-template-columns: 1fr; }
+  .tendencia-produtos-kpis { grid-template-columns: 1fr; }
+  .tendencia-produtos-grafico { margin-inline: -0.35rem; padding-inline: 0; }
+}
+
 /* Semáforo das células com direção (variação, ganho/perda, renúncia, "Subiu"/
    "Desceu"): cor + seta. Ver COLUNAS_DELTA / COLUNAS_PERDA em ResultTable.tsx —
    colunas sem direção ficam neutras de propósito. */
@@ -5060,6 +5203,55 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 .monitor-grafico-tooltip strong {
   color: var(--text-primary);
   font-size: 0.76rem;
+}
+
+.monitor-card-metricas {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.35rem;
+  margin: 0.1rem 0 0.65rem;
+  padding: 0.55rem 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.monitor-card-metrica {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+  padding-inline: 0.4rem;
+}
+
+.monitor-card-metrica + .monitor-card-metrica {
+  border-left: 1px solid var(--border);
+}
+
+.monitor-card-metrica span,
+.monitor-card-metrica small {
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-card-metrica span {
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.045em;
+  text-transform: uppercase;
+}
+
+.monitor-card-metrica strong {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.monitor-card-metrica small {
+  font-size: 0.58rem;
 }
 
 .monitor-card-rodape {

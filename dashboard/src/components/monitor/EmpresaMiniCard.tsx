@@ -101,7 +101,7 @@ function Sparkline({ pontos, moeda }: { pontos: PontoSparkline[]; moeda: boolean
   return (
     <div className="monitor-sparkline">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={pontos} margin={{ top: 16, right: 12, left: 12, bottom: 0 }}>
+        <AreaChart data={pontos} margin={{ top: 16, right: 18, left: 18, bottom: 4 }}>
           <defs>
             <linearGradient id="monitorSpark" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={COR_ANO_RECENTE} stopOpacity={0.3} />
@@ -112,7 +112,10 @@ function Sparkline({ pontos, moeda }: { pontos: PontoSparkline[]; moeda: boolean
             dataKey="rotulo"
             axisLine={false}
             tickLine={false}
-            height={14}
+            // Reserva altura e afastamento reais para o texto. Com 14px e
+            // margem inferior zero, o SVG cortava a metade dos rótulos.
+            height={22}
+            tickMargin={5}
             // Mostra ~4 marcas: com 12 períodos os rótulos se sobrepõem.
             interval={Math.max(0, Math.ceil(pontos.length / 4) - 1)}
           />
@@ -166,6 +169,19 @@ function EmpresaMiniCardInterno({
     rotulo: String(item.rotulos?.[indice] ?? ''),
     valor,
   }));
+
+  // Resumo compacto da mesma janela exibida no gráfico. A média já vem do
+  // backend porque receita/dia precisa ser ponderada pelos dias úteis.
+  const ultimoPonto = pontos[pontos.length - 1];
+  const picoPonto = pontos.reduce<PontoSparkline | undefined>(
+    (maior, ponto) => (!maior || ponto.valor > maior.valor ? ponto : maior),
+    undefined,
+  );
+  const mediaPontos = item.media ?? (
+    pontos.length > 0
+      ? pontos.reduce((soma, ponto) => soma + ponto.valor, 0) / pontos.length
+      : 0
+  );
 
   // Métrica de média vem sem total (somar médias não significa nada): o número
   // grande passa a ser a média ponderada da janela.
@@ -221,6 +237,30 @@ function EmpresaMiniCardInterno({
             </div>
 
             <Sparkline pontos={pontos} moeda={moeda} />
+
+            <div className="monitor-card-metricas" aria-label={`Resumo de ${ROTULOS_METRICA[metrica].toLowerCase()}`}>
+              <div className="monitor-card-metrica">
+                <span>Último</span>
+                <strong title={ultimoPonto ? (moeda ? formatCurrency(ultimoPonto.valor) : formatNumber(ultimoPonto.valor)) : '—'}>
+                  {ultimoPonto ? formatCompacto(ultimoPonto.valor, moeda) : '—'}
+                </strong>
+                <small>{ultimoPonto?.rotulo || 'sem período'}</small>
+              </div>
+              <div className="monitor-card-metrica">
+                <span>Média</span>
+                <strong title={moeda ? formatCurrency(mediaPontos) : formatNumber(mediaPontos)}>
+                  {formatCompacto(mediaPontos, moeda)}
+                </strong>
+                <small>{pontos.length} {pontos.length === 1 ? 'período' : 'períodos'}</small>
+              </div>
+              <div className="monitor-card-metrica">
+                <span>Pico</span>
+                <strong title={picoPonto ? (moeda ? formatCurrency(picoPonto.valor) : formatNumber(picoPonto.valor)) : '—'}>
+                  {picoPonto ? formatCompacto(picoPonto.valor, moeda) : '—'}
+                </strong>
+                <small>{picoPonto?.rotulo || 'sem período'}</small>
+              </div>
+            </div>
 
             <div className="monitor-card-rodape">
               <span>{item.updated_at ?? '—'}</span>
