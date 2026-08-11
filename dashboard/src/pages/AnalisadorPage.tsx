@@ -211,6 +211,14 @@ export default function AnalisadorPage() {
     };
   }, []);
 
+  // Confirmação é transitória: evita ocupar espaço permanentemente e também
+  // reinicia corretamente quando uma nova ação de salvar é concluída.
+  useEffect(() => {
+    if (!sucesso) return undefined;
+    const timer = window.setTimeout(() => setSucesso(null), 5000);
+    return () => window.clearTimeout(timer);
+  }, [sucesso]);
+
   const aplicarDadosConfig = (dados: ConfigEmpresaSalva): OverridePrevia => {
     const cortes = (dados.cortesClientes ?? CORTES_CLIENTES_PADRAO) as [number, number, number];
     const corte = dados.corteProdutos ?? CORTE_PRODUTOS_PADRAO;
@@ -997,8 +1005,17 @@ export default function AnalisadorPage() {
       )}
 
       {sucesso && (
-        <div className="glass-card glass-card-flat analisador-sucesso" role="status">
-          {sucesso}
+        <div className="glass-card glass-card-flat analisador-sucesso" role="status" aria-live="polite">
+          <span>{sucesso}</span>
+          <button
+            type="button"
+            className="analisador-sucesso-fechar"
+            onClick={() => setSucesso(null)}
+            aria-label="Fechar notificação"
+            title="Fechar"
+          >
+            ×
+          </button>
         </div>
       )}
 
@@ -1133,9 +1150,6 @@ export default function AnalisadorPage() {
                 <Save size={16} /> {salvandoConfig ? 'Salvando...' : 'Salvar configuração'}
               </button>
             </div>
-            {sucesso && (
-              <p className="analisador-feedback-inline ok" role="status">{sucesso}</p>
-            )}
             {erro && (
               <p className="analisador-feedback-inline erro" role="alert">{erro}</p>
             )}

@@ -3232,10 +3232,42 @@ h3 {
 }
 
 .analisador-sucesso {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
   border-color: rgba(16, 185, 129, 0.45) !important;
   color: #059669;
   margin-bottom: 1.5rem;
   padding: 0.9rem 1.2rem;
+}
+
+.analisador-sucesso > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.analisador-sucesso-fechar {
+  display: grid;
+  place-items: center;
+  flex: 0 0 2rem;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  border: 1px solid currentColor;
+  border-radius: 0.5rem;
+  background: transparent;
+  color: inherit;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.analisador-sucesso-fechar:hover,
+.analisador-sucesso-fechar:focus-visible {
+  background: rgba(16, 185, 129, 0.12);
+  outline: 2px solid rgba(16, 185, 129, 0.55);
+  outline-offset: 2px;
 }
 
 .analisador-feedback-inline {
