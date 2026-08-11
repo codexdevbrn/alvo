@@ -259,25 +259,24 @@ export function PreviaClientesTable({
           <thead>
             <tr>
               <th className="col-check">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                  <label className="analisador-check">
-                    <input
-                      type="checkbox"
-                      checked={todosConsideradosFiltro}
-                      ref={(el) => {
-                        if (el) el.indeterminate = algumConsideradoFiltro && !todosConsideradosFiltro;
-                      }}
-                      onChange={() => {
-                        if (onToggleAll) {
-                          const checkAll = !todosConsideradosFiltro;
-                          const chaves = itensFiltrados.map((i) => i.cliente);
-                          onToggleAll(chaves, checkAll);
-                        }
-                      }}
-                    />
-                  </label>
-                  <span>Incluir?</span>
-                </div>
+                <label className="analisador-check">
+                  <input
+                    type="checkbox"
+                    aria-label="Incluir todos os clientes do filtro"
+                    title="Incluir/excluir todos os clientes do filtro"
+                    checked={todosConsideradosFiltro}
+                    ref={(el) => {
+                      if (el) el.indeterminate = algumConsideradoFiltro && !todosConsideradosFiltro;
+                    }}
+                    onChange={() => {
+                      if (onToggleAll) {
+                        const checkAll = !todosConsideradosFiltro;
+                        const chaves = itensFiltrados.map((i) => i.cliente);
+                        onToggleAll(chaves, checkAll);
+                      }
+                    }}
+                  />
+                </label>
               </th>
               <th className="col-nome">Cliente</th>
               <th className="col-tags">Tags</th>

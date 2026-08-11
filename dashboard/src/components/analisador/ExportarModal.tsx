@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
-import { FileSpreadsheet, FileText, X } from 'lucide-react';
+import { FileCode2, FileSpreadsheet, FileText, X } from 'lucide-react';
+
+import type { FormatoExportacao } from '../../api/client';
 
 export interface RelatorioExportavel {
   chave: string;
@@ -8,7 +10,7 @@ export interface RelatorioExportavel {
 
 interface ExportarModalProps {
   aberto: boolean;
-  formato: 'excel' | 'pdf' | null;
+  formato: FormatoExportacao | null;
   relatorios: RelatorioExportavel[];
   carregando: boolean;
   onCancelar: () => void;
@@ -25,7 +27,8 @@ export function ExportarModal({ aberto, formato, relatorios, carregando, onCance
 
   if (!aberto || !formato) return null;
 
-  const rotuloFormato = formato === 'excel' ? 'Excel' : 'PDF';
+  const rotuloFormato = formato === 'excel' ? 'Excel' : formato === 'pdf' ? 'PDF' : 'HTML';
+  const IconeFormato = formato === 'excel' ? FileSpreadsheet : formato === 'pdf' ? FileText : FileCode2;
   const todosMarcados = relatorios.length > 0 && selecionados.size === relatorios.length;
 
   const alternar = (chave: string) => {
@@ -75,7 +78,7 @@ export function ExportarModal({ aberto, formato, relatorios, carregando, onCance
                     checked={selecionados.has(r.chave)}
                     onChange={() => alternar(r.chave)}
                   />
-                  {formato === 'excel' ? <FileSpreadsheet size={15} /> : <FileText size={15} />}
+                  <IconeFormato size={15} />
                   <span>{r.rotulo}</span>
                 </label>
               </li>

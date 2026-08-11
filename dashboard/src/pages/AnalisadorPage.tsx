@@ -4,6 +4,7 @@ import { Download, FolderOpen, Save } from 'lucide-react';
 import {
   analisar,
   exportarRelatorio,
+  type FormatoExportacao,
   listarEmpresas,
   obterBase,
   obterCaminhoTrabalho,
@@ -106,7 +107,7 @@ export default function AnalisadorPage() {
   const [catalogo, setCatalogo] = useState<CategoriaCatalogo[]>([]);
   const [resultados, setResultados] = useState<ResultadoAnalise | null>(null);
   const [abaAtiva, setAbaAtiva] = useState<string | null>(null);
-  const [formatoParaConfirmar, setFormatoParaConfirmar] = useState<'excel' | 'pdf' | null>(null);
+  const [formatoParaConfirmar, setFormatoParaConfirmar] = useState<FormatoExportacao | null>(null);
 
   const [clientesExcluidos, setClientesExcluidos] = useState<Set<string>>(new Set());
   const [produtosExcluidos, setProdutosExcluidos] = useState<Set<string>>(new Set());
@@ -827,7 +828,7 @@ export default function AnalisadorPage() {
     }
   };
 
-  const handleExportar = async (formato: 'excel' | 'pdf', chavesParaExportar: string[]) => {
+  const handleExportar = async (formato: FormatoExportacao, chavesParaExportar: string[]) => {
     setErro(null);
     setCarregando(true);
     try {
@@ -836,7 +837,7 @@ export default function AnalisadorPage() {
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = formato === 'excel' ? 'relatorio.xlsx' : 'relatorio.pdf';
+      link.download = `relatorio.${{ excel: 'xlsx', pdf: 'pdf', html: 'html' }[formato]}`;
       link.click();
       URL.revokeObjectURL(url);
       setFormatoParaConfirmar(null);
@@ -1402,6 +1403,15 @@ export default function AnalisadorPage() {
             <button type="button" onClick={() => setFormatoParaConfirmar('pdf')} disabled={carregando} className="analisador-btn analisador-btn-pri">
               <Download size={16} /> Baixar PDF
             </button>
+            <button
+              type="button"
+              onClick={() => setFormatoParaConfirmar('html')}
+              disabled={carregando}
+              className="analisador-btn analisador-btn-pri"
+              title="Página estática num arquivo único — abre em qualquer navegador, sem instalar nada"
+            >
+              <Download size={16} /> Baixar HTML
+            </button>
             <button type="button" onClick={() => setEtapa('config')} className="analisador-btn analisador-btn-sec">
               Ajustar parâmetros
             </button>
@@ -1428,7 +1438,7 @@ export default function AnalisadorPage() {
           {abasResultados.map((aba) => (
             aba.chaveAba === abaAtiva && (
               <div key={aba.chaveAba} className="glass-card glass-card-flat analisador-stack-inner">
-                <ResultTable tabela={aba.tabela} />
+                <ResultTable tabela={aba.tabela} chave={aba.chave} />
               </div>
             )
           ))}
