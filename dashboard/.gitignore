@@ -12,6 +12,12 @@ dist
 dist-ssr
 *.local
 
+# Artefatos locais de validação visual / preview
+public/_previa_html_export.html
+public/Nova pasta/
+vite.preview.temp.ts
+src/assets/loadingPrismaPath.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

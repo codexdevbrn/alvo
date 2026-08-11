@@ -71,9 +71,9 @@ export function indicesAteMesAtual(data: DashboardData, ref: Date = new Date()):
 /** Último mês (1–12) presente no ano mais recente do dataset. */
 export function ultimoMesDisponivelAnoRecente(data: DashboardData): number {
   if (data.monthly.length === 0) return 12;
-  const anoMaisRecente = Math.max(...data.monthly.map((m) => m.year));
+  const ultimoAno = Math.max(...data.monthly.map((m) => m.year));
   const mesesDoAnoRecente = data.monthly
-    .filter((m) => m.year === anoMaisRecente)
+    .filter((m) => m.year === ultimoAno)
     .map((m) => mesDeRotulo(m.name));
   return mesesDoAnoRecente.length > 0 ? Math.max(...mesesDoAnoRecente) : 12;
 }
@@ -90,23 +90,40 @@ function periodoAteUltimoMesDisponivel(data: DashboardData): number[] {
     .filter((idx) => idx !== -1);
 }
 
-/** Garante YoY justo: nenhum ano entra com mês além do último mês que existe
- *  no ano mais recente (evita comparar 6 meses de 2025 vs 3 de 2026). */
-function limitarAoMesDoAnoRecente(data: DashboardData, indices: number[]): number[] {
-  const ultimoMes = ultimoMesDisponivelAnoRecente(data);
+/** Ano mais recente presente no dataset (base do recorte de segurança). */
+export function anoMaisRecente(data: DashboardData): number {
+  return data.monthly.length > 0 ? Math.max(...data.monthly.map((m) => m.year)) : new Date().getFullYear();
+}
+
+/** Primeiro ano considerado: o anterior ao mais recente do dataset
+ *  (ex.: dataset até 2026 → 2025; até 2027 → 2026). */
+export function anoInicialConsiderado(data: DashboardData): number {
+  return anoMaisRecente(data) - 1;
+}
+
+/** Único recorte de segurança absoluto: nada antes do início do ano anterior
+ *  entra em cálculo, mesmo que exista na base. */
+function limitarAosDoisAnosRecentes(data: DashboardData, indices: number[]): number[] {
+  const corte = anoInicialConsiderado(data);
   return indices.filter((i) => {
     const m = data.monthly[i];
-    return m && mesDeRotulo(m.name) > 0 && mesDeRotulo(m.name) <= ultimoMes;
+    return !!m && m.year >= corte;
   });
 }
 
-/** Base antes do filtro de meses fechados: seleção manual ou até o último mês disponível. */
-export function periodoBase(data: DashboardData, period: number[]): number[] {
-  return period.length > 0 ? period : periodoAteUltimoMesDisponivel(data);
-}
-
-/** Período efetivo para cálculos: base × opcionalmente só períodos fechados (por grain),
- *  sempre limitado ao último mês existente no ano mais recente (YoY justo). */
+/** Período efetivo para cálculos.
+ *
+ *  Seleção explícita manda: o que o usuário marcou no dropdown (ou o que os
+ *  botões "Meses fechados / até agora / Mês atual / Todos os meses" aplicaram)
+ *  entra literal. Os botões *são* o controle de recorte — cortar por cima deles
+ *  fazia "Todos os meses" e "12 meses selecionados" virarem mentira nos cards.
+ *
+ *  Sem seleção (padrão automático) vale ainda o limite no último mês que existe
+ *  no ano mais recente (senão anos anteriores completos esticam o eixo do
+ *  gráfico com meses vazios) e, se ligado, só períodos fechados (mesmo corte em
+ *  todos os anos, YoY justo).
+ *
+ *  Nos dois casos vale o recorte de segurança dos dois anos mais recentes. */
 export function resolverPeriodoEfetivo(
   data: DashboardData,
   period: number[],
@@ -114,8 +131,9 @@ export function resolverPeriodoEfetivo(
   ref: Date = new Date(),
   granularidade: GranularidadeDash = 'Mensal',
 ): number[] {
-  const base = periodoBase(data, period);
-  let resultado = base;
+  if (period.length > 0) return limitarAosDoisAnosRecentes(data, period);
+
+  let resultado = limitarAosDoisAnosRecentes(data, periodoAteUltimoMesDisponivel(data));
   if (usarMesesFechados) {
     const fechados = new Set(
       granularidade === 'Mensal'
@@ -124,7 +142,7 @@ export function resolverPeriodoEfetivo(
     );
     resultado = resultado.filter((i) => fechados.has(i));
   }
-  return limitarAoMesDoAnoRecente(data, resultado);
+  return resultado;
 }
 
 /** Rótulo curto do corte no ano atual (ex.: "até jun/26"). */

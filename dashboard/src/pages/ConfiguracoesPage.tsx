@@ -1,15 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { FolderOpen, Loader2, Pencil, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
 import { NumberStepper } from '../components/analisador/NumberStepper';
 import { PastaPickerModal } from '../components/PastaPickerModal';
-import { EVENTO_EMPRESA } from '../components/SidebarEmpresaSelect';
+import { EVENTO_EMPRESA } from '../utils/empresaSelecionada';
 import {
   definirAguardandoBaseDados,
   definirCaminhoFonteDados,
   definirCaminhoTrabalho,
-  getToken,
   listarEmpresasDashboard,
   obterAguardandoBaseDados,
   obterCaminhoFonteDados,
@@ -69,8 +67,6 @@ function novoIdTag(rotulo: string, existentes: Set<string>): string {
 
 /** Uma única tela de Configurações, organizada por setores. */
 export default function ConfiguracoesPage() {
-  const logado = Boolean(getToken());
-
   const [, setEmpresas] = useState<string[]>([]);
   const [empresa, setEmpresa] = useState(() => lerLocal(LS_EMPRESA));
   const [caminhoFonte, setCaminhoFonte] = useState(() => lerLocal(LS_CAMINHO_FONTE));
@@ -145,7 +141,7 @@ export default function ConfiguracoesPage() {
   }, []);
 
   useEffect(() => {
-    if (!logado || !empresa) {
+    if (!empresa) {
       setTagsCatalogo(TAGS_CATALOGO_PADRAO);
       setEditandoTagId(null);
       setConfigBase(null);
@@ -184,7 +180,7 @@ export default function ConfiguracoesPage() {
       }
     })();
     return () => { cancelado = true; };
-  }, [logado, empresa]);
+  }, [empresa]);
 
   const persistirCaminhos = async () => {
     let fonteSalva = caminhoFonte.trim();
@@ -273,7 +269,7 @@ export default function ConfiguracoesPage() {
   };
 
   const ocupado = sincronizando || salvando || regenerando;
-  const analisePronta = logado && Boolean(empresa);
+  const analisePronta = Boolean(empresa);
 
   const atualizarTag = (id: string, patch: Partial<TagCatalogoItem>) => {
     setTagsCatalogo((lista) => lista.map((item) => (item.id === id ? { ...item, ...patch } : item)));
@@ -454,7 +450,7 @@ export default function ConfiguracoesPage() {
           <section className="glass-card glass-card-flat config-page-card config-tipos-card" aria-labelledby="setor-tags">
             <div className="config-tipos-head">
               <h2 id="setor-tags" className="config-page-card-titulo">Tags de clientes</h2>
-              {logado && empresa ? (
+              {empresa ? (
                 <span className="config-tipos-count">{tagsCatalogo.length}</span>
               ) : null}
             </div>
@@ -462,12 +458,7 @@ export default function ConfiguracoesPage() {
               Catálogo de tags da prévia de clientes{empresa ? ` — ${empresa}` : ''}.
             </p>
 
-            {!logado ? (
-              <div className="config-page-setor-bloqueado">
-                <p className="analisador-hint">Faça login para editar tags.</p>
-                <Link to="/login" className="analisador-btn analisador-btn-pri">Ir para login</Link>
-              </div>
-            ) : !empresa ? (
+            {!empresa ? (
               <p className="analisador-hint">Selecione uma empresa na sidebar.</p>
             ) : (
               <>
@@ -592,14 +583,7 @@ export default function ConfiguracoesPage() {
 
             {!analisePronta ? (
               <div className="config-page-setor-bloqueado">
-                {!logado ? (
-                  <>
-                    <p className="analisador-hint">Faça login para editar parâmetros.</p>
-                    <Link to="/login" className="analisador-btn analisador-btn-pri">Ir para login</Link>
-                  </>
-                ) : (
-                  <p className="analisador-hint">Selecione uma empresa na sidebar.</p>
-                )}
+                <p className="analisador-hint">Selecione uma empresa na sidebar.</p>
               </div>
             ) : (
               <>

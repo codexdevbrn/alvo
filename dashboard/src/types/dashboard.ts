@@ -104,6 +104,10 @@ export interface DashboardStats {
     singleMonthMode: boolean;
     chartHasA?: boolean;
     chartHasB?: boolean;
+    /** Cor de cada série do gráfico, seguindo o ano que ela representa
+     * (ver `utils/coresAno`) — mesma convenção do dropdown de período. */
+    chartCorA?: string;
+    chartCorB?: string;
     lenA: number;
     lenB: number;
   /** Granularidade usada nos cálculos dos cards. */
@@ -120,6 +124,8 @@ export interface DashboardStats {
     labelA: string;
     labelB: string;
     isTrend: boolean;
+    corA: string;
+    corB: string;
   };
 }
 

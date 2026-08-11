@@ -69,6 +69,14 @@ def dias_uteis_do_mes(ano: int, mes: int) -> int:
     )
 
 
+def _eh_mes_corrente(periodo: int | None, hoje: date | None = None) -> bool:
+    """True quando o período (YYYYMM) é o mês do calendário que está correndo."""
+    if not periodo:
+        return False
+    ref = hoje or date.today()
+    return int(periodo) == ref.year * 100 + ref.month
+
+
 def _dias_uteis_do_periodo(periodo: int | None) -> int:
     """Dias úteis de um período YYYYMM. 0 quando o período não é reconhecível."""
     if not periodo:
@@ -316,9 +324,14 @@ def montar_card(
         "meses_comparados": len(meses_atuais) if tem_anterior else 0,
         "updated_at": resumo.get("updated_at"),
         "ultimo_periodo": janela[-1].get("periodo") if janela else None,
-        # O summary informa apenas mês/ano de atualização; sem o dia não dá para
-        # dividir o mês corrente só pelos dias úteis já transcorridos.
-        "ultimo_periodo_parcial": bool(janela) if metrica == "receita_dia" else False,
+        # Parcial = o último período da janela é o mês corrente, que ainda não
+        # fechou. Vale para qualquer métrica (o total do mês em curso também está
+        # incompleto), mas pesa mais na média por dia útil: o summary só informa
+        # mês/ano de atualização, sem o dia, então não há como dividir apenas
+        # pelos dias úteis já transcorridos.
+        "ultimo_periodo_parcial": _eh_mes_corrente(
+            janela[-1].get("periodo") if janela else None
+        ),
         "dias_uteis_janela": dias_uteis_janela if metrica == "receita_dia" else None,
         "meses_serie": len(serie),
     }

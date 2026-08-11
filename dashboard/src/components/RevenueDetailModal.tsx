@@ -287,6 +287,8 @@ export function RevenueDetailModal({
                                         showA={!mData.isTrend}
                                         showB={true}
                                         isCurrency={historyType === 'revenue'}
+                                        corA={mData.corA}
+                                        corB={mData.corB}
                                         style={{ height: isMobile ? '300px' : '350px', minHeight: isMobile ? '300px' : '350px', width: '100%' }}
                                     />
                                 </div>

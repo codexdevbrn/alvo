@@ -13,10 +13,11 @@ import {
 import { gravarSummaryCache, lerSummaryCache } from '../utils/cacheSummary';
 import { DashboardHeader } from '../components/DashboardHeader';
 import { AppShell } from '../components/AppShell';
-import { EVENTO_EMPRESA } from '../components/SidebarEmpresaSelect';
+import { EVENTO_EMPRESA } from '../utils/empresaSelecionada';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { obterAguardandoBaseDados, obterSummaryEmpresa } from '../api/client';
 import { formatCurrency, formatNumber } from '../utils/formatters';
+import { COR_ANO_ANTERIOR, COR_ANO_RECENTE, corDoAno } from '../utils/coresAno';
 import { descricaoPeriodoPadrao, mesDeRotulo, resolverPeriodoEfetivo, rotuloCorteFechadoParaGrafico } from '../utils/periodoFechado';
 import {
   GRANULARIDADES_DASH,
@@ -62,7 +63,14 @@ function rotuloFiltroIds(ids: number[], nomes: string[], plural: string): string
 // Period window helpers
 // ==========================================
 
-function calcPeriodWindows(data: DashboardData, targetPeriod: number[]) {
+/** Janelas A (ano anterior) e B (ano atual) do período selecionado.
+ *
+ *  `alinharMesesYoY` só faz sentido para os cards: eles comparam média por mês
+ *  entre os dois anos, então o ano anterior entra apenas com os meses que também
+ *  existem no atual. O gráfico usa `false` — ele desenha o que foi selecionado,
+ *  inclusive os meses que só existem no ano anterior (ex.: set–dez/2025 quando
+ *  2026 só tem até ago). */
+function calcPeriodWindows(data: DashboardData, targetPeriod: number[], alinharMesesYoY = true) {
   const availableYears = Array.from(new Set(data.monthly.map(m => m.year))).sort((a, b) => b - a);
   let pA: number[] = [];
   let pB: number[] = [];
@@ -81,7 +89,7 @@ function calcPeriodWindows(data: DashboardData, targetPeriod: number[]) {
       if (m.year === lastYear) pB.push(idx);
     });
     // YoY justo: só meses (1–12) presentes nos dois anos — evita 2025 com meses extras.
-    if (lastYear !== prevYear && pA.length > 0 && pB.length > 0) {
+    if (alinharMesesYoY && lastYear !== prevYear && pA.length > 0 && pB.length > 0) {
       const mesesB = new Set(
         pB.map((idx) => mesDeRotulo(data.monthly[idx]?.name ?? '')).filter((m) => m > 0),
       );
@@ -409,8 +417,9 @@ export default function DashboardPage() {
       pA: pAChart,
       pB: pBChart,
       isTrendMode: isTrendModeChart,
+      yearsInSelection: yearsInSelectionChart,
       availableYears: availableYearsChart,
-    } = calcPeriodWindows(data, periodChart);
+    } = calcPeriodWindows(data, periodChart, false);
 
     const pASet = new Set(pA);
     const pBSet = new Set(pB);
@@ -593,6 +602,15 @@ export default function DashboardPage() {
       : (availableYearsChart[0]?.toString() || "Atual");
     const yearLabel = isTrendMode ? (yearsInSelection[0]?.toString() || "") : (availableYears[0]?.toString() || "");
 
+    // Cores do gráfico seguem o ano de cada série, igual ao dropdown de período:
+    // em modo tendência a série única pode ser um ano anterior (dourado), não o
+    // mais recente (azul).
+    const anoRecenteDataset = availableYearsChart[0] ?? new Date().getFullYear();
+    const chartCorA = COR_ANO_ANTERIOR;
+    const chartCorB = isTrendModeChart
+      ? corDoAno(yearsInSelectionChart[0] ?? anoRecenteDataset, anoRecenteDataset)
+      : COR_ANO_RECENTE;
+
     // 6. Filter Options (population context - Independent per dimension)
     const clientOpts = new Set<number>(), mfrOpts = new Set<number>(), descOpts = new Set<number>(), storeOpts = new Set<number>();
 
@@ -762,6 +780,7 @@ export default function DashboardPage() {
         singleMonthMode: stableChart.singleMonthMode,
         chartHasA: stableChart.chartHasA,
         chartHasB: stableChart.chartHasB,
+        chartCorA, chartCorB,
         lenA: bucketsA, lenB: bucketsB,
         granularidade: computeGranularidade,
         unidadePeriodo: rotuloUnidade(computeGranularidade).singular,
@@ -781,7 +800,7 @@ export default function DashboardPage() {
           : undefined,
         getStatsForPeriod: (targetPeriod: number[]) => {
           const resolved = resolverPeriodoEfetivo(data, targetPeriod, false, new Date(), computeGranularidade);
-          const { pA: sA, pB: sB, isTrendMode: isTrend } = calcPeriodWindows(data, resolved);
+          const { pA: sA, pB: sB, isTrendMode: isTrend } = calcPeriodWindows(data, resolved, false);
           const sASet = new Set(sA);
 
           const stA = aggregate(populationRows, sA, isTrend);
@@ -806,7 +825,16 @@ export default function DashboardPage() {
             ? (historyType === 'revenue' ? `Receita ${yearB}` : (historyType === 'mfr' ? `Volume ${yearB}` : `Clientes ${yearB}`))
             : yearB.toString();
 
-          return { chartData: cData, labelA: lA, labelB: lB, isTrend };
+          return {
+            chartData: cData,
+            labelA: lA,
+            labelB: lB,
+            isTrend,
+            corA: COR_ANO_ANTERIOR,
+            corB: isTrend
+              ? corDoAno(Number(yearB) || anoRecenteDataset, anoRecenteDataset)
+              : COR_ANO_RECENTE,
+          };
         }
       },
       filterOptions: { clientOpts, mfrOpts, descOpts, storeOpts },
@@ -964,6 +992,9 @@ export default function DashboardPage() {
           />
 
           <div className="chart-grid">
+            {/* A linha de corte de meses fechados só é verdade quando o recorte
+                automático está valendo: com seleção manual de período os cards
+                usam exatamente o que foi marcado. */}
             <HistoryChart
               chartData={processed.stats?.chartData || []}
               labelA={processed.stats?.chartLabelA || ""}
@@ -971,8 +1002,12 @@ export default function DashboardPage() {
               showA={!!processed.stats?.chartHasA}
               showB={!!processed.stats?.chartHasB}
               singleMonthMode={!!processed.stats?.singleMonthMode}
-              usarMesesFechados={usarMesesFechados}
-              mesCorteFechado={usarMesesFechados ? rotuloCorteFechadoParaGrafico(granularidade) : null}
+              corA={processed.stats?.chartCorA}
+              corB={processed.stats?.chartCorB}
+              usarMesesFechados={usarMesesFechados && period.length === 0}
+              mesCorteFechado={usarMesesFechados && period.length === 0
+                ? rotuloCorteFechadoParaGrafico(granularidade)
+                : null}
               isLoading={isFilterPending}
             />
 

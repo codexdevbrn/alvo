@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, type MouseEvent } from 'react';
 import { X, TrendingUp, Check } from 'lucide-react';
 import type { DashboardData, GranularidadeDash } from '../types/dashboard';
 import {
+  anoInicialConsiderado,
   indicesAteMesAtual,
   indicesMesesFechados,
   mesDeRotulo,
@@ -16,6 +17,7 @@ import {
   rotuloUnidade,
   type BucketInfo,
 } from '../utils/granularidade';
+import { corDoAno } from '../utils/coresAno';
 
 interface PeriodSelectorProps {
   label: string;
@@ -41,19 +43,30 @@ export function PeriodSelector({
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const lastMonthClickRef = useRef<{ idx: number; time: number }>({ idx: -1, time: 0 });
 
-  const years = Array.from(new Set(data.monthly.map((m) => m.year))).sort((a, b) => a - b);
-  const allIndices = data.monthly.map((_, i) => i);
+  // Só os dois anos mais recentes entram em cálculo (recorte de segurança de
+  // `resolverPeriodoEfetivo`) — anos mais antigos não são oferecidos aqui, senão
+  // o usuário selecionaria algo que os cards ignoram.
+  const anoCorte = anoInicialConsiderado(data);
+  const years = Array.from(new Set(data.monthly.map((m) => m.year)))
+    .filter((y) => y >= anoCorte)
+    .sort((a, b) => a - b);
+  const allIndices = data.monthly
+    .map((m, i) => (m.year >= anoCorte ? i : -1))
+    .filter((i) => i !== -1);
   const selecionados = value.length === 0 ? allIndices : value;
   const unidade = rotuloUnidade(granularidade);
   const buckets = listBuckets(data, granularidade);
-  const indicesFechados =
+  const dentroDoCorte = (idx: number) => (data.monthly[idx]?.year ?? 0) >= anoCorte;
+  const indicesFechados = (
     granularidade === 'Mensal'
       ? indicesMesesFechados(data)
-      : indicesPeriodosFechados(data, granularidade);
-  const indicesAteAgora =
+      : indicesPeriodosFechados(data, granularidade)
+  ).filter(dentroDoCorte);
+  const indicesAteAgora = (
     granularidade === 'Mensal'
       ? indicesAteMesAtual(data)
-      : indicesAtePeriodoAtual(data, granularidade);
+      : indicesAtePeriodoAtual(data, granularidade)
+  ).filter(dentroDoCorte);
 
   useEffect(() => {
     const timeoutId = closeTimeoutRef.current;
@@ -81,7 +94,7 @@ export function PeriodSelector({
 
   const isolarMes = (mesNum: number) => {
     const indices = data.monthly
-      .map((m, i) => (mesDeRotulo(m.name) === mesNum ? i : -1))
+      .map((m, i) => (mesDeRotulo(m.name) === mesNum && m.year >= anoCorte ? i : -1))
       .filter((i) => i !== -1);
     onChange(indices);
   };
@@ -224,9 +237,9 @@ export function PeriodSelector({
 
   const anosAsc = years;
   const anoMaisRecente = anosAsc[anosAsc.length - 1];
-  /** Alinha com HistoryChart: série B (ano atual) = verde, série A (anterior) = accent. */
-  const corAno = (y: number) => (y === anoMaisRecente ? 'var(--accent-secondary-bright)' : 'var(--accent)');
-  const corAnoSolida = (y: number) => (y === anoMaisRecente ? '#6f8cc4' : '#dabb6c');
+  /** Alinha com HistoryChart: ano mais recente = azul, anterior = dourado. */
+  const corAno = (y: number) => corDoAno(y, anoMaisRecente);
+  const corAnoSolida = corAno;
 
   const cols =
     granularidade === 'Mensal' ? 3 :

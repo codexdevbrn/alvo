@@ -351,13 +351,17 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
             <div className="filters-options-bar">
                 <label
                     className="periodo-fechado-check filters-option-chip"
-                    title={usarMesesFechados
-                      ? textoBannerMesesFechados(new Date(), granularidade)
-                      : `Incluir o ${unidade.singular} corrente nos cálculos dos cards`}
+                    style={period.length > 0 ? { opacity: 0.5 } : undefined}
+                    title={period.length > 0
+                      ? `Sem efeito: com período selecionado à mão, os cálculos usam exatamente os ${unidade.plural} marcados.`
+                      : (usarMesesFechados
+                        ? textoBannerMesesFechados(new Date(), granularidade)
+                        : `Incluir o ${unidade.singular} corrente nos cálculos dos cards`)}
                 >
                     <input
                         type="checkbox"
                         checked={usarMesesFechados}
+                        disabled={period.length > 0}
                         onChange={(e) => setUsarMesesFechados(e.target.checked)}
                     />
                     <CalendarClock size={14} aria-hidden="true" />

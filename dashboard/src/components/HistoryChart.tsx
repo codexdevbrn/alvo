@@ -1,10 +1,11 @@
-import { useState, useEffect, useMemo, memo, useLayoutEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, memo, useLayoutEffect, useRef, useCallback, useId } from 'react';
 import { TrendingUp } from 'lucide-react';
 import {
     AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, ReferenceLine,
 } from 'recharts';
 import { formatCurrency, formatNumber } from '../utils/formatters';
 import { abrevMesAtual, mesAbrevDeRotulo } from '../utils/periodoFechado';
+import { COR_ANO_ANTERIOR, COR_ANO_RECENTE } from '../utils/coresAno';
 import type { ChartPoint } from '../types/dashboard';
 
 // ==========================================
@@ -28,6 +29,12 @@ interface HistoryChartProps {
     /** Quando true, os filtros estão sendo recalculados: o gráfico sai e,
      * quando os novos dados chegam, se redesenha da esquerda pra direita. */
     isLoading?: boolean;
+    /** Cor de cada série. Precisa acompanhar o ano que a série representa, pra
+     * bater com as cores do dropdown de período (ver `utils/coresAno`): em modo
+     * tendência (um ano só) a série B pode ser o ano anterior, e aí ela tem que
+     * sair dourada, não azul. */
+    corA?: string;
+    corB?: string;
 }
 
 // ==========================================
@@ -362,9 +369,16 @@ const CHART_ENTER_MS_SAFE = CHART_ENTER_MS;
 function HistoryChartInner({
     chartData, labelA, labelB, showA, showB, isCurrency = true, style,
     singleMonthMode = false, usarMesesFechados = false, mesCorteFechado = null,
-    isLoading = false,
+    isLoading = false, corA = COR_ANO_ANTERIOR, corB = COR_ANO_RECENTE,
 }: HistoryChartProps) {
     const [isMobile, setIsMobile] = useState(window.innerWidth <= 1280);
+    // Ids de gradiente únicos por instância: o Dashboard e o modal de detalhe
+    // renderizam dois HistoryChart ao mesmo tempo, e ids de SVG são globais no
+    // documento — com cores agora variáveis, ids fixos pintariam um com o
+    // gradiente do outro.
+    const gradSufixo = useId().replace(/[^a-zA-Z0-9]/g, '');
+    const gradA = `chartGradA-${gradSufixo}`;
+    const gradB = `chartGradB-${gradSufixo}`;
 
     // Saída ao começar a recalcular; redesenho (wipe) quando os dados novos
     // chegam. Ajuste de estado durante o render (padrão React p/ reagir a
@@ -471,8 +485,8 @@ function HistoryChartInner({
                     <TrendingUp size={20} color="var(--accent)" /> Histórico
                 </h3>
                 <div style={{ display: 'flex', gap: '1rem', fontSize: '0.7rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                    {showA && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent)' }} /> {labelA}</div>}
-                    {showB && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--accent-secondary-bright)' }} /> {labelB}</div>}
+                    {showA && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: corA }} /> {labelA}</div>}
+                    {showB && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: corB }} /> {labelB}</div>}
                 </div>
             </div>
             <div
@@ -505,7 +519,7 @@ function HistoryChartInner({
                                 cursor={{ fill: 'rgba(255,255,255,0.04)', radius: 8 }}
                             />
                             {showA && (
-                                <Bar name={labelA} dataKey="revenueA" fill="var(--accent)" radius={[6, 6, 0, 0]} maxBarSize={72} isAnimationActive={false}>
+                                <Bar name={labelA} dataKey="revenueA" fill={corA} radius={[6, 6, 0, 0]} maxBarSize={72} isAnimationActive={false}>
                                     <LabelList
                                         dataKey="revenueA"
                                         position="top"
@@ -517,7 +531,7 @@ function HistoryChartInner({
                                 </Bar>
                             )}
                             {showB && (
-                                <Bar name={labelB} dataKey="revenueB" fill="var(--accent-secondary-bright)" radius={[6, 6, 0, 0]} maxBarSize={72} isAnimationActive={false}>
+                                <Bar name={labelB} dataKey="revenueB" fill={corB} radius={[6, 6, 0, 0]} maxBarSize={72} isAnimationActive={false}>
                                     <LabelList
                                         dataKey="revenueB"
                                         position="top"
@@ -532,13 +546,13 @@ function HistoryChartInner({
                     ) : (
                         <AreaChart data={chartData} margin={chartMargin(isMobile)} accessibilityLayer={false}>
                             <defs>
-                                <linearGradient id="colorA" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#dabb6c" stopOpacity={0.3} />
-                                    <stop offset="95%" stopColor="#dabb6c" stopOpacity={0} />
+                                <linearGradient id={gradA} x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor={corA} stopOpacity={0.3} />
+                                    <stop offset="95%" stopColor={corA} stopOpacity={0} />
                                 </linearGradient>
-                                <linearGradient id="colorB" x1="0" y1="0" x2="0" y2="1">
-                                    <stop offset="5%" stopColor="#6f8cc4" stopOpacity={0.35} />
-                                    <stop offset="95%" stopColor="#6f8cc4" stopOpacity={0} />
+                                <linearGradient id={gradB} x1="0" y1="0" x2="0" y2="1">
+                                    <stop offset="5%" stopColor={corB} stopOpacity={0.35} />
+                                    <stop offset="95%" stopColor={corB} stopOpacity={0} />
                                 </linearGradient>
                             </defs>
                             <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="rgba(255,255,255,0.05)" />
@@ -569,8 +583,8 @@ function HistoryChartInner({
                                     name={labelA}
                                     type="monotone"
                                     dataKey="revenueA"
-                                    stroke="#dabb6c"
-                                    fill="url(#colorA)"
+                                    stroke={corA}
+                                    fill={`url(#${gradA})`}
                                     strokeWidth={2}
                                     isAnimationActive={false}
                                     connectNulls={false}
@@ -583,8 +597,8 @@ function HistoryChartInner({
                                     name={labelB}
                                     type="monotone"
                                     dataKey="revenueB"
-                                    stroke="#6f8cc4"
-                                    fill="url(#colorB)"
+                                    stroke={corB}
+                                    fill={`url(#${gradB})`}
                                     strokeWidth={2}
                                     isAnimationActive={false}
                                     connectNulls={false}
@@ -628,4 +642,6 @@ export const HistoryChart = memo(HistoryChartInner, (prev, next) => (
     && prev.usarMesesFechados === next.usarMesesFechados
     && prev.mesCorteFechado === next.mesCorteFechado
     && prev.isLoading === next.isLoading
+    && prev.corA === next.corA
+    && prev.corB === next.corB
 ));

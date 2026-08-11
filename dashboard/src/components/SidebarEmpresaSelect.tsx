@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
 import { listarEmpresasDashboard } from '../api/client';
+import { EVENTO_EMPRESA, selecionarEmpresaGlobal } from '../utils/empresaSelecionada';
 import { AnalisadorCombobox } from './analisador/AnalisadorCombobox';
 
 const LS_EMPRESA = 'alvo_empresa';
 const ROTULO_PADRAO = 'Dados padrão';
-export const EVENTO_EMPRESA = 'prisma-empresa-change';
 
 function lerEmpresa(): string {
   try {
@@ -12,16 +12,6 @@ function lerEmpresa(): string {
   } catch {
     return '';
   }
-}
-
-function gravarEmpresa(nome: string) {
-  try {
-    if (nome) localStorage.setItem(LS_EMPRESA, nome);
-    else localStorage.removeItem(LS_EMPRESA);
-  } catch {
-    /* private mode */
-  }
-  window.dispatchEvent(new CustomEvent(EVENTO_EMPRESA, { detail: nome }));
 }
 
 /** Combobox de empresa no topo da sidebar (fonte de verdade: localStorage alvo_empresa). */
@@ -52,7 +42,7 @@ export function SidebarEmpresaSelect() {
 
   const onChange = (nome: string) => {
     setEmpresa(nome);
-    gravarEmpresa(nome);
+    selecionarEmpresaGlobal(nome);
   };
 
   return (
