@@ -82,6 +82,18 @@ Copy-Item $atualizador -Destination $pacote -Force
 Etapa "Empacotando release"
 $release = Join-Path $raiz 'dist_release'
 New-Item -ItemType Directory -Force -Path $release | Out-Null
+
+# Limpa artefatos de versões anteriores. dist_release é saída de build, não acervo:
+# cada release tem ~170 MB entre zip e instalador, e guardar todas aqui acumula
+# gigabytes sem servir para nada — qualquer versão antiga se regenera pelo commit
+# correspondente, e o canal no OneDrive é quem guarda a anterior para rollback.
+Get-ChildItem $release -File -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -like 'Prisma-*' -and $_.Name -notlike "Prisma-$versao*" } |
+    ForEach-Object {
+        Write-Host "  removendo artefato antigo: $($_.Name)"
+        Remove-Item $_.FullName -Force
+    }
+
 $zip = Join-Path $release "Prisma-$versao.zip"
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path (Join-Path $pacote '*') -DestinationPath $zip -CompressionLevel Optimal

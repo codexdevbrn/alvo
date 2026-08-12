@@ -65,6 +65,8 @@ hiddenimports = [
     "python_calamine",
     # O pystray escolhe o backend em tempo de execução pelo sistema operacional.
     "pystray._win32",
+    # winreg é stdlib mas só importado dentro das funções de início automático.
+    "winreg",
 ]
 
 # Pesados e sem uso aqui. tkinter em especial arrasta DLLs de GUI inteiras.
@@ -104,7 +106,12 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,  # UPX costuma disparar falso positivo de antivírus.
-    console=True,  # O console é a janela que o usuário mantém aberta.
+    # console=True mesmo o app rodando em segundo plano: a janela aparece no início,
+    # mostra o boot, e `servidor._fechar_console` a solta com FreeConsole quando o
+    # servidor responde. Empacotar como aplicação de janela (console=False) esconderia
+    # também os erros de inicialização e mexeria no bootloader e nas flags de
+    # religamento do atualizador, que hoje funcionam.
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

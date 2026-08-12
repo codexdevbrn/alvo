@@ -5399,3 +5399,12 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   /* Contorno na cor do painel para o ponto não encostar no traço do ícone. */
   box-shadow: 0 0 0 2px var(--bg-elevated, #16161c);
 }
+
+/* Campo de hora dentro da linha de checkbox da Inicialização. Estreito porque só
+   contém HH:MM — com a largura padrão do input ficaria desproporcional ao lado do
+   texto da opção. */
+.config-page-inicio-hora {
+  width: auto;
+  min-width: 6.5rem;
+  margin-left: 0.4rem;
+}

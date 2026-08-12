@@ -277,7 +277,32 @@ def aplicar(pid: int, zip_pacote: str, destino: str, versao: str, log: Registro)
     return 7
 
 
+def _reconectar_console() -> None:
+    """Religa stdout/stderr ao console que este processo recebeu.
+
+    O Prisma lança o atualizador com as saídas em DEVNULL — obrigatório, porque
+    depois de fechar o próprio console ele não tem handles válidos para repassar.
+    Consequência: sem isto a janela do atualizador ficaria em branco enquanto ele
+    troca os arquivos, e é justamente a janela que o usuário olha para saber que a
+    atualização está andando.
+    """
+    if sys.platform != "win32":
+        return
+    for nome, fluxo in (("stdout", sys.stdout), ("stderr", sys.stderr)):
+        try:
+            if fluxo is not None and fluxo.isatty():
+                continue
+        except (OSError, ValueError):
+            pass
+        try:
+            setattr(sys, nome, open("CONOUT$", "w", encoding="utf-8", buffering=1))
+        except OSError:
+            # Sem console (ex.: rodado por um agendador): o log em arquivo basta.
+            pass
+
+
 def main() -> int:
+    _reconectar_console()
     analisador = argparse.ArgumentParser(description="Atualizador do Prisma.")
     analisador.add_argument("--pid", type=int, required=True)
     analisador.add_argument("--zip", dest="zip_pacote", required=True)

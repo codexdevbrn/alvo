@@ -14,7 +14,9 @@ import {
   obterCaminhoTrabalho,
   aplicarAtualizacao,
   definirCaminhoAtualizacoes,
+  definirInicioAutomatico,
   obterCaminhoAtualizacoes,
+  obterInicioAutomatico,
   obterStatusAtualizacao,
   obterTagsClientes,
   obterVersao,
@@ -24,6 +26,7 @@ import {
   tentarCarregarConfiguracaoEmpresa,
   TAGS_CATALOGO_PADRAO,
   type ConfigEmpresaSalva,
+  type InicioAutomatico,
   type StatusAtualizacao,
   type TagCatalogoItem,
 } from '../api/client';
@@ -86,6 +89,11 @@ export default function ConfiguracoesPage() {
   const [verificandoAtualizacao, setVerificandoAtualizacao] = useState(false);
   const [aplicandoAtualizacao, setAplicandoAtualizacao] = useState(false);
   const [feedbackAtualizacao, setFeedbackAtualizacao] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
+  const [inicio, setInicio] = useState<InicioAutomatico | null>(null);
+  const [horarioInicio, setHorarioInicio] = useState('08:00');
+  const [comHorario, setComHorario] = useState(false);
+  const [salvandoInicio, setSalvandoInicio] = useState(false);
+  const [feedbackInicio, setFeedbackInicio] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
   const [feedbackDados, setFeedbackDados] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
   const [aguardandoBaseDados, setAguardandoBaseDados] = useState(false);
   const [versao, setVersao] = useState<string | null>(null);
@@ -160,6 +168,35 @@ export default function ConfiguracoesPage() {
       })
       .catch(() => setStatusAtualizacao(null));
   }, []);
+
+  useEffect(() => {
+    void obterInicioAutomatico()
+      .then((estado) => {
+        setInicio(estado);
+        setComHorario(estado.horario !== null);
+        if (estado.horario) setHorarioInicio(estado.horario);
+      })
+      .catch(() => setInicio(null));
+  }, []);
+
+  const salvarInicio = async (logon: boolean, horario: string | null) => {
+    setSalvandoInicio(true);
+    setFeedbackInicio(null);
+    try {
+      const estado = await definirInicioAutomatico(logon, horario);
+      setInicio(estado);
+      setComHorario(estado.horario !== null);
+      if (estado.horario) setHorarioInicio(estado.horario);
+      setFeedbackInicio({ tipo: 'ok', texto: 'Configuração de inicialização salva.' });
+    } catch (erro) {
+      setFeedbackInicio({ tipo: 'erro', texto: (erro as Error).message });
+      // Recarrega o estado real: o backend pode ter aplicado uma das duas coisas
+      // antes de falhar na outra, e deixar a tela mentindo seria pior.
+      void obterInicioAutomatico().then(setInicio).catch(() => { /* mantém */ });
+    } finally {
+      setSalvandoInicio(false);
+    }
+  };
 
   useEffect(() => {
     const syncEmpresa = () => setEmpresa(lerLocal(LS_EMPRESA));
@@ -594,7 +631,63 @@ export default function ConfiguracoesPage() {
             </div>
           </section>
 
-          {/* ——— Setor 3: Tags ——— */}
+          {/* ——— Setor 3: Inicialização ——— */}
+          {inicio?.disponivel && (
+            <section className="glass-card glass-card-flat config-page-card" aria-labelledby="setor-inicio">
+              <h2 id="setor-inicio" className="config-page-card-titulo">Inicialização</h2>
+              <p className="config-page-card-desc">
+                Quando o Prisma deve abrir sozinho nesta máquina.
+              </p>
+
+              <label className="analisador-check-linha">
+                <input
+                  type="checkbox"
+                  checked={inicio.logon}
+                  onChange={(e) => void salvarInicio(e.target.checked, comHorario ? horarioInicio : null)}
+                  disabled={salvandoInicio}
+                />
+                Abrir junto com o Windows
+              </label>
+
+              <label className="analisador-check-linha">
+                <input
+                  type="checkbox"
+                  checked={comHorario}
+                  onChange={(e) => {
+                    setComHorario(e.target.checked);
+                    void salvarInicio(inicio.logon, e.target.checked ? horarioInicio : null);
+                  }}
+                  disabled={salvandoInicio}
+                />
+                Abrir todo dia às
+                <input
+                  type="time"
+                  className="analisador-input config-page-inicio-hora"
+                  value={horarioInicio}
+                  onChange={(e) => setHorarioInicio(e.target.value)}
+                  onBlur={() => { if (comHorario) void salvarInicio(inicio.logon, horarioInicio); }}
+                  disabled={salvandoInicio || !comHorario}
+                  aria-label="Horário para abrir o Prisma"
+                />
+              </label>
+              <p className="analisador-hint">
+                O horário só vale com a máquina ligada. Se o Prisma já estiver aberto na hora,
+                nada acontece — ele apenas traz a janela do navegador.
+              </p>
+
+              {feedbackInicio && (
+                <p
+                  className="config-page-feedback"
+                  style={{ color: feedbackInicio.tipo === 'erro' ? '#f43f5e' : '#34d399' }}
+                  role={feedbackInicio.tipo === 'erro' ? 'alert' : 'status'}
+                >
+                  {feedbackInicio.texto}
+                </p>
+              )}
+            </section>
+          )}
+
+          {/* ——— Setor 4: Tags ——— */}
           <section className="glass-card glass-card-flat config-page-card config-tipos-card" aria-labelledby="setor-tags">
             <div className="config-tipos-head">
               <h2 id="setor-tags" className="config-page-card-titulo">Tags de clientes</h2>

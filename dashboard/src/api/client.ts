@@ -615,6 +615,32 @@ export async function definirCaminhoAtualizacoes(caminho: string): Promise<strin
  * Status do canal. O backend responde de um cache de 15 min alimentado no boot;
  * `forcar` ignora o cache, para quando o usuário pede a verificação na mão.
  */
+export interface InicioAutomatico {
+  /** false na versão rodando do fonte: não há executável para agendar. */
+  disponivel: boolean;
+  logon: boolean;
+  /** "HH:MM" ou null quando não há agendamento. */
+  horario: string | null;
+  motivo: string;
+}
+
+export async function obterInicioAutomatico(): Promise<InicioAutomatico> {
+  const res = await fetch('/api/config/inicio-automatico', { headers: authHeaders() });
+  return tratarResposta(res);
+}
+
+export async function definirInicioAutomatico(
+  logon: boolean,
+  horario: string | null,
+): Promise<InicioAutomatico> {
+  const res = await fetch('/api/config/inicio-automatico', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ logon, horario }),
+  });
+  return tratarResposta(res);
+}
+
 export async function obterStatusAtualizacao(forcar = false): Promise<StatusAtualizacao> {
   const url = forcar ? '/api/atualizacoes/status?forcar=true' : '/api/atualizacoes/status';
   const res = await fetch(url, { headers: authHeaders() });

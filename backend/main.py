@@ -35,6 +35,7 @@ from starlette.background import BackgroundTask
 import atualizacoes
 import caminhos_padrao
 import db
+import inicio_automatico
 import versao
 from auth import criar_token, exigir_login
 from dashboard_summary import (
@@ -1726,6 +1727,50 @@ def _exigir_origem_local(request: Request) -> None:
             )
 
 
+@app.get("/api/config/inicio-automatico")
+def obter_inicio_automatico(usuario: str = Depends(exigir_login)):
+    return inicio_automatico.estado()
+
+
+class InicioAutomaticoBody(BaseModel):
+    logon: bool
+    #: None ou "" remove o agendamento; "HH:MM" cria/atualiza.
+    horario: Optional[str] = None
+
+
+@app.post("/api/config/inicio-automatico")
+def definir_inicio_automatico(
+    corpo: InicioAutomaticoBody,
+    request: Request,
+    usuario: str = Depends(exigir_login),
+):
+    """Liga/desliga o início com o Windows e o agendamento diário.
+
+    Com o gate de origem local, como /aplicar: isto altera o que roda no logon
+    desta máquina, e o Apache do XAMPP expõe a API para a rede inteira.
+    """
+    _exigir_origem_local(request)
+
+    if not inicio_automatico.disponivel():
+        raise HTTPException(
+            status_code=400,
+            detail="O início automático só existe na versão instalada (.exe).",
+        )
+    try:
+        inicio_automatico.definir_logon(corpo.logon)
+        horario = (corpo.horario or "").strip() or None
+        inicio_automatico.definir_horario(
+            inicio_automatico.validar_horario(horario) if horario else None
+        )
+    except inicio_automatico.ErroInicioAutomatico as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Falha ao gravar a configuração de início: {exc}"
+        )
+    return inicio_automatico.estado()
+
+
 def _caminho_atualizador() -> Optional[str]:
     """Executável (ou script) que faz a troca dos arquivos.
 
@@ -1800,6 +1845,14 @@ def aplicar_atualizacao(request: Request, usuario: str = Depends(exigir_login)):
             comando,
             cwd=pasta_temporaria,
             close_fds=True,
+            # Os três explícitos porque o app fecha o próprio console depois do boot
+            # (ver servidor._fechar_console): a partir dali os handles padrão estão
+            # inválidos, e herdá-los faz o Popen falhar com WinError 50 — a
+            # atualização deixaria de funcionar justamente no modo normal de uso.
+            # O atualizador reconecta a saída ao console novo que recebe.
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
             # CREATE_NEW_CONSOLE: o atualizador precisa sobreviver à morte deste
             # processo — que é justamente o que ele espera acontecer — e mostrar o
             # andamento da troca. DETACHED_PROCESS também desacopla, mas deixa uma
