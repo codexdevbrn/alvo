@@ -220,6 +220,13 @@ function EmpresaMiniCardInterno({
         <div className="monitor-card-topo">
           <h2 title={item.empresa}>{item.empresa}</h2>
           {favorita && <span className="monitor-favorita-tag">favorita</span>}
+          {/* Data na linha do nome, e não num rodapé próprio: é metadado do card, e
+              uma linha inteira só para ela custava altura em dezenas de cards. */}
+          {item.updated_at && (
+            <span className="monitor-card-data" title="Última atualização">
+              {item.updated_at}
+            </span>
+          )}
         </div>
 
         {semBase ? (
@@ -233,7 +240,35 @@ function EmpresaMiniCardInterno({
               <span>
                 {ROTULOS_METRICA[metrica]} · {ehMedia ? 'média por dia útil' : 'total do período'}
               </span>
-              <strong>{moeda ? formatCurrency(destaque) : formatNumber(destaque)}</strong>
+              {/* Variação ao lado do valor, e não no rodapé: é o par que o usuário
+                  lê junto — quanto foi e se subiu ou caiu. */}
+              <div className="monitor-kpi-linha">
+                <strong>{moeda ? formatCurrency(destaque) : formatNumber(destaque)}</strong>
+                {variacao != null ? (
+                  <span
+                    className={`monitor-variacao ${classeVariacao}`}
+                    title={
+                      item.ano_comparado
+                        ? `${item.meses_comparados} ${item.meses_comparados === 1 ? 'mês' : 'meses'} de ${item.ano_comparado} vs ${item.ano_comparado - 1}`
+                        : undefined
+                    }
+                  >
+                    {variacao >= 0 ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
+                    {formatPercent(variacao)}
+                  </span>
+                ) : (
+                  <span
+                    className="monitor-variacao is-neutra"
+                    title={
+                      item.base_comparavel === false
+                        ? 'O ano anterior teve movimento irrisório nesses meses — o percentual não ajudaria a decidir.'
+                        : 'Sem os mesmos meses no ano anterior para comparar.'
+                    }
+                  >
+                    sem base
+                  </span>
+                )}
+              </div>
             </div>
 
             <Sparkline pontos={pontos} moeda={moeda} />
@@ -262,39 +297,6 @@ function EmpresaMiniCardInterno({
               </div>
             </div>
 
-            <div className="monitor-card-rodape">
-              <span>{item.updated_at ?? '—'}</span>
-              {variacao != null ? (
-                <span
-                  className={`monitor-variacao ${classeVariacao}`}
-                  title={
-                    item.ano_comparado
-                      ? `${item.meses_comparados} ${item.meses_comparados === 1 ? 'mês' : 'meses'} de ${item.ano_comparado} vs ${item.ano_comparado - 1}`
-                      : undefined
-                  }
-                >
-                  {variacao >= 0 ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
-                  {formatPercent(variacao)}
-                </span>
-              ) : (
-                <span
-                  className="monitor-variacao is-neutra"
-                  title={
-                    item.base_comparavel === false
-                      ? 'O ano anterior teve movimento irrisório nesses meses — o percentual não ajudaria a decidir.'
-                      : 'Sem os mesmos meses no ano anterior para comparar.'
-                  }
-                >
-                  sem base
-                </span>
-              )}
-            </div>
-
-            {item.ultimo_periodo_parcial && (
-              <p className="monitor-parcial">
-                Último período em andamento — o valor ainda vai subir até o fechamento.
-              </p>
-            )}
           </>
         )}
       </button>
