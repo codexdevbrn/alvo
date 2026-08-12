@@ -39,16 +39,67 @@ npm run build       # tsc -b && vite build
 npm run lint         # eslint .
 npm run preview
 ```
-**Deploy (XAMPP):**
+**Deploy (XAMPP)** — instalação servida na LAN (`http://monitor-2d/`):
 Ao alterar o frontend, além de rodar `npm run build`, é necessário copiar os arquivos de `dashboard/dist` para o diretório do Apache: `c:\xampp\monitoria\htdocs`. (Ex: `Copy-Item -Path ".\dist\*" -Destination "c:\xampp\monitoria\htdocs" -Recurse -Force`)
 
-Vite tem proxy de `/api` → `http://localhost:8000` (`dashboard/vite.config.ts`), então em dev o frontend chama `/api` relativo.
+O Apache (`c:\xampp\monitoria\apache\conf\httpd.conf`) escuta na 80 em todas as interfaces e faz `ProxyPass /api http://127.0.0.1:8003/api`; o backend roda como serviço via `nssm` (`c:\xampp\monitoria\prisma-svc`). Consequência a ter em mente: **a API é alcançável por qualquer máquina da rede**, e `auth.LOGIN_DESATIVADO = True` não barra ninguém. Rota destrutiva nova precisa de proteção própria — ver o gate de origem local em `_exigir_origem_local`.
+
+**Deploy (executável)** — distribuição para máquinas que não têm Python nem XAMPP: ver "Empacotamento e atualização" abaixo. Nesse modo o próprio FastAPI serve o `dashboard/dist`, então o Apache não é necessário.
+
+Vite tem proxy de `/api` → `http://127.0.0.1:8003` (`dashboard/vite.config.ts`), então em dev o frontend chama `/api` relativo.
 
 **Atualizar dados do dashboard (modo estático)**: `python process_data.py` na raiz (lê `base_de_dados.xlsx`, grava `dashboard/public/data/summary.json`).
 
 **Harmonizar descrições de produto de uma empresa**: `python harmonizar_descricoes.py "<pasta_trabalho>/<empresa>"` (lê `harm.xlsx` da pasta de trabalho, reescreve a coluna `descricao` do `Base.csv`; `--dry-run` só mostra o relatório sem gravar; backup `Base.antes-harm.csv` na primeira execução). A normalização BI→Base: `python normalizar_base.py "<pasta_fonte>/<empresa>" --trabalho "<pasta_trabalho>/<empresa>"`.
 
-Não há suíte de testes automatizada configurada em nenhum dos dois lados.
+**Testes do backend**: `cd backend && python -m pytest -q`. Não há testes automatizados no frontend.
+
+## Empacotamento e atualização
+
+O Prisma também é distribuído como executável Windows, para máquinas onde instalar Python, Node e XAMPP não se justifica. Nesse modo o backend serve o `dashboard/dist` embutido, escolhe uma porta livre a partir da 8003 e abre o navegador.
+
+### Publicar uma release
+
+```powershell
+# 1. bumpar a versão — fonte única, é dela que saem o nome do zip e o version.json
+#    backend/versao.py:  VERSAO = "1.0.1"
+# 2. gerar tudo
+.\build.ps1
+# 3. copiar dist_release\Prisma-1.0.1.zip e version.json para a pasta de
+#    atualizações no OneDrive (preencher "notas" no version.json antes)
+```
+
+`build.ps1` roda nesta ordem, e a ordem importa: `npm run build` → `pytest` → PyInstaller do app → PyInstaller do atualizador → zip + `version.json` (com sha256) → instalador Inno Setup. O frontend vem primeiro porque o `dist` entra embutido; empacotar com um `dist` velho passa despercebido, já que o app abre normal, só com a interface da versão anterior. Os testes reprovando abortam a release.
+
+Saída em `dist_release/`:
+
+| Arquivo | Para quê |
+|---|---|
+| `Prisma-<v>.zip` | o que vai para o canal de atualização |
+| `version.json` | manifesto que o app lê para detectar release nova |
+| `Prisma-<v>-instalador.exe` | primeira instalação numa máquina |
+
+### Como a atualização funciona
+
+O canal é uma pasta compartilhada (na prática o OneDrive da empresa) configurada em Configurações → Atualizações, gravada em `config_app.caminho_atualizacoes`. O app lê o `version.json`, compara com `versao.VERSAO` e oferece o update; ao aplicar, confere o sha256, entrega a troca ao `atualizador.exe` e se encerra. O atualizador espera o processo morrer, extrai ao lado, **preserva `dados_locais/`, `logs/`, `data/` e `base_de_dados.xlsx`**, troca as pastas, religa e só apaga o backup depois de confirmar que a versão nova respondeu. Log em `<pai da instalação>\Prisma-atualizacao.log`.
+
+Três coisas a não mexer sem entender:
+
+- **`_exigir_origem_local`** recusa `/api/atualizacoes/aplicar` de fora da máquina, inclusive loopback com cabeçalho de proxy. Sem isso, o `ProxyPass` do Apache deixaria qualquer PC da rede substituir a instalação.
+- **`CREATE_NEW_CONSOLE`**, não `DETACHED_PROCESS`, ao lançar o app e o atualizador: sem console, o bootloader do PyInstaller morre antes de subir o servidor.
+- **O atualizador roda de uma cópia no `%TEMP%`**, nunca de dentro da pasta que substitui: o Windows mantém handle no binário em execução e na cwd, e o rename falha com `WinError 32`.
+
+### Arquivos envolvidos
+
+| Arquivo | Papel |
+|---|---|
+| `backend/versao.py` | `VERSAO` (fonte única) e comparação numérica de versões |
+| `backend/servidor.py` | entrypoint do exe: porta livre, instância única, console, navegador |
+| `backend/atualizacoes.py` | leitura do canal, validação de sync e sha256 |
+| `atualizador/atualizador.py` | troca das pastas, preservação de dados, rollback |
+| `prisma.spec` / `atualizador.spec` | empacotamento (onedir / onefile) |
+| `instalador/prisma.iss` | instalador, atalhos, desinstalador |
+| `build.ps1` | orquestra tudo acima |
 
 ## Arquitetura
 

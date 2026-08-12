@@ -27,5 +27,11 @@ O Vite já tem proxy de `/api` para `http://localhost:8000` (`vite.config.ts`).
 
 ## Deploy
 
+- **Executável Windows** (para máquinas sem Python/Node/XAMPP): `.\build.ps1` gera, em
+  `dist_release/`, o instalador (`Prisma-<versao>-instalador.exe`) e o pacote
+  (`Prisma-<versao>.zip` + `version.json`) que alimenta a atualização automática. Bumpar
+  `backend/versao.py` antes — é a fonte única da versão. Nesse modo o próprio FastAPI serve o
+  frontend, então o Apache não é necessário. Detalhes do fluxo de release e da atualização em
+  `CLAUDE.md`, seção "Empacotamento e atualização".
 - **Frontend**: estático, deploya direto na Vercel (`npm run build` gera `dashboard/dist`).
 - **Backend**: usa pandas + reportlab, pesado para função serverless da Vercel — recomendado rodar em Render/Railway ou máquina própria, apontando o frontend para essa URL via variável de ambiente (ver `dashboard/src/api/client.ts`, hoje aponta para `/api` relativo — para produção, ajustar para a URL do backend hospedado).
