@@ -20,6 +20,8 @@ import hashlib
 import json
 import os
 import shutil
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -143,6 +145,76 @@ def consultar_canal(canal: Optional[str]) -> StatusAtualizacao:
     status.caminho_pacote = pacote
     status.detalhes = {"sha256": str(manifesto["sha256"]).lower(), "tamanho": tamanho_esperado}
     return status
+
+
+# ---------------------------------------------------------------------------
+# Cache da consulta
+#
+# A sidebar mostra um indicador em todas as telas, então a consulta deixa de ser
+# um evento raro. Sem cache, cada navegação bateria no OneDrive — que pode ser
+# lento, porque pasta remota com Files On-Demand não é leitura de disco local.
+# ---------------------------------------------------------------------------
+
+VALIDADE_CACHE_S = 15 * 60
+
+_cache_status: Optional[StatusAtualizacao] = None
+_cache_em: float = 0.0
+_cache_canal: Optional[str] = None
+_trava_cache = threading.Lock()
+
+
+def consultar_canal_cacheado(canal: Optional[str], *, forcar: bool = False) -> StatusAtualizacao:
+    """`consultar_canal` com cache por tempo, invalidado se o canal mudar.
+
+    `forcar=True` para quando o usuário pede explicitamente (botão "Salvar e
+    verificar"): ali ele está esperando um resultado novo, não o de 10 minutos
+    atrás.
+    """
+    global _cache_status, _cache_em, _cache_canal
+
+    with _trava_cache:
+        valido = (
+            _cache_status is not None
+            and _cache_canal == canal
+            and (time.monotonic() - _cache_em) < VALIDADE_CACHE_S
+        )
+        if valido and not forcar:
+            return _cache_status
+
+    # Fora da trava: consultar_canal toca o disco/rede e não deve bloquear quem
+    # só quer ler o cache.
+    status = consultar_canal(canal)
+
+    with _trava_cache:
+        _cache_status = status
+        _cache_em = time.monotonic()
+        _cache_canal = canal
+    return status
+
+
+def invalidar_cache() -> None:
+    """Esquece o resultado guardado. Chamado quando o canal é reconfigurado."""
+    global _cache_status, _cache_em, _cache_canal
+    with _trava_cache:
+        _cache_status = None
+        _cache_em = 0.0
+        _cache_canal = None
+
+
+def aquecer_em_background(canal: Optional[str]) -> None:
+    """Consulta o canal numa thread, para o boot não esperar pelo OneDrive.
+
+    Chamado no startup: quando o usuário abre qualquer tela, o resultado já está
+    no cache e o indicador aparece sem espera. Falha aqui é irrelevante — a
+    próxima consulta tenta de novo.
+    """
+    def tarefa():
+        try:
+            consultar_canal_cacheado(canal, forcar=True)
+        except Exception:  # noqa: BLE001 - thread de conveniência, não pode derrubar o app
+            pass
+
+    threading.Thread(target=tarefa, daemon=True, name="aquecer-atualizacoes").start()
 
 
 def preparar_pacote(status: StatusAtualizacao, pasta_temporaria: str) -> tuple[Optional[str], str]:

@@ -5380,3 +5380,22 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 
   .monitor-card.is-esqueleto { opacity: 0.55; }
 }
+
+/* Ponto de aviso no ícone da sidebar (hoje: atualização disponível). Fica sobre o
+   ícone, não ao lado do rótulo, porque a sidebar recolhida esconde o texto e o
+   aviso precisa continuar visível. */
+.app-sidebar-nav-icon {
+  position: relative;
+}
+
+.app-sidebar-nav-aviso {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  /* Contorno na cor do painel para o ponto não encostar no traço do ícone. */
+  box-shadow: 0 0 0 2px var(--bg-elevated, #16161c);
+}

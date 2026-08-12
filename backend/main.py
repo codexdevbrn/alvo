@@ -106,6 +106,11 @@ app.add_middleware(
 @app.on_event("startup")
 def _startup():
     db.inicializar_banco()
+    # Consulta o canal de atualização já no boot, em thread separada, para o
+    # indicador da sidebar aparecer sem o usuário precisar abrir Configurações.
+    # Em background porque o canal é pasta de rede: esperar por ele aqui atrasaria
+    # o servidor a ficar de pé.
+    atualizacoes.aquecer_em_background(_resolver_caminho_atualizacoes())
 
 
 # ---------------------------------------------------------------------------
@@ -1653,11 +1658,12 @@ def definir_caminho_atualizacoes(corpo: CaminhoPasta, usuario: str = Depends(exi
             detail="A pasta do canal de atualização deve existir e estar acessível.",
         )
     db.definir_config_app(CHAVE_CAMINHO_ATUALIZACOES, caminho)
+    atualizacoes.invalidar_cache()
     return {"caminho": caminho}
 
 
 @app.get("/api/atualizacoes/status")
-def obter_status_atualizacao(usuario: str = Depends(exigir_login)):
+def obter_status_atualizacao(forcar: bool = False, usuario: str = Depends(exigir_login)):
     """Consulta o canal sob demanda.
 
     Sob demanda em vez de periódico porque o canal é uma pasta de rede — checar
@@ -1668,7 +1674,8 @@ def obter_status_atualizacao(usuario: str = Depends(exigir_login)):
     tem token. Vale registrar para o T5, porque aplicar uma atualização é
     destrutivo e não deveria depender só de o servidor escutar em 127.0.0.1.
     """
-    return atualizacoes.consultar_canal(_resolver_caminho_atualizacoes()).como_dicionario()
+    canal = _resolver_caminho_atualizacoes()
+    return atualizacoes.consultar_canal_cacheado(canal, forcar=forcar).como_dicionario()
 
 
 #: Cabeçalhos que um proxy reverso acrescenta ao repassar a requisição. A
@@ -1745,6 +1752,8 @@ def aplicar_atualizacao(request: Request, usuario: str = Depends(exigir_login)):
             detail="A atualização automática só funciona na versão empacotada (.exe).",
         )
 
+    # Sem cache: o pacote pode ter terminado de sincronizar (ou sumido) depois da
+    # última consulta, e aqui a decisão substitui a instalação.
     status = atualizacoes.consultar_canal(_resolver_caminho_atualizacoes())
     if not status.atualizavel:
         raise HTTPException(status_code=400, detail=status.motivo)

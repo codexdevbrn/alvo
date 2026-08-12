@@ -16,7 +16,7 @@ import {
   PanelLeftOpen,
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { getToken, clearToken } from '../api/client';
+import { getToken, clearToken, obterStatusAtualizacao } from '../api/client';
 import { SidebarEmpresaSelect } from './SidebarEmpresaSelect';
 
 const URL_CARTEIRA = 'http://monitor-2d/';
@@ -40,6 +40,8 @@ interface NavItemProps {
   destaque?: boolean;
   onClick?: () => void;
   href?: string;
+  /** Ponto de aviso no ícone (ex.: atualização disponível). */
+  aviso?: string;
 }
 
 /**
@@ -48,11 +50,16 @@ interface NavItemProps {
  * sidebar. Nada de framer aqui: animar `width` via JS exige medir layout a
  * cada frame (sem composição GPU) — é isso que deixava a animação travada.
  */
-function NavItem({ icon, label, collapsed, ativo, destaque, onClick, href }: NavItemProps) {
+function NavItem({ icon, label, collapsed, ativo, destaque, onClick, href, aviso }: NavItemProps) {
   const className = `app-sidebar-nav-item${ativo ? ' is-ativo' : ''}${destaque ? ' app-sidebar-nav-item-destaque' : ''}`;
   const conteudo = (
     <>
-      <span className="app-sidebar-nav-icon">{icon}</span>
+      <span className="app-sidebar-nav-icon">
+        {icon}
+        {/* Ponto no ícone, e não ao lado do texto: a sidebar recolhida esconde o
+            texto, e o aviso tem de continuar visível. */}
+        {aviso && <span className="app-sidebar-nav-aviso" aria-hidden="true" />}
+      </span>
       <span className="app-sidebar-nav-text" aria-hidden={collapsed}>
         {label}
       </span>
@@ -61,13 +68,13 @@ function NavItem({ icon, label, collapsed, ativo, destaque, onClick, href }: Nav
 
   if (href) {
     return (
-      <a className={className} href={href} target="_blank" rel="noopener noreferrer" title={label}>
+      <a className={className} href={href} target="_blank" rel="noopener noreferrer" title={aviso || label}>
         {conteudo}
       </a>
     );
   }
   return (
-    <button type="button" className={className} onClick={onClick} title={label}>
+    <button type="button" className={className} onClick={onClick} title={aviso || label}>
       {conteudo}
     </button>
   );
@@ -103,6 +110,23 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   // No mobile a sidebar é uma barra de topo estática e sempre mostra os rótulos.
   const colapsado = collapsed && !isMobile;
   const mainRef = useRef<HTMLElement>(null);
+  const [avisoAtualizacao, setAvisoAtualizacao] = useState<string | undefined>();
+
+  // Aviso de versão nova em qualquer tela, e não só dentro de Configurações:
+  // quem nunca abre aquela tela nunca saberia que existe atualização. O backend
+  // responde de um cache alimentado no boot, então isto não custa acesso à pasta
+  // de rede a cada navegação. Falha é silenciosa de propósito — canal ausente ou
+  // fora do ar é estado normal, não erro para mostrar na sidebar.
+  useEffect(() => {
+    let cancelado = false;
+    void obterStatusAtualizacao()
+      .then((status) => {
+        if (cancelado || !status.atualizavel) return;
+        setAvisoAtualizacao(`Versão ${status.versao_disponivel} disponível`);
+      })
+      .catch(() => { /* sem aviso */ });
+    return () => { cancelado = true; };
+  }, [location.pathname]);
   const primeiraRenderizacao = useRef(true);
 
   useEffect(() => {
@@ -223,6 +247,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
             label="Configurações"
             collapsed={colapsado}
             ativo={emConfig}
+            aviso={avisoAtualizacao}
             onClick={() => navigate('/config')}
           />
           <NavItem

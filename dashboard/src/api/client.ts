@@ -611,8 +611,13 @@ export async function definirCaminhoAtualizacoes(caminho: string): Promise<strin
   return dados.caminho;
 }
 
-export async function obterStatusAtualizacao(): Promise<StatusAtualizacao> {
-  const res = await fetch('/api/atualizacoes/status', { headers: authHeaders() });
+/**
+ * Status do canal. O backend responde de um cache de 15 min alimentado no boot;
+ * `forcar` ignora o cache, para quando o usuário pede a verificação na mão.
+ */
+export async function obterStatusAtualizacao(forcar = false): Promise<StatusAtualizacao> {
+  const url = forcar ? '/api/atualizacoes/status?forcar=true' : '/api/atualizacoes/status';
+  const res = await fetch(url, { headers: authHeaders() });
   return tratarResposta(res);
 }
 
