@@ -99,8 +99,13 @@ def esperar_pid_morrer(pid: int, log: Registro) -> bool:
     return False
 
 
-def _versao_no_ar() -> str | None:
-    """Versão que está respondendo em alguma das portas prováveis, se houver."""
+def _versoes_no_ar() -> set[str]:
+    """Versões de todos os Prisma que respondem nas portas prováveis.
+
+    Devolve o conjunto, e não a primeira encontrada, porque pode haver mais de uma
+    instância na máquina e o chamador precisa saber se a SUA está entre elas.
+    """
+    versoes = set()
     for porta in PORTAS_PROVAVEIS:
         try:
             with urllib.request.urlopen(  # noqa: S310 (localhost)
@@ -108,20 +113,30 @@ def _versao_no_ar() -> str | None:
             ) as resposta:
                 dados = json.load(resposta)
             if dados.get("app") == "Prisma":
-                return str(dados.get("versao", ""))
+                versoes.add(str(dados.get("versao", "")))
         except (urllib.error.URLError, OSError, ValueError):
             continue
-    return None
+    return versoes
 
 
-def religar(destino: str, log: Registro) -> bool:
+def religar(destino: str, log: Registro, versao_esperada: str = "") -> bool:
+    """Sobe o Prisma de `destino` e confirma que foi ELE que atendeu.
+
+    A confirmação é dupla de propósito. Aceitar "algum Prisma respondeu" seria
+    perigoso: a máquina pode ter outra instância no ar — a instalação servida pelo
+    Apache atende na 8003 — e aí uma versão nova que não sobe passaria por
+    sucesso, o backup seria apagado e sobraria uma instalação quebrada sem volta.
+    Por isso exige-se que o processo lançado continue vivo e, quando a versão
+    esperada é conhecida, que ela esteja entre as que responderam.
+    """
     executavel = os.path.join(destino, NOME_EXECUTAVEL)
     if not os.path.isfile(executavel):
         log(f"{NOME_EXECUTAVEL} não está em {destino}.")
         return False
-    log(f"Religando {executavel}.")
+    alvo = f" (esperando {versao_esperada})" if versao_esperada else ""
+    log(f"Religando {executavel}{alvo}.")
     try:
-        subprocess.Popen(
+        processo = subprocess.Popen(
             [executavel], cwd=destino, close_fds=True,
             # CREATE_NEW_CONSOLE, e não DETACHED_PROCESS: o Prisma é uma aplicação
             # de console e DETACHED_PROCESS a deixa sem console nenhum, o que mata
@@ -135,10 +150,22 @@ def religar(destino: str, log: Registro) -> bool:
         return False
 
     for _ in range(int(SEGUNDOS_ESPERANDO_SUBIR / INTERVALO)):
-        versao = _versao_no_ar()
-        if versao:
-            log(f"Prisma respondeu, versão {versao}.")
+        if processo.poll() is not None:
+            log(f"O processo do Prisma encerrou sozinho (código {processo.returncode}).")
+            return False
+        versoes = _versoes_no_ar()
+        if versao_esperada and versao_esperada in versoes:
+            log(f"Prisma respondeu, versão {versao_esperada}.")
             return True
+        if not versao_esperada and versoes:
+            # Religamento de rollback: não há versão nova a exigir, e o processo
+            # lançado continua vivo, então responder já basta.
+            log(f"Prisma respondeu ({', '.join(sorted(versoes))}).")
+            return True
+        if versoes:
+            # Alguém respondeu, mas não é a versão recém-instalada: provavelmente
+            # outra instância. Segue esperando a certa em vez de dar sucesso.
+            log(f"Respondeu {', '.join(sorted(versoes))} — ainda não {versao_esperada}.")
         time.sleep(INTERVALO)
     log(f"O Prisma não respondeu em {SEGUNDOS_ESPERANDO_SUBIR}s.")
     return False
@@ -227,7 +254,7 @@ def aplicar(pid: int, zip_pacote: str, destino: str, versao: str, log: Registro)
         religar(destino, log)
         return 6
 
-    if religar(destino, log):
+    if religar(destino, log, versao_esperada=versao):
         log(f"Atualização para {versao or 'a nova versão'} concluída.")
         _remover(backup, log)
         return 0

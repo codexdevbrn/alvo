@@ -17,7 +17,9 @@ Preferir:   .\build.ps1
 
 import os
 
-RAIZ = os.path.abspath(os.getcwd())
+# SPECPATH (injetado pelo PyInstaller) e não os.getcwd(): rodar o build de outro
+# diretório resolveria os caminhos abaixo para o lugar errado.
+RAIZ = os.path.abspath(SPECPATH)  # noqa: F821 (injetado pelo PyInstaller)
 
 analise = Analysis(
     [os.path.join(RAIZ, "atualizador", "atualizador.py")],

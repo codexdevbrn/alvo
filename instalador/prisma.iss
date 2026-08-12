@@ -20,8 +20,10 @@
 
 [Setup]
 ; AppId fixo: é por ele que o Inno reconhece uma instalação existente e trata a
-; próxima como atualização em vez de segunda cópia. Nunca mudar.
-AppId={{8E1C4B3A-2D5F-4A77-9C10-PRISMA000001}
+; próxima como upgrade em vez de segunda cópia. NUNCA MUDAR depois da primeira
+; release publicada — mudar transforma toda instalação existente em órfã, que o
+; usuário passa a ter de desinstalar na mão.
+AppId={{8E1C4B3A-2D5F-4A77-9C10-3F7B21A45E08}
 AppName={#NomeApp}
 AppVersion={#VersaoApp}
 AppPublisher={#Publicador}

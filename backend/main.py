@@ -1643,6 +1643,12 @@ def obter_status_atualizacao(usuario: str = Depends(exigir_login)):
 #: Cabeçalhos que um proxy reverso acrescenta ao repassar a requisição. A
 #: presença de qualquer um deles denuncia que o pedido não nasceu nesta máquina,
 #: mesmo chegando com IP de loopback.
+#:
+#: `x-forwarded-for` está na lista por completude, mas na prática o pedido nem
+#: chega aqui com ele: o `uvicorn[standard]` habilita o ProxyHeadersMiddleware por
+#: padrão, que confia nesse cabeçalho vindo de loopback e substitui
+#: `request.client.host` pelo IP declarado — então a checagem de IP abaixo já
+#: rejeita. Os outros três o middleware ignora, e é para eles que esta lista serve.
 CABECALHOS_DE_PROXY = ("x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded")
 
 
@@ -1661,6 +1667,10 @@ def _exigir_origem_local(request: Request) -> None:
     (admin/admin123 vai embutida no pacote) nem de um fluxo de login que a
     interface hoje não tem. Se o login voltar, os dois somam.
     """
+    # Não é o peer TCP puro: o ProxyHeadersMiddleware do uvicorn já pode ter
+    # substituído isto pelo IP de um X-Forwarded-For confiável. Para o propósito
+    # aqui isso ajuda — um pedido repassado pelo Apache chega com o IP real do PC
+    # da rede, e é exatamente o que se quer rejeitar.
     cliente = request.client.host if request.client else None
     if cliente not in ("127.0.0.1", "::1"):
         raise HTTPException(

@@ -12,7 +12,10 @@ Preferir:   .\build.ps1  (garante que o dist do frontend está atualizado)
 
 import os
 
-RAIZ = os.path.abspath(os.getcwd())
+# SPECPATH é injetado pelo PyInstaller e aponta para a pasta deste .spec.
+# `os.getcwd()` seria a pasta de onde o comando foi chamado, então rodar o build
+# de outro diretório resolveria todos os caminhos abaixo para o lugar errado.
+RAIZ = os.path.abspath(SPECPATH)  # noqa: F821 (injetado pelo PyInstaller)
 BACKEND = os.path.join(RAIZ, "backend")
 DIST_WEB = os.path.join(RAIZ, "dashboard", "dist")
 
