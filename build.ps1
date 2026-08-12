@@ -94,6 +94,28 @@ $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
     notas    = ''
 } | ConvertTo-Json | Set-Content -Path (Join-Path $release 'version.json') -Encoding UTF8
 
+Etapa "Instalador (Inno Setup)"
+# Opcional de propósito: o zip acima já é uma distribuição completa. Sem o Inno
+# instalado o build segue e só avisa, em vez de derrubar a release.
+# O caminho varia: winget sem elevação instala por usuário em
+# %LOCALAPPDATA%\Programs; o instalador oficial com admin vai para Program Files.
+$iscc = @(
+    "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
+    "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+    "$env:ProgramFiles\Inno Setup 6\ISCC.exe"
+) | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $iscc) { $iscc = (Get-Command ISCC.exe -ErrorAction SilentlyContinue).Source }
+
+if (-not $iscc) {
+    Write-Warning "Inno Setup não encontrado — instalador não gerado. Instale com: winget install JRSoftware.InnoSetup"
+} else {
+    & $iscc "/DVersaoApp=$versao" "/DPastaPacote=$pacote" (Join-Path $raiz 'instalador\prisma.iss') | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "ISCC falhou." }
+    $instalador = Join-Path $release "Prisma-$versao-instalador.exe"
+    if (-not (Test-Path $instalador)) { throw "O instalador não foi gerado." }
+    Write-Host ("Instalador: {0} ({1:N0} MB)" -f $instalador, ((Get-Item $instalador).Length / 1MB))
+}
+
 Etapa "Pronto"
 Write-Host ("Pacote: {0} ({1:N0} MB)" -f $zip, ($info.Length / 1MB))
 Write-Host "sha256: $hash"
