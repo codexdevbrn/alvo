@@ -13,6 +13,7 @@ import {
   obterCaminhoFonteDados,
   obterCaminhoTrabalho,
   obterTagsClientes,
+  obterVersao,
   regenerarBaseEmpresa,
   salvarCatalogoTags,
   salvarConfiguracaoEmpresa,
@@ -77,6 +78,7 @@ export default function ConfiguracoesPage() {
   const [buscando, setBuscando] = useState<'fonte' | 'trabalho' | null>(null);
   const [feedbackDados, setFeedbackDados] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
   const [aguardandoBaseDados, setAguardandoBaseDados] = useState(false);
+  const [versao, setVersao] = useState<string | null>(null);
   const [salvandoFlag, setSalvandoFlag] = useState(false);
 
   const [tagsCatalogo, setTagsCatalogo] = useState<TagCatalogoItem[]>(TAGS_CATALOGO_PADRAO);
@@ -129,6 +131,14 @@ export default function ConfiguracoesPage() {
       setSalvandoFlag(false);
     }
   };
+
+  useEffect(() => {
+    // Versão é informativa: se a chamada falhar, o rodapé simplesmente não
+    // aparece — nada aqui depende dela.
+    void obterVersao()
+      .then((info) => setVersao(info.versao))
+      .catch(() => setVersao(null));
+  }, []);
 
   useEffect(() => {
     const syncEmpresa = () => setEmpresa(lerLocal(LS_EMPRESA));
@@ -707,6 +717,7 @@ export default function ConfiguracoesPage() {
             )}
           </section>
         </div>
+        {versao && <footer className="config-page-versao">Prisma v{versao}</footer>}
       </div>
       <PastaPickerModal
         aberto={buscando !== null}

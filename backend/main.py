@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 import db
+import versao
 from auth import criar_token, exigir_login
 from dashboard_summary import (
     caminho_summary_dashboard,
@@ -91,6 +92,17 @@ app.add_middleware(
 @app.on_event("startup")
 def _startup():
     db.inicializar_banco()
+
+
+# ---------------------------------------------------------------------------
+# Versão
+# ---------------------------------------------------------------------------
+
+@app.get("/api/versao")
+def obter_versao():
+    """Versão em execução. Sem login: o Dashboard é público e a versão é o
+    primeiro dado que suporte pede quando alguém reporta um problema."""
+    return {"versao": versao.VERSAO, "app": versao.NOME_APP}
 
 
 # ---------------------------------------------------------------------------

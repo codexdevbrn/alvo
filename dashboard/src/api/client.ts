@@ -572,6 +572,17 @@ export async function listarEmpresasDashboard(): Promise<string[]> {
   return tratarResposta(res);
 }
 
+export interface VersaoApp {
+  versao: string;
+  app: string;
+}
+
+/** Versão do backend em execução. Exibida em Configurações para o suporte. */
+export async function obterVersao(): Promise<VersaoApp> {
+  const res = await fetch('/api/versao');
+  return tratarResposta(res);
+}
+
 /** Força renormalizar BI → Base.csv e limpar cache da empresa. */
 export async function regenerarBaseEmpresa(
   empresa: string,
