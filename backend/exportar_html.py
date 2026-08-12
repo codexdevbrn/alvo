@@ -108,7 +108,9 @@ body {
   font: 14px/1.45 "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
-.doc { max-width: 1240px; margin: 0 auto; }
+/* Usa a largura disponível em monitores grandes. O limite anterior de 1240px
+   espremia relatórios com muitas colunas e criava rolagem horizontal. */
+.doc { width: 100%; max-width: 1920px; margin: 0 auto; }
 
 /* Cabeçalho: mesma ideia do header do app (marca + acento dourado). */
 .capa {
@@ -187,17 +189,20 @@ body {
 
 /* ---------- Tabela (igual à do Analisador) ---------- */
 .tabela-wrap {
-  max-height: 70vh; overflow: auto;
+  max-height: 70vh; overflow-y: auto; overflow-x: hidden;
   border: 1px solid var(--border); border-radius: 0.75rem;
   background: #121216;
 }
+/* `overflow-wrap` reduz a largura mínima intrínseca das colunas. Assim a tabela
+   ocupa a página inteira sem esconder dados nem exigir barra horizontal. */
 table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 0.8rem; }
 th {
   position: sticky; top: 0; z-index: 2;
   background: #1e1e25; color: #fff;
   text-align: left; font-weight: 700; font-size: 0.7rem;
   text-transform: uppercase; letter-spacing: 0.06em;
-  padding: 0.6rem 0.5rem; white-space: nowrap;
+  padding: 0.6rem 0.5rem; white-space: normal;
+  overflow-wrap: anywhere;
   border-bottom: 2px solid rgba(218, 187, 108, 0.45);
 }
 .sort-btn {
@@ -205,6 +210,7 @@ th {
   padding: 0; border: 0; background: transparent; color: inherit;
   font: inherit; letter-spacing: inherit; text-transform: inherit;
   cursor: pointer; text-align: inherit;
+  min-width: 0; white-space: normal; overflow-wrap: anywhere;
 }
 th.num .sort-btn { justify-content: flex-end; }
 .sort-btn:hover, .sort-btn:focus-visible { color: var(--accent); }
@@ -212,7 +218,8 @@ th.num .sort-btn { justify-content: flex-end; }
 .sort-indicator { color: var(--accent); min-width: 0.8rem; text-align: center; }
 td {
   padding: 0.5rem 0.75rem; color: var(--text-secondary);
-  border-bottom: 1px solid var(--border); white-space: nowrap;
+  border-bottom: 1px solid var(--border); white-space: normal;
+  overflow-wrap: anywhere;
 }
 tbody tr:nth-child(even) td { background: rgba(255, 255, 255, 0.032); }
 tbody tr:hover td { background: rgba(255, 255, 255, 0.075); }

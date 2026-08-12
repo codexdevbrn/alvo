@@ -29,3 +29,24 @@ def test_html_exportado_tem_ordenacao_offline_e_valores_brutos(tmp_path):
     assert 'data-sort-empty="1"' in html
     assert "localeCompare" in html
     assert "aria-sort" in html
+
+
+def test_html_exportado_usa_pagina_larga_sem_rolagem_horizontal(tmp_path):
+    caminho = tmp_path / "relatorio-largo.html"
+    tabela = pd.DataFrame(
+        {
+            "Cliente com identificação extensa": ["Cliente com um nome muito comprido"],
+            "Receita do período anterior": [1234.56],
+            "Receita do período atual": [1456.78],
+        }
+    )
+
+    exportar_relatorio_html(
+        caminho,
+        {"Mensal": {"comparativo_receita": tabela}},
+    )
+
+    html = caminho.read_text(encoding="utf-8")
+    assert "max-width: 1920px" in html
+    assert "overflow-y: auto; overflow-x: hidden" in html
+    assert "overflow-wrap: anywhere" in html
