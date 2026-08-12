@@ -12,6 +12,9 @@ import {
   obterAguardandoBaseDados,
   obterCaminhoFonteDados,
   obterCaminhoTrabalho,
+  definirCaminhoAtualizacoes,
+  obterCaminhoAtualizacoes,
+  obterStatusAtualizacao,
   obterTagsClientes,
   obterVersao,
   regenerarBaseEmpresa,
@@ -20,6 +23,7 @@ import {
   tentarCarregarConfiguracaoEmpresa,
   TAGS_CATALOGO_PADRAO,
   type ConfigEmpresaSalva,
+  type StatusAtualizacao,
   type TagCatalogoItem,
 } from '../api/client';
 import { invalidarSummary } from '../utils/cacheSummary';
@@ -75,7 +79,11 @@ export default function ConfiguracoesPage() {
   const [sincronizando, setSincronizando] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [regenerando, setRegenerando] = useState(false);
-  const [buscando, setBuscando] = useState<'fonte' | 'trabalho' | null>(null);
+  const [buscando, setBuscando] = useState<'fonte' | 'trabalho' | 'atualizacoes' | null>(null);
+  const [caminhoAtualizacoes, setCaminhoAtualizacoes] = useState('');
+  const [statusAtualizacao, setStatusAtualizacao] = useState<StatusAtualizacao | null>(null);
+  const [verificandoAtualizacao, setVerificandoAtualizacao] = useState(false);
+  const [feedbackAtualizacao, setFeedbackAtualizacao] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
   const [feedbackDados, setFeedbackDados] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
   const [aguardandoBaseDados, setAguardandoBaseDados] = useState(false);
   const [versao, setVersao] = useState<string | null>(null);
@@ -138,6 +146,17 @@ export default function ConfiguracoesPage() {
     void obterVersao()
       .then((info) => setVersao(info.versao))
       .catch(() => setVersao(null));
+  }, []);
+
+  useEffect(() => {
+    // Consulta o canal ao abrir a tela. O backend já trata canal ausente ou
+    // fora do ar como estado normal, então não há erro a exibir aqui.
+    void obterCaminhoAtualizacoes()
+      .then(async (caminho) => {
+        setCaminhoAtualizacoes(caminho);
+        setStatusAtualizacao(await obterStatusAtualizacao());
+      })
+      .catch(() => setStatusAtualizacao(null));
   }, []);
 
   useEffect(() => {
@@ -274,8 +293,26 @@ export default function ConfiguracoesPage() {
     } else if (buscando === 'trabalho') {
       setCaminhoTrabalho(caminho);
       gravarLocal(LS_CAMINHO_TRABALHO, caminho);
+    } else if (buscando === 'atualizacoes') {
+      setCaminhoAtualizacoes(caminho);
     }
     setBuscando(null);
+  };
+
+  /** Salva o canal e já consulta, para o usuário ver o resultado num clique. */
+  const salvarCanalEVerificar = async () => {
+    setVerificandoAtualizacao(true);
+    setFeedbackAtualizacao(null);
+    try {
+      const salvo = await definirCaminhoAtualizacoes(caminhoAtualizacoes);
+      setCaminhoAtualizacoes(salvo);
+      setStatusAtualizacao(await obterStatusAtualizacao());
+    } catch (erro) {
+      setStatusAtualizacao(null);
+      setFeedbackAtualizacao({ tipo: 'erro', texto: (erro as Error).message });
+    } finally {
+      setVerificandoAtualizacao(false);
+    }
   };
 
   const ocupado = sincronizando || salvando || regenerando;
@@ -456,7 +493,74 @@ export default function ConfiguracoesPage() {
             </div>
           </section>
 
-          {/* ——— Setor 2: Tags ——— */}
+          {/* ——— Setor 2: Atualizações ——— */}
+          <section className="glass-card glass-card-flat config-page-card" aria-labelledby="setor-atualizacoes">
+            <h2 id="setor-atualizacoes" className="config-page-card-titulo">Atualizações</h2>
+            <p className="config-page-card-desc">
+              Pasta compartilhada de onde o Prisma lê as novas versões publicadas.
+            </p>
+
+            <label className="analisador-campo">
+              <span>Canal de atualização (somente leitura)</span>
+              <div className="caminho-pasta-row">
+                <input
+                  className="analisador-input"
+                  value={caminhoAtualizacoes}
+                  onChange={(e) => setCaminhoAtualizacoes(e.target.value)}
+                  placeholder="Ex.: C:\...\OneDrive - Empresa\Prisma\atualizacoes"
+                />
+                <button
+                  type="button"
+                  className="analisador-btn analisador-btn-sec caminho-pasta-btn"
+                  onClick={() => setBuscando('atualizacoes')}
+                  disabled={verificandoAtualizacao}
+                  aria-label="Buscar pasta do canal de atualização"
+                >
+                  <FolderOpen size={14} />
+                  Buscar
+                </button>
+              </div>
+            </label>
+            <p className="analisador-hint">
+              A pasta precisa ter o version.json e o pacote da versão. Deixe em branco para
+              desligar a verificação de atualizações.
+            </p>
+
+            {statusAtualizacao && (
+              <p
+                className="config-page-atualizacao-status"
+                role="status"
+                data-disponivel={statusAtualizacao.atualizavel ? 'sim' : 'nao'}
+              >
+                {statusAtualizacao.motivo}
+                {statusAtualizacao.atualizavel && statusAtualizacao.notas
+                  ? ` — ${statusAtualizacao.notas}`
+                  : ''}
+              </p>
+            )}
+
+            {feedbackAtualizacao && (
+              <p className="config-page-feedback" style={{ color: '#f43f5e' }} role="alert">
+                {feedbackAtualizacao.texto}
+              </p>
+            )}
+
+            <div className="config-page-card-acoes">
+              <button
+                type="button"
+                className="analisador-btn analisador-btn-sec"
+                onClick={() => void salvarCanalEVerificar()}
+                disabled={verificandoAtualizacao}
+              >
+                {verificandoAtualizacao
+                  ? <Loader2 size={14} className="dashboard-filter-spinner" />
+                  : <RefreshCw size={14} />}
+                Salvar e verificar
+              </button>
+            </div>
+          </section>
+
+          {/* ——— Setor 3: Tags ——— */}
           <section className="glass-card glass-card-flat config-page-card config-tipos-card" aria-labelledby="setor-tags">
             <div className="config-tipos-head">
               <h2 id="setor-tags" className="config-page-card-titulo">Tags de clientes</h2>

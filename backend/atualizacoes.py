@@ -1,0 +1,144 @@
+"""
+Canal de atualização: uma pasta compartilhada (na prática o OneDrive da empresa,
+o mesmo lugar de onde já vêm os dados) contendo
+
+    version.json          metadados da release publicada
+    Prisma-<versao>.zip   o pacote
+
+O `version.json` é escrito por `build.ps1`:
+
+    {"versao": "1.0.1", "arquivo": "Prisma-1.0.1.zip",
+     "sha256": "...", "tamanho": 73400320, "data": "2026-08-12", "notas": "..."}
+
+Nada aqui levanta exceção para o chamador: canal não configurado, pasta fora do
+ar, JSON quebrado e zip pela metade são estados normais de operação e viram um
+`motivo` legível. Um erro no canal não pode derrubar o app — o usuário está ali
+para trabalhar, não para atualizar.
+"""
+
+import hashlib
+import json
+import os
+from dataclasses import dataclass, field
+from typing import Optional
+
+from versao import VERSAO, versao_mais_nova
+
+NOME_ARQUIVO_MANIFESTO = "version.json"
+
+# O sha256 é lido em blocos porque o pacote tem dezenas de MB: ler tudo de uma
+# vez para memória só para conferir o hash é desperdício.
+BLOCO_LEITURA = 1024 * 1024
+
+
+@dataclass
+class StatusAtualizacao:
+    """O que a interface precisa saber sobre o canal, num objeto só."""
+
+    versao_atual: str = VERSAO
+    versao_disponivel: Optional[str] = None
+    atualizavel: bool = False
+    motivo: str = ""
+    notas: str = ""
+    data: str = ""
+    caminho_pacote: Optional[str] = None
+    detalhes: dict = field(default_factory=dict)
+
+    def como_dicionario(self) -> dict:
+        return {
+            "versao_atual": self.versao_atual,
+            "versao_disponivel": self.versao_disponivel,
+            "atualizavel": self.atualizavel,
+            "motivo": self.motivo,
+            "notas": self.notas,
+            "data": self.data,
+        }
+
+
+def sha256_do_arquivo(caminho: str) -> str:
+    digest = hashlib.sha256()
+    with open(caminho, "rb") as arquivo:
+        for bloco in iter(lambda: arquivo.read(BLOCO_LEITURA), b""):
+            digest.update(bloco)
+    return digest.hexdigest()
+
+
+def _ler_manifesto(canal: str) -> tuple[Optional[dict], str]:
+    """`(manifesto, motivo_do_erro)` — exatamente um dos dois vem preenchido."""
+    caminho = os.path.join(canal, NOME_ARQUIVO_MANIFESTO)
+    if not os.path.isfile(caminho):
+        return None, f"O canal não tem {NOME_ARQUIVO_MANIFESTO}."
+    try:
+        with open(caminho, "r", encoding="utf-8") as arquivo:
+            manifesto = json.load(arquivo)
+    except OSError as exc:
+        # Placeholder do OneDrive ainda não baixado cai aqui.
+        return None, f"Não foi possível ler {NOME_ARQUIVO_MANIFESTO}: {exc}"
+    except json.JSONDecodeError as exc:
+        return None, f"{NOME_ARQUIVO_MANIFESTO} está corrompido: {exc}"
+    if not isinstance(manifesto, dict):
+        return None, f"{NOME_ARQUIVO_MANIFESTO} não é um objeto JSON."
+    for campo in ("versao", "arquivo", "sha256", "tamanho"):
+        if not manifesto.get(campo):
+            return None, f"{NOME_ARQUIVO_MANIFESTO} não informa '{campo}'."
+    return manifesto, ""
+
+
+def consultar_canal(canal: Optional[str]) -> StatusAtualizacao:
+    """Estado do canal de atualização, sem baixar nem verificar o hash.
+
+    A verificação do sha256 fica de fora de propósito: ler 70 MB do OneDrive a
+    cada abertura de tela travaria a interface. Aqui basta o tamanho do arquivo
+    em disco, que já pega os dois casos comuns (placeholder de 0 byte e download
+    parcial). O hash é conferido na hora de aplicar, em `preparar_pacote`.
+    """
+    status = StatusAtualizacao()
+
+    if not canal:
+        status.motivo = "Canal de atualização não configurado."
+        return status
+    if not os.path.isdir(canal):
+        status.motivo = "A pasta do canal de atualização não está acessível."
+        return status
+
+    manifesto, erro = _ler_manifesto(canal)
+    if erro:
+        status.motivo = erro
+        return status
+
+    status.versao_disponivel = str(manifesto["versao"])
+    status.notas = str(manifesto.get("notas") or "")
+    status.data = str(manifesto.get("data") or "")
+
+    if not versao_mais_nova(status.versao_disponivel):
+        status.motivo = "Você já está na versão mais recente."
+        return status
+
+    pacote = os.path.join(canal, str(manifesto["arquivo"]))
+    if not os.path.isfile(pacote):
+        status.motivo = f"O canal anuncia a {status.versao_disponivel}, mas o pacote não está lá."
+        return status
+
+    tamanho_esperado = int(manifesto["tamanho"])
+    try:
+        tamanho_real = os.path.getsize(pacote)
+    except OSError as exc:
+        status.motivo = f"Não foi possível ler o pacote: {exc}"
+        return status
+
+    if tamanho_real != tamanho_esperado:
+        # Files On-Demand deixa placeholder de 0 byte; sync interrompido deixa
+        # o arquivo curto. Nos dois casos aplicar agora instalaria um zip
+        # quebrado, então é melhor esperar.
+        status.motivo = (
+            f"A versão {status.versao_disponivel} está disponível, mas o pacote "
+            "ainda não terminou de sincronizar. Tente de novo em alguns minutos."
+        )
+        status.detalhes = {"tamanho_esperado": tamanho_esperado, "tamanho_real": tamanho_real}
+        return status
+
+    status.atualizavel = True
+    status.motivo = f"Versão {status.versao_disponivel} disponível."
+    status.caminho_pacote = pacote
+    status.detalhes = {"sha256": str(manifesto["sha256"]).lower(), "tamanho": tamanho_esperado}
+    return status

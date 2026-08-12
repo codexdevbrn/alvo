@@ -619,6 +619,20 @@ h3 {
   font-size: 0.88rem;
 }
 
+/* Status do canal de atualização. Só ganha destaque quando há release nova de
+   verdade — "você já está na versão mais recente" é informação de rotina e
+   destacá-la treinaria o usuário a ignorar a linha. */
+.config-page-atualizacao-status {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.config-page-atualizacao-status[data-disponivel='sim'] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
 /* Versão em execução — dado de suporte, não de navegação: fica discreto no fim
    da página, sem competir com o conteúdo. */
 .config-page-versao {

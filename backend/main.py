@@ -30,6 +30,7 @@ from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
+import atualizacoes
 import db
 import versao
 from auth import criar_token, exigir_login
@@ -163,6 +164,11 @@ CHAVE_AGUARDANDO_BASE_DADOS = "aguardando_base_dados"
 #: Fica no SQLite, não no navegador: o app é interno e sem separação de usuário,
 #: então favoritar numa máquina precisa valer na outra.
 CHAVE_EMPRESAS_FAVORITAS = "empresas_favoritas"
+#: Pasta compartilhada (OneDrive da empresa) com version.json + o pacote da
+#: release. Somente leitura, como a fonte de dados: o app consome o canal, quem
+#: publica é o build. Configurável em vez de fixa porque o caminho local do
+#: OneDrive muda de máquina para máquina.
+CHAVE_CAMINHO_ATUALIZACOES = "caminho_atualizacoes"
 # Legadas — só leitura de fallback / aliases de rota
 CHAVE_CAMINHO_DADOS_DASHBOARD = "caminho_dados_dashboard"
 CHAVE_CAMINHO_EMPRESAS = "caminho_empresas"
@@ -1596,6 +1602,40 @@ def obter_caminho_trabalho(usuario: str = Depends(exigir_login)):
 @app.post("/api/config/caminho-trabalho")
 def definir_caminho_trabalho(corpo: CaminhoPasta, usuario: str = Depends(exigir_login)):
     return {"caminho": _salvar_caminho_trabalho(corpo.caminho)}
+
+
+@app.get("/api/config/caminho-atualizacoes")
+def obter_caminho_atualizacoes(usuario: str = Depends(exigir_login)):
+    return {"caminho": db.obter_config_app(CHAVE_CAMINHO_ATUALIZACOES)}
+
+
+@app.post("/api/config/caminho-atualizacoes")
+def definir_caminho_atualizacoes(corpo: CaminhoPasta, usuario: str = Depends(exigir_login)):
+    caminho = corpo.caminho.strip()
+    # Vazio limpa a configuração: é como se desliga a verificação de atualização.
+    if caminho and not os.path.isdir(caminho):
+        raise HTTPException(
+            status_code=400,
+            detail="A pasta do canal de atualização deve existir e estar acessível.",
+        )
+    db.definir_config_app(CHAVE_CAMINHO_ATUALIZACOES, caminho)
+    return {"caminho": caminho}
+
+
+@app.get("/api/atualizacoes/status")
+def obter_status_atualizacao(usuario: str = Depends(exigir_login)):
+    """Consulta o canal sob demanda.
+
+    Sob demanda em vez de periódico porque o canal é uma pasta de rede — checar
+    em intervalo fixo geraria acesso ao OneDrive sem ninguém pedindo.
+
+    Usa `exigir_login` como as demais rotas de /api/config, o que hoje só
+    identifica o usuário no log: `auth.LOGIN_DESATIVADO` deixa passar quem não
+    tem token. Vale registrar para o T5, porque aplicar uma atualização é
+    destrutivo e não deveria depender só de o servidor escutar em 127.0.0.1.
+    """
+    canal = db.obter_config_app(CHAVE_CAMINHO_ATUALIZACOES)
+    return atualizacoes.consultar_canal(canal).como_dicionario()
 
 
 class AguardandoBaseDadosBody(BaseModel):

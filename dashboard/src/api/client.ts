@@ -583,6 +583,39 @@ export async function obterVersao(): Promise<VersaoApp> {
   return tratarResposta(res);
 }
 
+export interface StatusAtualizacao {
+  versao_atual: string;
+  versao_disponivel: string | null;
+  /** Só true quando o pacote está no canal e íntegro; o botão depende disto. */
+  atualizavel: boolean;
+  /** Sempre preenchido, inclusive quando não há o que atualizar. */
+  motivo: string;
+  notas: string;
+  data: string;
+}
+
+export async function obterCaminhoAtualizacoes(): Promise<string> {
+  const res = await fetch('/api/config/caminho-atualizacoes', { headers: authHeaders() });
+  const dados = await tratarResposta<{ caminho: string | null }>(res);
+  return dados.caminho ?? '';
+}
+
+/** Caminho vazio limpa o canal e desliga a verificação de atualização. */
+export async function definirCaminhoAtualizacoes(caminho: string): Promise<string> {
+  const res = await fetch('/api/config/caminho-atualizacoes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ caminho }),
+  });
+  const dados = await tratarResposta<{ caminho: string }>(res);
+  return dados.caminho;
+}
+
+export async function obterStatusAtualizacao(): Promise<StatusAtualizacao> {
+  const res = await fetch('/api/atualizacoes/status', { headers: authHeaders() });
+  return tratarResposta(res);
+}
+
 /** Força renormalizar BI → Base.csv e limpar cache da empresa. */
 export async function regenerarBaseEmpresa(
   empresa: string,
