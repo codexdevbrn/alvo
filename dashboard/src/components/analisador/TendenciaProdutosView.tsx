@@ -129,6 +129,26 @@ export function TendenciaProdutosView({ tabela }: TendenciaProdutosViewProps) {
     });
     return ordenados.map((produto) => produto.nome);
   }, [ordenacao, resumosProdutos]);
+  const resumoPorProduto = useMemo(
+    () => new Map(resumosProdutos.map((produto) => [produto.nome, produto])),
+    [resumosProdutos],
+  );
+
+  function rotuloProduto(produto: string): string {
+    const resumo = resumoPorProduto.get(produto);
+    if (!resumo) return produto;
+    if (ordenacao.startsWith('tendencia')) {
+      return `${produto} · ${formatPercent(resumo.tendencia)}`;
+    }
+    if (ordenacao.startsWith('receita')) {
+      return `${produto} · ${formatCurrency(resumo.receitaAtual)}`;
+    }
+    if (ordenacao.startsWith('quantidade')) {
+      return `${produto} · ${formatNumber(resumo.quantidadeAtual)}`;
+    }
+    return produto;
+  }
+
   const produtoAtual = produtos.includes(produtoEscolhido) ? produtoEscolhido : produtos[0] ?? '';
 
   const linhasProduto = useMemo(
@@ -180,7 +200,12 @@ export function TendenciaProdutosView({ tabela }: TendenciaProdutosViewProps) {
             <select
               className="custom-select analisador-select"
               value={ordenacao}
-              onChange={(evento) => setOrdenacao(evento.target.value as OrdenacaoProdutos)}
+              onChange={(evento) => {
+                setOrdenacao(evento.target.value as OrdenacaoProdutos);
+                // Uma classificação nova deve abrir pelo primeiro colocado,
+                // não preservar um produto escolhido na ordem anterior.
+                setProdutoEscolhido('');
+              }}
             >
               <option value="tendencia_desc">Tendência: maior → menor</option>
               <option value="tendencia_asc">Tendência: menor → maior</option>
@@ -199,7 +224,9 @@ export function TendenciaProdutosView({ tabela }: TendenciaProdutosViewProps) {
               value={produtoAtual}
               onChange={(evento) => setProdutoEscolhido(evento.target.value)}
             >
-              {produtos.map((produto) => <option key={produto} value={produto}>{produto}</option>)}
+              {produtos.map((produto) => (
+                <option key={produto} value={produto}>{rotuloProduto(produto)}</option>
+              ))}
             </select>
           </label>
         </div>
@@ -224,7 +251,7 @@ export function TendenciaProdutosView({ tabela }: TendenciaProdutosViewProps) {
         <div className={`tendencia-produtos-kpi ${tom(tendencia)}`}>
           <span>Tendência geral</span>
           <strong>{tendencia == null ? '—' : formatPercent(tendencia)}</strong>
-          <small>primeira janela × última</small>
+          <small>primeiro período × último</small>
         </div>
       </div>
 

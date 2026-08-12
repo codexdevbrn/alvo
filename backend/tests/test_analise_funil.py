@@ -28,6 +28,10 @@ def test_tendencia_percentual():
     assert _tendencia_percentual(pd.Series([100, 100, 300, 300])) == 200.0
     assert _tendencia_percentual(pd.Series([100, 100, 100, 200, 200, 200])) == 100.0
     assert _tendencia_percentual(pd.Series([0, 0, 0, 100, 100, 100])) == 0.0
+    # Um pico na primeira janela não pode inverter a direção visível: o último
+    # período está acima do primeiro, portanto a tendência precisa ser positiva.
+    serie_com_pico = pd.Series([638, 590, 710, 560, 600, 575, 615, 530, 570, 615, 667])
+    assert round(_tendencia_percentual(serie_com_pico), 2) == 4.55
 
 def test_poder_compra_agregado(mocker):
     df_mock = pd.DataFrame({
@@ -204,14 +208,14 @@ def test_classificar_faixas():
     # A = 70%
     # B = 20%
     # C = 10%
-    # Acumulados: A(70%), B(90%), C(100%)
-    # Cortes: 30, 50, 60.
-    # Grupo 1 (<=30), Grupo 2 (<=50), Grupo 3 (<=60), Demais (>60)
+    # Acumulados: A(70%), B(90%), C(100%). A faixa usa o acumulado ANTES
+    # da entidade, garantindo que o maior cliente ocupe o primeiro grupo
+    # mesmo quando sozinho ultrapassa o primeiro corte.
     
     res = classificar_faixas(df, cortes=(30.0, 50.0, 60.0), nomes_grupos=["Grupo 1", "Grupo 2", "Grupo 3"])
     
     faixa_a = res.loc[res["Cliente"] == "A", "Faixa_ABC"].iloc[0]
-    assert faixa_a == "Demais" # Pq 70% > 60
+    assert faixa_a == "Grupo 1"
     
     faixa_b = res.loc[res["Cliente"] == "B", "Faixa_ABC"].iloc[0]
     assert faixa_b == "Demais" # Pq 90% > 60
@@ -223,4 +227,5 @@ def test_classificar_faixas():
     res2 = classificar_faixas(df, cortes=(70.0, 95.0, 100.0), nomes_grupos=["G1", "G2", "G3"])
     assert res2.loc[res2["Cliente"] == "A", "Faixa_ABC"].iloc[0] == "G1"
     assert res2.loc[res2["Cliente"] == "B", "Faixa_ABC"].iloc[0] == "G2"
-    assert res2.loc[res2["Cliente"] == "C", "Faixa_ABC"].iloc[0] == "G3"
+    # C começa em 90% acumulado, ainda dentro do corte de 95% de G2.
+    assert res2.loc[res2["Cliente"] == "C", "Faixa_ABC"].iloc[0] == "G2"

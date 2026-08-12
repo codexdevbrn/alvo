@@ -582,27 +582,23 @@ def poder_compra_agregado(df, clientes_excluidos=None, cortes=(30.0, 50.0, 60.0)
 
 def _tendencia_percentual(receitas_ordenadas):
     """
-    Tendência de uma série de receitas (já em ordem cronológica): compara a
-    média dos últimos períodos com a média dos primeiros. Usa 3 pontos de
-    cada ponta; com menos de 6 pontos ao todo, divide a série ao meio (mínimo
-    1 ponto de cada lado) em vez de deixar as duas janelas se sobreporem.
+    Tendência total de uma série de receitas já em ordem cronológica: compara
+    diretamente o último período com o primeiro.
 
-    Preferido a CAGR ponto-a-ponto (1º vs último) porque um único período
-    fora da curva em qualquer ponta não distorce o resultado sozinho, e a
-    regressão linear (outra opção avaliada) dá um número por período mais
-    difícil de explicar num relatório do que "média dos últimos vs primeiros".
+    Essa definição mantém o percentual coerente com a direção visível no
+    gráfico. A antiga média de três pontos em cada ponta podia indicar queda
+    mesmo quando a série terminava acima do início, por causa de um pico antigo
+    dentro da primeira janela.
     """
-    n = len(receitas_ordenadas)
+    valores = np.asarray(receitas_ordenadas)
+    n = len(valores)
     if n < 2:
         return 0.0
-    tamanho_janela = 3 if n >= 6 else max(1, n // 2)
-    primeiros = receitas_ordenadas[:tamanho_janela]
-    ultimos = receitas_ordenadas[-tamanho_janela:]
-    media_primeiros = primeiros.mean()
-    media_ultimos = ultimos.mean()
-    if media_primeiros == 0:
+    primeiro = valores[0]
+    ultimo = valores[-1]
+    if primeiro == 0:
         return 0.0
-    return (media_ultimos / media_primeiros - 1) * 100
+    return (ultimo / primeiro - 1) * 100
 
 
 def tendencia_produtos(df, granularidade="Mensal", periodos_queda_consecutiva=2, top_n=None,
@@ -1896,10 +1892,9 @@ def gerar_analises_completas(df, granularidades, clientes_excluidos=None,
     (centenas de milhares de linhas), isso faz diferença real no tempo total.
 
     excluir_periodo_atual: por padrão, o período mais recente de cada
-    granularidade é descartado antes de rodar qualquer análise "por
-    período" (o mês/trimestre/etc. corrente costuma estar incompleto na
-    base). Não afeta top_produtos/top_fabricantes, que somam a base inteira
-    e não fatiam por período.
+    granularidade é descartado antes de rodar as análises, inclusive rankings
+    de produto e fabricante. Assim todas as tabelas do mesmo relatório usam o
+    mesmo recorte e não misturam um período corrente incompleto com o histórico.
 
     top_n_produtos: limite de produtos em evolucao_produtos/alertas_queda e
     também em top_produtos/top_fabricantes (None = todos — ver
