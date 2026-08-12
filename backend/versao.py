@@ -12,7 +12,7 @@ Não confundir com `engine.recursos.VERSAO_ATUAL`: aquela versiona o app desktop
 histórico de releases diferente — compartilhar o número confundiria o suporte.
 """
 
-VERSAO = "1.0.2"
+VERSAO = "1.0.3"
 NOME_APP = "Prisma"
 
 
