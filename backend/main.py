@@ -40,6 +40,7 @@ from dashboard_summary import (
     summary_dashboard_atualizado,
 )
 from engine import analise_funil as af
+from engine.recursos import pasta_web
 from engine.exportadores_pdf_word import exportar_relatorio_pdf
 from exportar_html import exportar_relatorio_html
 from monitor_empresas import METRICAS_MONITOR, montar_card, obter_resumo_monitor
@@ -2929,4 +2930,59 @@ def exportar(
         caminho_saida, media_type=media_type, filename=nome_arquivo,
         background=BackgroundTask(os.remove, caminho_saida),
         headers={"X-Resultado-Cache": "HIT" if cache_hit else "MISS"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Frontend (SPA)
+#
+# Quando existe um build do dashboard, o próprio backend o serve — é o que
+# permite distribuir o Prisma como um executável único, sem depender de Apache/
+# XAMPP na máquina do usuário. Em desenvolvimento (sem `npm run build`) nada é
+# montado e o Vite continua servindo o front na 5173 com proxy para /api.
+#
+# Este bloco precisa ficar no FIM do arquivo: a rota curinga abaixo casa com
+# qualquer GET, então qualquer rota declarada depois dela nunca seria alcançada.
+# ---------------------------------------------------------------------------
+
+PASTA_WEB = os.path.realpath(pasta_web())
+INDEX_WEB = os.path.join(PASTA_WEB, "index.html")
+
+
+def _arquivo_do_build(caminho_relativo: str) -> Optional[str]:
+    """Caminho absoluto do arquivo dentro do build, ou None se não existir ou
+    escapar da pasta (ex.: `../../dados_locais/app.db`)."""
+    destino = os.path.realpath(os.path.join(PASTA_WEB, caminho_relativo))
+    if destino != PASTA_WEB and not destino.startswith(PASTA_WEB + os.sep):
+        return None
+    return destino if os.path.isfile(destino) else None
+
+
+if os.path.isfile(INDEX_WEB):
+    logger.info("Servindo o frontend a partir de %s", PASTA_WEB)
+
+    @app.get("/{caminho:path}")
+    def servir_frontend(caminho: str):
+        # Rota /api inexistente é erro de API, não navegação — não devolver HTML.
+        if caminho == "api" or caminho.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Rota não encontrada.")
+
+        arquivo = _arquivo_do_build(caminho) if caminho else None
+        if arquivo:
+            return FileResponse(arquivo)
+
+        # Pedido de arquivo que não existe (ex.: /data/summary.json antes de
+        # rodar process_data.py) precisa dar 404 — devolver o index.html faria
+        # o fetch receber HTML com status 200 e quebrar no JSON.parse.
+        if os.path.splitext(caminho)[1]:
+            raise HTTPException(status_code=404, detail="Arquivo não encontrado.")
+
+        # Qualquer outra rota é rota do BrowserRouter (/analisador, /config,
+        # /monitor, /login): devolve o index e o React resolve no cliente.
+        return FileResponse(INDEX_WEB, headers={"Cache-Control": "no-store"})
+else:
+    logger.warning(
+        "Build do frontend não encontrado em %s — o backend vai servir apenas /api. "
+        "Rode `npm run build` em dashboard/ para servir a interface daqui.",
+        PASTA_WEB,
     )
