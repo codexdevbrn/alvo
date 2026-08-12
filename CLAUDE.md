@@ -83,6 +83,24 @@ Saída em `dist_release/`:
 | `version.json` | manifesto que o app lê para detectar release nova |
 | `Prisma-<v>-instalador.exe` | primeira instalação numa máquina |
 
+### Modo segundo plano
+
+O executável abre uma janela de console, mostra o boot, e **fecha a janela** quando o servidor responde (`servidor._fechar_console`, via `FreeConsole`). A partir daí o app vive na bandeja do Windows (`bandeja.py`: Abrir Prisma / Verificar atualização / Sair). Se o boot falhar, a janela **permanece** com o motivo — é de propósito, e é o motivo de não empacotar como aplicação de janela (`console=False`), que esconderia o erro e mexeria no bootloader do PyInstaller.
+
+Três consequências que já custaram um ciclo de teste cada, e que quem mexer aqui precisa saber:
+
+- **Todo `subprocess` precisa dos três descritores explícitos.** Depois do `FreeConsole` os handles padrão ficam inválidos e herdá-los falha com `WinError 50`. Atinge `inicio_automatico._schtasks` e o `Popen` que lança o atualizador.
+- **`print` e o log de stream não podem ser o único canal.** `registro.py` manda tudo para `logs/prisma.log` (rotativo) e substitui stdout/stderr por um adaptador; o uvicorn sobe com `log_config=None` para herdar essa raiz.
+- **A janela só fecha depois de o ícone existir.** Sem janela e sem ícone, o usuário não teria como abrir a interface nem encerrar o app. Bandeja indisponível ⇒ a janela fica.
+
+### Inicialização automática e dados locais
+
+`inicio_automatico.py`: "Abrir junto com o Windows" (valor em `HKCU\...\Run`) e "Abrir todo dia às HH:MM" (tarefa no Agendador, como o usuário, sem admin). O horário é lido do **XML** da tarefa, não da saída em lista do `schtasks`, que é traduzida.
+
+`dados_no_disco.py`: marca fonte e trabalho com `FILE_ATTRIBUTE_PINNED` — o mesmo "Sempre manter neste dispositivo" do OneDrive. Serve para máquina nova, onde os arquivos podem ser placeholder e a primeira leitura paga download; **não** acelera o que já está local.
+
+Os dois endpoints usam `_exigir_origem_local`, como `/aplicar`: alteram o logon da máquina e disparam download de gigabytes, e o Apache expõe a API para a rede.
+
 ### Como a atualização funciona
 
 O canal é uma pasta compartilhada (na prática o OneDrive da empresa) configurada em Configurações → Atualizações, gravada em `config_app.caminho_atualizacoes`. O app lê o `version.json`, compara com `versao.VERSAO` e oferece o update; ao aplicar, confere o sha256, entrega a troca ao `atualizador.exe` e se encerra. O atualizador espera o processo morrer, extrai ao lado, **preserva `dados_locais/`, `logs/`, `data/` e `base_de_dados.xlsx`**, troca as pastas, religa e só apaga o backup depois de confirmar que a versão nova respondeu. Log em `<pai da instalação>\Prisma-atualizacao.log`.
@@ -99,6 +117,10 @@ Três coisas a não mexer sem entender:
 |---|---|
 | `backend/versao.py` | `VERSAO` (fonte única) e comparação numérica de versões |
 | `backend/servidor.py` | entrypoint do exe: porta livre, instância única, console, navegador |
+| `backend/registro.py` | log em arquivo; sobrevive a não ter stdout |
+| `backend/bandeja.py` | ícone na área de notificação |
+| `backend/inicio_automatico.py` | início com o Windows / em horário |
+| `backend/dados_no_disco.py` | "sempre manter nesta máquina" (OneDrive) |
 | `backend/atualizacoes.py` | leitura do canal, validação de sync e sha256 |
 | `atualizador/atualizador.py` | troca das pastas, preservação de dados, rollback |
 | `prisma.spec` / `atualizador.spec` | empacotamento (onedir / onefile) |

@@ -615,6 +615,35 @@ export async function definirCaminhoAtualizacoes(caminho: string): Promise<strin
  * Status do canal. O backend responde de um cache de 15 min alimentado no boot;
  * `forcar` ignora o cache, para quando o usuário pede a verificação na mão.
  */
+export interface EstadoPasta {
+  suportado: boolean;
+  caminho: string | null;
+  arquivos: number;
+  fixados: number;
+  /** Arquivos que ainda são placeholder: a primeira leitura paga o download. */
+  na_nuvem: number;
+  bytes: number;
+}
+
+export interface DadosNoDisco {
+  fonte: EstadoPasta;
+  trabalho: EstadoPasta;
+}
+
+export async function obterDadosNoDisco(): Promise<DadosNoDisco> {
+  const res = await fetch('/api/config/dados-no-disco', { headers: authHeaders() });
+  return tratarResposta(res);
+}
+
+export async function definirDadosNoDisco(fixar: boolean): Promise<DadosNoDisco> {
+  const res = await fetch('/api/config/dados-no-disco', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ fixar }),
+  });
+  return tratarResposta(res);
+}
+
 export interface InicioAutomatico {
   /** false na versão rodando do fonte: não há executável para agendar. */
   disponivel: boolean;

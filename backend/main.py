@@ -34,6 +34,7 @@ from starlette.background import BackgroundTask
 
 import atualizacoes
 import caminhos_padrao
+import dados_no_disco
 import db
 import inicio_automatico
 import versao
@@ -1725,6 +1726,41 @@ def _exigir_origem_local(request: Request) -> None:
                     "Prisma, sem passar por proxy."
                 ),
             )
+
+
+@app.get("/api/config/dados-no-disco")
+def obter_dados_no_disco(usuario: str = Depends(exigir_login)):
+    """Quanto das pastas fonte e trabalho já está baixado nesta máquina."""
+    return {
+        "fonte": dados_no_disco.estado(_resolver_caminho_fonte()),
+        "trabalho": dados_no_disco.estado(_resolver_caminho_trabalho()),
+    }
+
+
+class DadosNoDiscoBody(BaseModel):
+    #: True = "sempre manter nesta máquina"; False = deixar o OneDrive liberar espaço.
+    fixar: bool
+
+
+@app.post("/api/config/dados-no-disco")
+def definir_dados_no_disco(
+    corpo: DadosNoDiscoBody,
+    request: Request,
+    usuario: str = Depends(exigir_login),
+):
+    """Marca fonte e trabalho como "sempre manter nesta máquina", ou desmarca.
+
+    Gate de origem local, como /aplicar: isto dispara download de gigabytes no disco
+    de quem hospeda o servidor, e não deve ser acionável pela rede.
+    """
+    _exigir_origem_local(request)
+    try:
+        return {
+            "fonte": dados_no_disco.aplicar(_resolver_caminho_fonte(), corpo.fixar),
+            "trabalho": dados_no_disco.aplicar(_resolver_caminho_trabalho(), corpo.fixar),
+        }
+    except dados_no_disco.ErroDadosNoDisco as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @app.get("/api/config/inicio-automatico")

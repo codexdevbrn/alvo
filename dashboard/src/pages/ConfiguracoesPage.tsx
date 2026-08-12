@@ -14,8 +14,10 @@ import {
   obterCaminhoTrabalho,
   aplicarAtualizacao,
   definirCaminhoAtualizacoes,
+  definirDadosNoDisco,
   definirInicioAutomatico,
   obterCaminhoAtualizacoes,
+  obterDadosNoDisco,
   obterInicioAutomatico,
   obterStatusAtualizacao,
   obterTagsClientes,
@@ -26,6 +28,7 @@ import {
   tentarCarregarConfiguracaoEmpresa,
   TAGS_CATALOGO_PADRAO,
   type ConfigEmpresaSalva,
+  type DadosNoDisco,
   type InicioAutomatico,
   type StatusAtualizacao,
   type TagCatalogoItem,
@@ -74,6 +77,22 @@ function novoIdTag(rotulo: string, existentes: Set<string>): string {
   return id;
 }
 
+function formatarGB(bytes: number): string {
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2).replace('.', ',')} GB`;
+}
+
+/** Resumo do que está baixado, para o usuário decidir sabendo o custo em disco. */
+function formatarDadosDisco(dados: DadosNoDisco): string {
+  const arquivos = dados.fonte.arquivos + dados.trabalho.arquivos;
+  const bytes = dados.fonte.bytes + dados.trabalho.bytes;
+  const naNuvem = dados.fonte.na_nuvem + dados.trabalho.na_nuvem;
+  const tamanho = `${formatarGB(bytes)} em ${arquivos} arquivos`;
+  if (naNuvem === 0) {
+    return `${tamanho} — tudo já está baixado. Marcado, o OneDrive não os transforma em atalho para liberar espaço.`;
+  }
+  return `${tamanho}, dos quais ${naNuvem} ainda estão só na nuvem — a primeira leitura de cada um espera o download.`;
+}
+
 /** Uma única tela de Configurações, organizada por setores. */
 export default function ConfiguracoesPage() {
   const [, setEmpresas] = useState<string[]>([]);
@@ -90,6 +109,8 @@ export default function ConfiguracoesPage() {
   const [aplicandoAtualizacao, setAplicandoAtualizacao] = useState(false);
   const [feedbackAtualizacao, setFeedbackAtualizacao] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
   const [inicio, setInicio] = useState<InicioAutomatico | null>(null);
+  const [dadosDisco, setDadosDisco] = useState<DadosNoDisco | null>(null);
+  const [salvandoDisco, setSalvandoDisco] = useState(false);
   const [horarioInicio, setHorarioInicio] = useState('08:00');
   const [comHorario, setComHorario] = useState(false);
   const [salvandoInicio, setSalvandoInicio] = useState(false);
@@ -168,6 +189,28 @@ export default function ConfiguracoesPage() {
       })
       .catch(() => setStatusAtualizacao(null));
   }, []);
+
+  useEffect(() => {
+    void obterDadosNoDisco().then(setDadosDisco).catch(() => setDadosDisco(null));
+  }, []);
+
+  const alternarDadosNoDisco = async (fixar: boolean) => {
+    setSalvandoDisco(true);
+    setFeedbackDados(null);
+    try {
+      setDadosDisco(await definirDadosNoDisco(fixar));
+      setFeedbackDados({
+        tipo: 'ok',
+        texto: fixar
+          ? 'Os dados serão mantidos nesta máquina. O download roda em segundo plano.'
+          : 'O OneDrive pode liberar espaço removendo os arquivos locais.',
+      });
+    } catch (erro) {
+      setFeedbackDados({ tipo: 'erro', texto: (erro as Error).message });
+    } finally {
+      setSalvandoDisco(false);
+    }
+  };
 
   useEffect(() => {
     void obterInicioAutomatico()
@@ -505,6 +548,27 @@ export default function ConfiguracoesPage() {
             <p className="analisador-hint">
               Onde o app grava summary, config.json e caches. Deve ser distinta da fonte.
             </p>
+
+            {dadosDisco?.fonte.suportado && (
+              <>
+                <label className="analisador-check-linha">
+                  <input
+                    type="checkbox"
+                    checked={
+                      dadosDisco.fonte.arquivos > 0
+                      && dadosDisco.fonte.fixados === dadosDisco.fonte.arquivos
+                      && dadosDisco.trabalho.fixados === dadosDisco.trabalho.arquivos
+                    }
+                    onChange={(e) => void alternarDadosNoDisco(e.target.checked)}
+                    disabled={salvandoDisco}
+                  />
+                  Manter os dados sempre nesta máquina
+                </label>
+                <p className="analisador-hint">
+                  {formatarDadosDisco(dadosDisco)}
+                </p>
+              </>
+            )}
 
             <label className="analisador-check-linha">
               <input
