@@ -5269,9 +5269,11 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.35rem;
   margin: 0.1rem 0 0.35rem;
-  padding: 0.4rem 0;
+  padding: 0.4rem 0 0;
+  /* Só o traço de cima: separa o bloco do gráfico. As divisórias entre as três
+     colunas e a linha de baixo saíram a pedido — com rótulo e período em cada
+     coluna, o alinhamento já separa, e as bordas só somavam ruído. */
   border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
 }
 
 .monitor-card-metrica {
@@ -5279,10 +5281,6 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   gap: 0.1rem;
   min-width: 0;
   padding-inline: 0.4rem;
-}
-
-.monitor-card-metrica + .monitor-card-metrica {
-  border-left: 1px solid var(--border);
 }
 
 .monitor-card-metrica span,
