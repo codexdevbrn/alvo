@@ -68,15 +68,36 @@ function chaveStorageLoja(empresa: string): string {
   return `analisador_loja_${empresa}`;
 }
 
-function lerLojaSalva(empresa: string): string {
-  if (!empresa) return '';
-  return localStorage.getItem(chaveStorageLoja(empresa)) || '';
+const PREFIXO_ESCOPO_MULTILOJAS = '@lojas:';
+
+function lerLojasSalvas(empresa: string): string[] {
+  if (!empresa) return [];
+  const salvo = localStorage.getItem(chaveStorageLoja(empresa));
+  if (!salvo) return [];
+  try {
+    const valores = JSON.parse(salvo) as unknown;
+    if (Array.isArray(valores)) {
+      return valores.map(String).map((item) => item.trim()).filter(Boolean);
+    }
+  } catch {
+    // Valor legado era o nome puro de uma única loja.
+  }
+  return [salvo];
 }
 
-function persistirLoja(empresa: string, loja: string): void {
+function persistirLojas(empresa: string, lojas: string[]): void {
   if (!empresa) return;
-  if (loja) localStorage.setItem(chaveStorageLoja(empresa), loja);
+  if (lojas.length > 0) localStorage.setItem(chaveStorageLoja(empresa), JSON.stringify(lojas));
   else localStorage.removeItem(chaveStorageLoja(empresa));
+}
+
+/** Contrato compatível: uma loja usa nome puro; múltiplas usam JSON prefixado. */
+function codificarEscopoLojas(lojas: string[]): string | null {
+  const unicas = [...new Set(lojas.map((item) => item.trim()).filter(Boolean))]
+    .sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  if (unicas.length === 0) return null;
+  if (unicas.length === 1) return unicas[0];
+  return `${PREFIXO_ESCOPO_MULTILOJAS}${JSON.stringify(unicas)}`;
 }
 
 function resumirRegrasConfig(dados: ConfigEmpresaSalva): string[] {
@@ -163,9 +184,9 @@ export default function AnalisadorPage() {
   const [empresaSelecionada, setEmpresaSelecionada] = useState(
     () => localStorage.getItem('alvo_empresa') || '',
   );
-  /** '' = Todas as lojas; demais = nome da loja (escopo de config/tags). */
-  const [lojaSelecionada, setLojaSelecionada] = useState(
-    () => lerLojaSalva(localStorage.getItem('alvo_empresa') || ''),
+  /** Lista vazia = Todas as lojas; demais = escopo combinado de config/tags. */
+  const [lojasSelecionadas, setLojasSelecionadas] = useState<string[]>(
+    () => lerLojasSalvas(localStorage.getItem('alvo_empresa') || ''),
   );
 
   const [caminhoTrabalho, setCaminhoTrabalho] = useState<string | null>(null);
@@ -178,10 +199,14 @@ export default function AnalisadorPage() {
   const nomeEmpresaEfetivo = empresaSelecionada || nomeEmpresaManual.trim();
   const empresaBase = empresaSelecionada || null;
   /** null/omitido nas APIs = todas as lojas. */
-  const lojaApi = lojaSelecionada || null;
+  const lojaApi = codificarEscopoLojas(lojasSelecionadas);
   const lojasDisponiveis = previa?.lojas ?? [];
   const mostrarSeletorLoja = lojasDisponiveis.length > 1;
-  const rotuloEscopoLoja = lojaSelecionada || 'Todas as lojas';
+  const rotuloEscopoLoja = lojasSelecionadas.length === 0
+    ? 'Todas as lojas'
+    : lojasSelecionadas.length === 1
+      ? lojasSelecionadas[0]
+      : `${lojasSelecionadas.length} lojas`;
 
   useEffect(() => {
     obterCatalogo()
@@ -299,9 +324,12 @@ export default function AnalisadorPage() {
       const resultado = await obterBase(empresa, loja);
       if (seq !== cargaSeqRef.current) return;
       setPrevia(resultado);
-      if (loja && resultado.lojas && resultado.lojas.length > 0 && !resultado.lojas.includes(loja)) {
-        setLojaSelecionada('');
-        if (empresa) persistirLoja(empresa, '');
+      const lojasInvalidas = (resultado.lojas_selecionadas ?? []).filter(
+        (nome) => resultado.lojas && !resultado.lojas.includes(nome),
+      );
+      if (lojasInvalidas.length > 0) {
+        setLojasSelecionadas([]);
+        if (empresa) persistirLojas(empresa, []);
       }
       if (resultado.granularidades.length > 0) {
         if (opcoes?.ajustarCortes === false) {
@@ -329,7 +357,7 @@ export default function AnalisadorPage() {
     setConfigPendente(null);
     const lojaEfetiva = loja !== undefined ? loja : lojaApi;
     if (!nome) {
-      setLojaSelecionada('');
+      setLojasSelecionadas([]);
       const override = resetarParaPadrao();
       if (seq !== cargaSeqRef.current) return;
       await carregarBaseAtual(null, { ajustarCortes: true, override, loja: null });
@@ -394,7 +422,7 @@ export default function AnalisadorPage() {
   };
 
   useEffect(() => {
-    void iniciarEmpresa(empresaSelecionada || null, lojaSelecionada || null);
+    void iniciarEmpresa(empresaSelecionada || null, lojaApi);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -769,21 +797,21 @@ export default function AnalisadorPage() {
 
   const handleSelecionarEmpresa = (nome: string) => {
     setEmpresaSelecionada(nome);
-    const lojaSalva = nome ? lerLojaSalva(nome) : '';
-    setLojaSelecionada(lojaSalva);
+    const lojasSalvas = nome ? lerLojasSalvas(nome) : [];
+    setLojasSelecionadas(lojasSalvas);
     if (nome) {
       setNomeEmpresaManual('');
       localStorage.setItem('alvo_empresa', nome);
     } else {
       localStorage.removeItem('alvo_empresa');
     }
-    void iniciarEmpresa(nome || null, lojaSalva || null);
+    void iniciarEmpresa(nome || null, codificarEscopoLojas(lojasSalvas));
   };
 
-  const handleSelecionarLoja = (loja: string) => {
-    setLojaSelecionada(loja);
-    if (empresaSelecionada) persistirLoja(empresaSelecionada, loja);
-    void trocarEscopoLoja(loja || null);
+  const handleSelecionarLojas = (lojas: string[]) => {
+    setLojasSelecionadas(lojas);
+    if (empresaSelecionada) persistirLojas(empresaSelecionada, lojas);
+    void trocarEscopoLoja(codificarEscopoLojas(lojas));
   };
 
   const handleCarregarConfiguracaoEmpresa = async () => {
@@ -981,8 +1009,8 @@ export default function AnalisadorPage() {
               <span className="analisador-header-empresa">
                 <span className="analisador-header-empresa-sep" aria-hidden="true">·</span>
                 <span className="analisador-header-empresa-nome">{nomeEmpresaEfetivo}</span>
-                {lojaSelecionada && (
-                  <span className="analisador-header-empresa-loja"> · {lojaSelecionada}</span>
+                {lojasSelecionadas.length > 0 && (
+                  <span className="analisador-header-empresa-loja"> · {rotuloEscopoLoja}</span>
                 )}
               </span>
             )}
@@ -1041,7 +1069,7 @@ export default function AnalisadorPage() {
               <p style={{ margin: '0 0 1rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
                 A empresa <strong>{configPendente.empresa}</strong> tem configuração salva
                 {configPendente.loja ? (
-                  <> para a loja <strong>{configPendente.loja}</strong></>
+                  <> para o escopo <strong>{rotuloEscopoLoja}</strong></>
                 ) : (
                   <> para <strong>Todas as lojas</strong></>
                 )}
@@ -1093,7 +1121,7 @@ export default function AnalisadorPage() {
           <div className="glass-card glass-card-flat">
             <p className="analisador-hint" style={{ margin: 0 }}>
               {previa.linhas.toLocaleString('pt-BR')} linhas carregadas
-              {mostrarSeletorLoja && lojaSelecionada && ` · loja ${lojaSelecionada}`}
+              {mostrarSeletorLoja && lojasSelecionadas.length > 0 && ` · ${rotuloEscopoLoja}`}
               {!mostrarSeletorLoja && lojasDisponiveis.length === 1 && ` · loja ${lojasDisponiveis[0]}`}
               {previa.linhas_ignoradas > 0 && ` (${previa.linhas_ignoradas} ignoradas por Ano/Mês vazio)`}
               {previa.qtd_nao_harmonizados > 0 && ` · ${previa.qtd_nao_harmonizados} lançamentos sem descrição de produto`}
@@ -1129,12 +1157,13 @@ export default function AnalisadorPage() {
               <div className="analisador-campo">
                 <span>Loja</span>
                 <AnalisadorCombobox
-                  value={lojaSelecionada}
                   options={lojasDisponiveis}
-                  onChange={handleSelecionarLoja}
+                  multiple
+                  values={lojasSelecionadas}
+                  onMultipleChange={handleSelecionarLojas}
                   emptyLabel="Todas as lojas"
                   searchPlaceholder={lojasDisponiveis.length > 8 ? 'Buscar loja…' : false}
-                  aria-label="Loja"
+                  aria-label="Lojas"
                 />
               </div>
             )}

@@ -1,11 +1,15 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
-import { ChevronDown, Search } from 'lucide-react';
+import { Check, ChevronDown, Search } from 'lucide-react';
 
 interface AnalisadorComboboxProps {
-  value: string;
+  value?: string;
   options: string[];
-  onChange: (value: string) => void;
+  onChange?: (value: string) => void;
+  /** Ativa seleção múltipla sem alterar consumidores legados de valor único. */
+  multiple?: boolean;
+  values?: string[];
+  onMultipleChange?: (values: string[]) => void;
   /**
    * Rótulo da opção com value "" (ex.: Digitar manualmente / Todas as lojas).
    * Omitir ou `false` esconde a opção vazia (listas obrigatórias, ex.: granularidade).
@@ -42,14 +46,21 @@ function medirPainel(
   };
 }
 
+function mesmosValores(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((item, indice) => item === b[indice]);
+}
+
 /**
  * Combobox custom (não usa &lt;select&gt; nativo).
  * Visual alinhado a FilterBar: painel glass escuro, accent no hover/selecionado.
  */
 export function AnalisadorCombobox({
-  value,
+  value = '',
   options,
   onChange,
+  multiple = false,
+  values = [],
+  onMultipleChange,
   emptyLabel = false,
   searchPlaceholder = 'Buscar…',
   includeOrphanValue = false,
@@ -60,6 +71,8 @@ export function AnalisadorCombobox({
 }: AnalisadorComboboxProps) {
   const [aberto, setAberto] = useState(false);
   const [busca, setBusca] = useState('');
+  /** Seleção provisória: só sobe ao pai quando o painel fecha. */
+  const [valoresRascunho, setValoresRascunho] = useState<string[]>(values);
   const [painelPos, setPainelPos] = useState<{ top: number; left: number; width: number } | null>(null);
   /** Outside-click só após o ciclo do clique que abriu — evita fechar no mesmo gesto. */
   const [foraPronto, setForaPronto] = useState(false);
@@ -70,11 +83,15 @@ export function AnalisadorCombobox({
   const searchable = searchPlaceholder !== false;
   const emptyTexto = typeof emptyLabel === 'string' ? emptyLabel : '';
   const temEmpty = emptyTexto.length > 0;
+  const valoresAtivos = multiple && aberto ? valoresRascunho : values;
+  const valoresSelecionados = useMemo(() => new Set(valoresAtivos), [valoresAtivos]);
 
   const opcoesExtras = useMemo(() => {
-    if (!includeOrphanValue || !value || options.includes(value)) return [];
+    if (!includeOrphanValue) return [];
+    if (multiple) return valoresAtivos.filter((item) => item && !options.includes(item));
+    if (!value || options.includes(value)) return [];
     return [value];
-  }, [includeOrphanValue, value, options]);
+  }, [includeOrphanValue, multiple, value, valoresAtivos, options]);
 
   const todasOpcoes = useMemo(
     () => [...opcoesExtras, ...options],
@@ -91,14 +108,23 @@ export function AnalisadorCombobox({
   const mostraEmpty =
     temEmpty && (!termoBusca || emptyTexto.toLowerCase().includes(termoBusca));
 
-  const rotulo = value || emptyTexto || 'Selecionar…';
+  const rotulo = multiple
+    ? valoresAtivos.length === 0
+      ? emptyTexto || 'Selecionar…'
+      : valoresAtivos.length === 1
+        ? valoresAtivos[0]
+        : `${valoresAtivos.length} lojas selecionadas`
+    : value || emptyTexto || 'Selecionar…';
 
-  const fechar = () => {
+  const fechar = useCallback(() => {
+    if (multiple && !mesmosValores(valoresRascunho, values)) {
+      onMultipleChange?.(valoresRascunho);
+    }
     setAberto(false);
     setBusca('');
     setPainelPos(null);
     setForaPronto(false);
-  };
+  }, [multiple, onMultipleChange, valoresRascunho, values]);
 
   const atualizarPosicao = () => {
     const el = triggerRef.current;
@@ -145,8 +171,7 @@ export function AnalisadorCombobox({
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aberto]);
+  }, [aberto, fechar]);
 
   // Fecha ao clicar fora (portal e inline); registrado só no próximo tick
   useEffect(() => {
@@ -160,17 +185,30 @@ export function AnalisadorCombobox({
     };
     document.addEventListener('pointerdown', onPointerDown, true);
     return () => document.removeEventListener('pointerdown', onPointerDown, true);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [aberto, foraPronto]);
+  }, [aberto, fechar, foraPronto]);
 
   const selecionar = (nome: string) => {
     const scrollY = window.scrollY;
     const main = document.querySelector('.app-shell-main') as HTMLElement | null;
     const mainScroll = main?.scrollTop ?? 0;
-    fechar();
-    // Devolve foco ao trigger sem scroll jump
-    triggerRef.current?.focus({ preventScroll: true });
-    if (nome !== value) onChange(nome);
+    if (multiple) {
+      let proximos: string[];
+      if (!nome) {
+        proximos = [];
+      } else if (valoresSelecionados.has(nome)) {
+        proximos = valoresRascunho.filter((item) => item !== nome);
+      } else {
+        proximos = [...valoresRascunho, nome].sort((a, b) => a.localeCompare(b, 'pt-BR'));
+      }
+      // Marcar todas equivale ao escopo vazio "Todas as lojas".
+      if (options.length > 0 && proximos.length === options.length) proximos = [];
+      setValoresRascunho(proximos);
+    } else {
+      fechar();
+      // Devolve foco ao trigger sem scroll jump
+      triggerRef.current?.focus({ preventScroll: true });
+      if (nome !== value) onChange?.(nome);
+    }
     requestAnimationFrame(() => {
       window.scrollTo({
         top: scrollY,
@@ -191,6 +229,7 @@ export function AnalisadorCombobox({
     if (portal && triggerRef.current) {
       setPainelPos(medirPainel(triggerRef.current, direcao));
     }
+    if (multiple) setValoresRascunho(values);
     setBusca('');
     setAberto(true);
   };
@@ -217,6 +256,7 @@ export function AnalisadorCombobox({
       id={listboxId}
       className={`empresa-dropdown-panel${direcao === 'abaixo' ? ' is-abaixo' : ''}${portal ? ' is-portal' : ''}`}
       role="listbox"
+      aria-multiselectable={multiple || undefined}
       style={painelStyle}
       onClick={(e) => e.stopPropagation()}
       onMouseDown={(e) => {
@@ -250,27 +290,40 @@ export function AnalisadorCombobox({
           <button
             type="button"
             role="option"
-            aria-selected={value === ''}
-            className={`dropdown-menu-item empresa-dropdown-item is-padrao${value === '' ? ' is-selecionada is-selected' : ''}`}
+            aria-selected={multiple ? valoresAtivos.length === 0 : value === ''}
+            className={`dropdown-menu-item empresa-dropdown-item is-padrao${(multiple ? valoresAtivos.length === 0 : value === '') ? ' is-selecionada is-selected' : ''}`}
             onMouseDown={(e) => e.preventDefault()}
             onClick={() => selecionar('')}
           >
+            {multiple && (
+              <span className="analisador-combobox-check-slot" aria-hidden>
+                {valoresAtivos.length === 0 && <Check size={14} />}
+              </span>
+            )}
             {emptyTexto}
           </button>
         )}
-        {filtradas.map((nome) => (
-          <button
-            type="button"
-            key={nome}
-            role="option"
-            aria-selected={value === nome}
-            className={`dropdown-menu-item empresa-dropdown-item${value === nome ? ' is-selecionada is-selected' : ''}`}
-            onMouseDown={(e) => e.preventDefault()}
-            onClick={() => selecionar(nome)}
-          >
-            {nome}
-          </button>
-        ))}
+        {filtradas.map((nome) => {
+          const selecionada = multiple ? valoresSelecionados.has(nome) : value === nome;
+          return (
+            <button
+              type="button"
+              key={nome}
+              role="option"
+              aria-selected={selecionada}
+              className={`dropdown-menu-item empresa-dropdown-item${selecionada ? ' is-selecionada is-selected' : ''}`}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => selecionar(nome)}
+            >
+              {multiple && (
+                <span className="analisador-combobox-check-slot" aria-hidden>
+                  {selecionada && <Check size={14} />}
+                </span>
+              )}
+              {nome}
+            </button>
+          );
+        })}
         {todasOpcoes.length === 0 && (
           <div className="empresa-dropdown-vazio">Nenhuma opção disponível.</div>
         )}
@@ -297,7 +350,7 @@ export function AnalisadorCombobox({
         className="custom-select analisador-select custom-select-trigger"
         onClick={alternar}
       >
-        <span className={`custom-select-trigger-label${!value ? ' is-placeholder' : ''}`}>{rotulo}</span>
+        <span className={`custom-select-trigger-label${(multiple ? valoresAtivos.length === 0 : !value) ? ' is-placeholder' : ''}`}>{rotulo}</span>
         <ChevronDown size={14} className="custom-select-trigger-chevron" aria-hidden />
       </button>
 

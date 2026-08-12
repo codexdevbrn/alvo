@@ -92,6 +92,8 @@ export interface PreviaBase {
   lojas?: string[];
   /** Loja ativa no pedido (null/omitido = todas). */
   loja?: string | null;
+  /** Lojas efetivamente filtradas; vazio = todas. */
+  lojas_selecionadas?: string[];
 }
 
 export async function obterBase(

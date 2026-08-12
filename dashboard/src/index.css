@@ -4892,6 +4892,16 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.analisador-combobox-check-slot {
+  display: inline-flex;
+  width: 18px;
+  min-width: 18px;
+  align-items: center;
+  justify-content: center;
+  margin-right: 6px;
+  vertical-align: -2px;
+}
+
 /* ==========================================================================
    Monitoramento de empresas (/monitor)
    ========================================================================== */

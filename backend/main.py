@@ -350,9 +350,7 @@ def _caminho_config_empresa(empresa: str) -> str:
 
 def _chave_escopo_loja(loja: Optional[str]) -> str:
     """Chave de escopo: '' = todas as lojas; senão o nome da loja."""
-    if loja is None:
-        return ""
-    return str(loja).strip()
+    return _normalizar_loja(loja) or ""
 
 
 def _scopes_de_arquivo_generico(bruto: dict, campos_flat: frozenset[str]) -> dict[str, dict]:
@@ -1009,11 +1007,42 @@ def _carregar_base_empresa_sem_trava(empresa: str) -> tuple[pd.DataFrame, int]:
     return df, linhas_vazias
 
 
-def _normalizar_loja(loja: Optional[str]) -> Optional[str]:
+PREFIXO_ESCOPO_MULTILOJAS = "@lojas:"
+
+
+def _normalizar_lojas(loja: Optional[str]) -> list[str]:
+    """Converte o parâmetro legado `loja` em lista ordenada e sem duplicatas.
+
+    Uma loja continua sendo transportada pelo próprio nome. Duas ou mais usam
+    JSON prefixado, evitando colisões com nomes que contenham vírgula.
+    """
     if loja is None:
+        return []
+    bruto = str(loja).strip()
+    if not bruto:
+        return []
+    if not bruto.startswith(PREFIXO_ESCOPO_MULTILOJAS):
+        return [bruto]
+    try:
+        payload = json.loads(bruto[len(PREFIXO_ESCOPO_MULTILOJAS):])
+    except (TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="Seleção de lojas inválida.") from exc
+    if not isinstance(payload, list):
+        raise HTTPException(status_code=400, detail="Seleção de lojas inválida.")
+    nomes = {str(nome).strip() for nome in payload if str(nome).strip()}
+    return sorted(nomes, key=str.casefold)
+
+
+def _normalizar_loja(loja: Optional[str]) -> Optional[str]:
+    """Devolve chave canônica do escopo para cache, configuração e tags."""
+    nomes = _normalizar_lojas(loja)
+    if not nomes:
         return None
-    nome = str(loja).strip()
-    return nome or None
+    if len(nomes) == 1:
+        return nomes[0]
+    return PREFIXO_ESCOPO_MULTILOJAS + json.dumps(
+        nomes, ensure_ascii=False, separators=(",", ":"),
+    )
 
 
 def _normalizar_coluna_loja_inplace(df: pd.DataFrame) -> pd.DataFrame:
@@ -1033,14 +1062,14 @@ def _listar_lojas(df: pd.DataFrame) -> list[str]:
 
 
 def _filtrar_loja(df: pd.DataFrame, loja: Optional[str]) -> pd.DataFrame:
-    """Filtra pela coluna Loja (já normalizada). loja vazia/None = todas.
+    """Filtra uma ou mais lojas. Escopo vazio/None = todas.
 
     Sempre devolve cópia quando filtra, para não expor view do DF em cache.
     """
-    nome = _normalizar_loja(loja)
-    if not nome or df is None or df.empty or "Loja" not in df.columns:
+    nomes = _normalizar_lojas(loja)
+    if not nomes or df is None or df.empty or "Loja" not in df.columns:
         return df
-    return df.loc[df["Loja"] == nome].copy()
+    return df.loc[df["Loja"].isin(nomes)].copy()
 
 
 def _carregar_base(
@@ -1059,17 +1088,18 @@ def _carregar_base(
         df, linhas_vazias = _carregar_base_empresa(empresa.strip())
     else:
         df, linhas_vazias = _carregar_base_padrao()
-    nome = _normalizar_loja(loja)
-    if nome:
+    nomes = _normalizar_lojas(loja)
+    if nomes:
         if "Loja" not in df.columns:
-            raise HTTPException(status_code=400, detail=f"Loja '{nome}' não encontrada na base.")
-        mask = df["Loja"] == nome
-        if not bool(mask.any()):
+            raise HTTPException(status_code=400, detail="Base não possui coluna Loja para aplicar o filtro.")
+        existentes = set(df["Loja"].unique().tolist())
+        faltantes = [nome for nome in nomes if nome not in existentes]
+        if faltantes:
             raise HTTPException(
                 status_code=400,
-                detail=f"Loja '{nome}' não encontrada na base.",
+                detail=f"Loja(s) não encontrada(s) na base: {', '.join(faltantes)}.",
             )
-        filtrado = df.loc[mask]
+        filtrado = df.loc[df["Loja"].isin(nomes)]
         return (filtrado.copy() if copiar else filtrado), linhas_vazias
     # Sem filtro de loja: cópia defensiva para callers nunca mutarem o DF em cache.
     return (df.copy() if copiar else df), linhas_vazias
@@ -1085,10 +1115,12 @@ def obter_base(
     df_completo, linhas_vazias = _carregar_base(empresa, copiar=False)
     lojas = _listar_lojas(df_completo)
     loja_norm = _normalizar_loja(loja)
-    if loja_norm and loja_norm not in lojas:
+    lojas_selecionadas = _normalizar_lojas(loja_norm)
+    faltantes = [nome for nome in lojas_selecionadas if nome not in lojas]
+    if faltantes:
         raise HTTPException(
             status_code=400,
-            detail=f"Loja '{loja_norm}' não encontrada na base.",
+            detail=f"Loja(s) não encontrada(s) na base: {', '.join(faltantes)}.",
         )
     df = _filtrar_loja(df_completo, loja_norm) if loja_norm else df_completo
 
@@ -1102,6 +1134,7 @@ def obter_base(
         "empresa": empresa.strip() if empresa and empresa.strip() else None,
         "lojas": lojas,
         "loja": loja_norm,
+        "lojas_selecionadas": lojas_selecionadas,
     }
 
 
@@ -2667,26 +2700,28 @@ CHAVES_ALVOS = frozenset({"mais_atacado", "liquidez"})
 def _filtrar_loja_coluna(
     df: pd.DataFrame, loja: Optional[str], coluna: str, origem: str,
 ) -> pd.DataFrame:
-    """Filtra `df` por `coluna` == loja. loja vazia/None = todas (sem filtro).
+    """Filtra `df` por uma ou mais lojas. Escopo vazio = todas.
 
     Usado nos Alvos, que leem arquivos próprios da fonte (nomes de coluna de loja
     diferentes do schema canônico: `Loja` no estoque, `Nome_Loja` nas vendas).
     """
-    nome = _normalizar_loja(loja)
-    if not nome:
+    nomes = _normalizar_lojas(loja)
+    if not nomes:
         return df
     if df is None or df.empty or coluna not in df.columns:
         raise HTTPException(
             status_code=400,
             detail=f"{origem} não tem a coluna '{coluna}' para filtrar por loja.",
         )
-    filtrado = df.loc[df[coluna].fillna("").astype(str).str.strip() == nome].copy()
-    if filtrado.empty:
+    valores = df[coluna].fillna("").astype(str).str.strip()
+    existentes = set(valores.unique().tolist())
+    faltantes = [nome for nome in nomes if nome not in existentes]
+    if faltantes:
         raise HTTPException(
             status_code=400,
-            detail=f"Loja '{nome}' não encontrada em {origem}.",
+            detail=f"Loja(s) não encontrada(s) em {origem}: {', '.join(faltantes)}.",
         )
-    return filtrado
+    return df.loc[valores.isin(nomes)].copy()
 
 
 def _analises_alvos(
