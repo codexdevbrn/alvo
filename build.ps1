@@ -17,12 +17,17 @@
     Reaproveita o dashboard/dist existente. Só para iterar no empacotamento sem
     esperar o build do Vite — nunca para gerar release.
 
+.PARAMETER Notas
+    Uma linha sobre o que mudou, exibida ao usuário junto do aviso de atualização.
+    Vazio deixa o aviso sem explicação, o que é pior para quem vai clicar.
+
 .EXAMPLE
-    .\build.ps1
+    .\build.ps1 -Notas "Caminhos padrão: máquina nova não precisa configurar."
 #>
 [CmdletBinding()]
 param(
-    [switch]$PularFrontend
+    [switch]$PularFrontend,
+    [string]$Notas = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -91,8 +96,9 @@ $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLower()
     sha256   = $hash
     tamanho  = $info.Length
     data     = (Get-Date -Format 'yyyy-MM-dd')
-    notas    = ''
+    notas    = $Notas
 } | ConvertTo-Json | Set-Content -Path (Join-Path $release 'version.json') -Encoding UTF8
+if (-not $Notas) { Write-Warning "Release sem notas. Use -Notas para explicar ao usuário o que muda." }
 
 Etapa "Instalador (Inno Setup)"
 # Opcional de propósito: o zip acima já é uma distribuição completa. Sem o Inno
