@@ -18,6 +18,10 @@ Os dois módulos compartilham **dois caminhos** (chaves SQLite em `config_app`):
 | `caminho_fonte_dados` | **Somente leitura absoluta** | `/{cliente}/BI/{cliente}_MOVIMENTO_ATUAL.*` (ou `_MOVIMENTO`) + `{cliente}_PRODUTO.*` |
 | `caminho_trabalho` | Escrita | `/{cliente}/Base.csv`, `config.json`, `harm.xlsx`, backups |
 
+**Caminhos padrão** (`backend/caminhos_padrao.py`): quando nada foi configurado, os três caminhos são resolvidos dentro do OneDrive corporativo — `Dados Alvos` (fonte), `analisador` (trabalho) e `Prisma\Atualizações` (canal), todos sob `<OneDrive>\01 - Marco + Monitores\Ecossistema-Monitoria`. A raiz local do OneDrive é descoberta em tempo de execução (`%OneDriveCommercial%`, com varredura do perfil como reserva), porque ela contém o nome do usuário do Windows e não pode ser fixada no código. Assim uma máquina nova funciona sem ninguém digitar caminho. O que o usuário salvar em Configurações tem precedência, e só pastas que existem são sugeridas.
+
+Consequência a ter em mente: a pasta de trabalho padrão é **compartilhada**. Isso é intencional — é nela que o lote noturno grava os summaries, e apontar uma máquina para pasta local vazia faria cada empresa ser gerada na hora (a Altese leva ~219 s contra ~1 s lendo o summary pronto). Em troca, uma instância rodando do fonte sem configuração também escreve lá; para experimentar sem risco, configure uma pasta de trabalho local.
+
 Regra inviolável: o app **nunca** cria, altera, apaga ou renomeia nada sob a pasta fonte. Toda escrita (normalização, harmonização, config) vai só para a pasta de trabalho. Fonte e trabalho não podem ser a mesma pasta nem uma dentro da outra — o backend recusa antes de qualquer `makedirs`/`to_csv`. O CLI `normalizar_base.py` exige `--trabalho` e também recusa gravar sob a fonte; `harmonizar_descricoes.py` recusa pastas que contenham `BI/`. Endpoints: `GET/POST /api/dashboard/caminho-fonte-dados` e `.../caminho-trabalho` (dash, público); `GET/POST /api/config/caminho-fonte-dados` e `.../caminho-trabalho` (Analisador, autenticado). Aliases legados (`caminho-dados`, `caminho-empresas`) ainda redirecionam para fonte/trabalho.
 
 ## Comandos

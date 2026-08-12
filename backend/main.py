@@ -33,6 +33,7 @@ from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 import atualizacoes
+import caminhos_padrao
 import db
 import versao
 from auth import criar_token, exigir_login
@@ -237,9 +238,19 @@ def _esta_sob(caminho: str, raiz: str) -> bool:
 
 
 def _resolver_config_dir(
-    chaves: tuple[str, ...], *, usar_padrao_base_clientes: bool = False,
+    chaves: tuple[str, ...],
+    *,
+    usar_padrao_base_clientes: bool = False,
+    padrao_onedrive=None,
 ) -> Optional[str]:
-    """Primeiro caminho configurado que existe como pasta; senão o valor bruto.
+    """Primeiro caminho configurado que existe como pasta; senão o padrão; senão
+    o valor bruto configurado.
+
+    `padrao_onedrive` é a função de `caminhos_padrao` correspondente. Ela entra
+    antes do fallback `base-clientes/` porque é o lugar real dos dados: uma
+    instalação nova precisa funcionar sem ninguém digitar caminho, e a pasta do
+    OneDrive corporativo é a mesma em toda máquina da empresa (só a raiz local
+    muda, e ela é resolvida em tempo de execução).
 
     O fallback `base-clientes/` só é usado quando `usar_padrao_base_clientes=True`
     (pasta fonte). A pasta de trabalho NÃO herda esse padrão — senão fonte e
@@ -252,6 +263,12 @@ def _resolver_config_dir(
             ultimo = caminho
             if os.path.isdir(caminho):
                 return caminho
+    if padrao_onedrive is not None:
+        # A função só devolve pasta que existe, então não há risco de apontar o
+        # app para um caminho inválido.
+        padrao = padrao_onedrive()
+        if padrao:
+            return padrao
     if usar_padrao_base_clientes and os.path.isdir(CAMINHO_BASE_CLIENTES_PADRAO):
         return CAMINHO_BASE_CLIENTES_PADRAO
     return ultimo
@@ -261,6 +278,7 @@ def _resolver_caminho_fonte() -> Optional[str]:
     return _resolver_config_dir(
         (CHAVE_CAMINHO_FONTE_DADOS, CHAVE_CAMINHO_DADOS_DASHBOARD),
         usar_padrao_base_clientes=True,
+        padrao_onedrive=caminhos_padrao.fonte_dados,
     )
 
 
@@ -268,7 +286,21 @@ def _resolver_caminho_trabalho() -> Optional[str]:
     return _resolver_config_dir(
         (CHAVE_CAMINHO_TRABALHO, CHAVE_CAMINHO_EMPRESAS),
         usar_padrao_base_clientes=False,
+        padrao_onedrive=caminhos_padrao.trabalho,
     )
+
+
+def _resolver_caminho_atualizacoes() -> Optional[str]:
+    """Canal de atualização: o configurado, senão o padrão do OneDrive.
+
+    Diferente dos outros dois, aceita ficar vazio de propósito — canal em branco
+    é como se desliga a verificação de atualizações. Por isso o valor salvo vazio
+    NÃO cai no padrão: se o usuário limpou o campo, foi porque quis.
+    """
+    salvo = db.obter_config_app(CHAVE_CAMINHO_ATUALIZACOES)
+    if salvo is not None:
+        return salvo
+    return caminhos_padrao.atualizacoes()
 
 
 def _exigir_caminho_fonte() -> str:
@@ -1608,7 +1640,7 @@ def definir_caminho_trabalho(corpo: CaminhoPasta, usuario: str = Depends(exigir_
 
 @app.get("/api/config/caminho-atualizacoes")
 def obter_caminho_atualizacoes(usuario: str = Depends(exigir_login)):
-    return {"caminho": db.obter_config_app(CHAVE_CAMINHO_ATUALIZACOES)}
+    return {"caminho": _resolver_caminho_atualizacoes()}
 
 
 @app.post("/api/config/caminho-atualizacoes")
@@ -1636,8 +1668,7 @@ def obter_status_atualizacao(usuario: str = Depends(exigir_login)):
     tem token. Vale registrar para o T5, porque aplicar uma atualização é
     destrutivo e não deveria depender só de o servidor escutar em 127.0.0.1.
     """
-    canal = db.obter_config_app(CHAVE_CAMINHO_ATUALIZACOES)
-    return atualizacoes.consultar_canal(canal).como_dicionario()
+    return atualizacoes.consultar_canal(_resolver_caminho_atualizacoes()).como_dicionario()
 
 
 #: Cabeçalhos que um proxy reverso acrescenta ao repassar a requisição. A
@@ -1714,7 +1745,7 @@ def aplicar_atualizacao(request: Request, usuario: str = Depends(exigir_login)):
             detail="A atualização automática só funciona na versão empacotada (.exe).",
         )
 
-    status = atualizacoes.consultar_canal(db.obter_config_app(CHAVE_CAMINHO_ATUALIZACOES))
+    status = atualizacoes.consultar_canal(_resolver_caminho_atualizacoes())
     if not status.atualizavel:
         raise HTTPException(status_code=400, detail=status.motivo)
 
