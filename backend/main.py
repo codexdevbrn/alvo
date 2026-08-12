@@ -41,7 +41,7 @@ from dashboard_summary import (
     summary_dashboard_atualizado,
 )
 from engine import analise_funil as af
-from engine.recursos import pasta_web
+from engine.recursos import pasta_base_execucao, pasta_web
 from engine.exportadores_pdf_word import exportar_relatorio_pdf
 from exportar_html import exportar_relatorio_html
 from monitor_empresas import METRICAS_MONITOR, montar_card, obter_resumo_monitor
@@ -55,9 +55,19 @@ from exportar_excel import (
 # Raiz do projeto, um nível acima de backend/. base_de_dados.xlsx e os
 # scripts generalistas de normalização/harmonização (normalizar_base.py,
 # harmonizar_descricoes.py) ficam lá.
-RAIZ_PROJETO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if RAIZ_PROJETO not in sys.path:
-    sys.path.insert(0, RAIZ_PROJETO)
+#
+# Congelado, `__file__` aponta para dentro do bundle (`_internal/`), que é
+# somente leitura e é substituído a cada atualização — não serve para achar
+# dados. `pasta_base_execucao()` devolve a pasta do executável, onde
+# base_de_dados.xlsx e base-clientes/ ficam ao lado dele, sobrevivendo aos
+# updates. Os módulos de normalização vêm embutidos, então o sys.path só
+# precisa de ajuste rodando do fonte.
+if getattr(sys, "frozen", False):
+    RAIZ_PROJETO = pasta_base_execucao()
+else:
+    RAIZ_PROJETO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if RAIZ_PROJETO not in sys.path:
+        sys.path.insert(0, RAIZ_PROJETO)
 
 from normalizar_base import (  # noqa: E402
     ErroNormalizacao,
@@ -2961,13 +2971,36 @@ PASTA_WEB = os.path.realpath(pasta_web())
 INDEX_WEB = os.path.join(PASTA_WEB, "index.html")
 
 
-def _arquivo_do_build(caminho_relativo: str) -> Optional[str]:
-    """Caminho absoluto do arquivo dentro do build, ou None se não existir ou
-    escapar da pasta (ex.: `../../dados_locais/app.db`)."""
-    destino = os.path.realpath(os.path.join(PASTA_WEB, caminho_relativo))
-    if destino != PASTA_WEB and not destino.startswith(PASTA_WEB + os.sep):
+def _arquivo_sob(raiz: str, caminho_relativo: str) -> Optional[str]:
+    """Caminho absoluto do arquivo dentro de `raiz`, ou None se não existir ou
+    escapar dela (ex.: `../../dados_locais/app.db`)."""
+    destino = os.path.realpath(os.path.join(raiz, caminho_relativo))
+    if destino != raiz and not destino.startswith(raiz + os.sep):
         return None
     return destino if os.path.isfile(destino) else None
+
+
+# Pasta `data/` ao lado do executável, para o `summary.json` do modo estático do
+# Dashboard: são ~20 MB de retrato de uma base, que não cabem no pacote (todo
+# release engordaria carregando dado congelado). Aqui é opcional, sobrevive às
+# atualizações e pode ser trocado sem novo release — mesmo tratamento que
+# `base_de_dados.xlsx` já recebe.
+PASTA_DADOS_ESTATICOS = os.path.realpath(os.path.join(RAIZ_PROJETO, "data"))
+PREFIXO_DADOS_ESTATICOS = "data/"
+
+
+def _arquivo_estatico(caminho_relativo: str) -> Optional[str]:
+    """Procura o arquivo no build; para `data/...`, também ao lado do executável.
+
+    A segunda raiz é restrita a `data/` de propósito: liberar a pasta do
+    executável inteira serviria `dados_locais/app.db`, com os hashes de senha.
+    """
+    do_build = _arquivo_sob(PASTA_WEB, caminho_relativo)
+    if do_build or not caminho_relativo.startswith(PREFIXO_DADOS_ESTATICOS):
+        return do_build
+    return _arquivo_sob(
+        PASTA_DADOS_ESTATICOS, caminho_relativo[len(PREFIXO_DADOS_ESTATICOS):]
+    )
 
 
 if os.path.isfile(INDEX_WEB):
@@ -2979,7 +3012,7 @@ if os.path.isfile(INDEX_WEB):
         if caminho == "api" or caminho.startswith("api/"):
             raise HTTPException(status_code=404, detail="Rota não encontrada.")
 
-        arquivo = _arquivo_do_build(caminho) if caminho else None
+        arquivo = _arquivo_estatico(caminho) if caminho else None
         if arquivo:
             return FileResponse(arquivo)
 

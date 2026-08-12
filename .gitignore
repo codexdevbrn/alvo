@@ -29,3 +29,8 @@ PrismSystem/
 
 # Logs do agendador noturno
 logs_agendador/
+
+# Artefatos de empacotamento (PyInstaller / release)
+dist_pyinstaller/
+build_pyinstaller/
+dist_release/
