@@ -56,6 +56,9 @@ hiddenimports = [
     # Engines de leitura/escrita que pandas importa sob demanda.
     "openpyxl",
     "openpyxl.cell._writer",
+    # Extensão compilada resolvida por nome pelo pandas (engine="calamine"), então
+    # a análise estática não a encontra sozinha.
+    "python_calamine",
 ]
 
 # Pesados e sem uso aqui. tkinter em especial arrasta DLLs de GUI inteiras.
