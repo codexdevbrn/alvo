@@ -119,8 +119,20 @@ function Sparkline({ pontos, moeda }: { pontos: PontoSparkline[]; moeda: boolean
             // Mostra ~4 marcas: com 12 períodos os rótulos se sobrepõem.
             interval={Math.max(0, Math.ceil(pontos.length / 4) - 1)}
           />
-          {/* Escondido, só para reservar folga vertical aos rótulos de valor. */}
-          <YAxis hide domain={[0, (max: number) => max * 1.3]} />
+          {/* Escondido, e com domínio ajustado à faixa dos dados em vez de começar
+              no zero: com base zero, uma série entre 4,3M e 6,3M ocupa a metade de
+              cima de uma escala de 0 a 8,2M e vira quase uma reta — a variação, que
+              é a razão do gráfico existir, desaparece. A folga embaixo é maior que
+              em cima porque os rótulos de valor alternam acima/abaixo do ponto.
+              Os números absolutos ficam nos rótulos, então a base não-zero não
+              esconde informação. */}
+          <YAxis
+            hide
+            domain={[
+              (min: number) => min - (min > 0 ? min * 0.35 : 0),
+              (max: number) => max * 1.12,
+            ]}
+          />
           <Tooltip
             content={<TooltipSparkline moeda={moeda} />}
             cursor={{ stroke: 'rgba(255,255,255,0.18)', strokeWidth: 1 }}
@@ -136,7 +148,12 @@ function Sparkline({ pontos, moeda }: { pontos: PontoSparkline[]; moeda: boolean
             // de quantos meses a linha cobre.
             dot={{ r: 2, fill: COR_ANO_RECENTE, strokeWidth: 0 }}
             activeDot={{ r: 3.5, fill: '#fff', stroke: COR_ANO_RECENTE, strokeWidth: 2 }}
-            label={(props: object) => <RotuloIntercalado {...props} moeda={moeda} />}
+            // `total` explícito: o Recharts não o passa no render prop, e sem ele
+            // `ultimo` era sempre falso — o último ponto, que é o número que se lê
+            // primeiro, ficava sem rótulo sempre que a série tinha tamanho par.
+            label={(props: object) => (
+              <RotuloIntercalado {...props} total={pontos.length} moeda={moeda} />
+            )}
           />
         </AreaChart>
       </ResponsiveContainer>

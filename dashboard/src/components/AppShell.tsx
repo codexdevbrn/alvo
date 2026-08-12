@@ -16,7 +16,8 @@ import {
   PanelLeftOpen,
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { getToken, clearToken, obterStatusAtualizacao } from '../api/client';
+import { getToken, clearToken, obterStatusAtualizacao, type StatusAtualizacao } from '../api/client';
+import { BannerAtualizacao } from './BannerAtualizacao';
 import { SidebarEmpresaSelect } from './SidebarEmpresaSelect';
 
 const URL_CARTEIRA = 'http://monitor-2d/';
@@ -110,7 +111,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   // No mobile a sidebar é uma barra de topo estática e sempre mostra os rótulos.
   const colapsado = collapsed && !isMobile;
   const mainRef = useRef<HTMLElement>(null);
-  const [avisoAtualizacao, setAvisoAtualizacao] = useState<string | undefined>();
+  const [statusAtualizacao, setStatusAtualizacao] = useState<StatusAtualizacao | null>(null);
 
   // Aviso de versão nova em qualquer tela, e não só dentro de Configurações:
   // quem nunca abre aquela tela nunca saberia que existe atualização. O backend
@@ -122,7 +123,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
     void obterStatusAtualizacao()
       .then((status) => {
         if (cancelado || !status.atualizavel) return;
-        setAvisoAtualizacao(`Versão ${status.versao_disponivel} disponível`);
+        setStatusAtualizacao(status);
       })
       .catch(() => { /* sem aviso */ });
     return () => { cancelado = true; };
@@ -247,7 +248,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
             label="Configurações"
             collapsed={colapsado}
             ativo={emConfig}
-            aviso={avisoAtualizacao}
+            aviso={statusAtualizacao?.atualizavel ? `Versão ${statusAtualizacao.versao_disponivel} disponível` : undefined}
             onClick={() => navigate('/config')}
           />
           <NavItem
@@ -277,6 +278,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
       </aside>
 
       <main ref={mainRef} className="app-shell-main">
+        {statusAtualizacao && <BannerAtualizacao status={statusAtualizacao} />}
         {children}
       </main>
     </div>

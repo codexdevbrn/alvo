@@ -5234,8 +5234,8 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
    altura do contêiner, e um min-height maior que o height vence em silêncio — foi o
    que manteve o gráfico em 7,4rem quando só o height mudou. */
 .monitor-sparkline {
-  height: 5.6rem;
-  min-height: 5.6rem;
+  height: 6.6rem;
+  min-height: 6.6rem;
   margin: 0.35rem -0.35rem 0;
   color: var(--text-muted);
   font-size: 0.72rem;
@@ -5412,4 +5412,71 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   width: auto;
   min-width: 6.5rem;
   margin-left: 0.4rem;
+}
+
+/* ==========================================================================
+   Faixa de atualização disponível (topo de qualquer tela)
+   ========================================================================== */
+
+/* Cor de acento em vez de vermelho/amarelo de alerta: é uma oferta, não um
+   problema. Fica no fluxo do conteúdo, e não fixa no topo, para não roubar
+   espaço permanente de quem ainda não quer atualizar. */
+.banner-atualizacao {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-bottom: 1rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid rgba(218, 187, 108, 0.45);
+  border-radius: 0.75rem;
+  background: var(--accent-soft);
+}
+
+.banner-atualizacao-texto {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.banner-atualizacao-texto strong {
+  color: var(--accent-hover);
+  font-size: 0.9rem;
+}
+
+.banner-atualizacao-texto span {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.banner-atualizacao-erro {
+  color: var(--danger) !important;
+}
+
+.banner-atualizacao-acao {
+  flex: 0 0 auto;
+}
+
+.banner-atualizacao-fechar {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem;
+  border: 0;
+  border-radius: 0.4rem;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.banner-atualizacao-fechar:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+@media (max-width: 640px) {
+  .banner-atualizacao { flex-wrap: wrap; }
+  .banner-atualizacao-acao { width: 100%; justify-content: center; }
 }
