@@ -616,6 +616,19 @@ export async function obterStatusAtualizacao(): Promise<StatusAtualizacao> {
   return tratarResposta(res);
 }
 
+/**
+ * Dispara a troca da instalação. O backend responde e então se encerra, por isso
+ * quem chama deve tratar a perda de conexão a seguir como esperada, não como
+ * falha — o app volta sozinho em alguns instantes.
+ */
+export async function aplicarAtualizacao(): Promise<{ versao: string; mensagem: string }> {
+  const res = await fetch('/api/atualizacoes/aplicar', {
+    method: 'POST',
+    headers: authHeaders(),
+  });
+  return tratarResposta(res);
+}
+
 /** Força renormalizar BI → Base.csv e limpar cache da empresa. */
 export async function regenerarBaseEmpresa(
   empresa: string,

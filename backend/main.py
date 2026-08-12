@@ -8,6 +8,8 @@ import logging
 import os
 import re
 import secrets
+import shutil
+import subprocess
 import unicodedata
 import sys
 import tempfile
@@ -24,7 +26,7 @@ logger = logging.getLogger("uvicorn.error")
 
 import pandas as pd
 import numpy as np
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
@@ -1636,6 +1638,154 @@ def obter_status_atualizacao(usuario: str = Depends(exigir_login)):
     """
     canal = db.obter_config_app(CHAVE_CAMINHO_ATUALIZACOES)
     return atualizacoes.consultar_canal(canal).como_dicionario()
+
+
+#: Cabeçalhos que um proxy reverso acrescenta ao repassar a requisição. A
+#: presença de qualquer um deles denuncia que o pedido não nasceu nesta máquina,
+#: mesmo chegando com IP de loopback.
+CABECALHOS_DE_PROXY = ("x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded")
+
+
+def _exigir_origem_local(request: Request) -> None:
+    """Recusa a requisição que não nasceu nesta máquina.
+
+    Aplicar uma atualização troca os arquivos do disco onde este processo roda e
+    reinicia o serviço — é uma ação de máquina local, não de rede. O uvicorn
+    escutar em 127.0.0.1 não basta como fronteira: em produção o Apache do XAMPP
+    escuta na porta 80 de todas as interfaces e faz `ProxyPass /api` para
+    127.0.0.1:8003, então qualquer PC da rede alcança a API — e o login está
+    desativado (ver auth.LOGIN_DESATIVADO). Sem esta checagem, um curl de
+    qualquer máquina derrubaria e substituiria a instalação no meio do dia.
+
+    Preferido a exigir token porque não depende de trocar a senha padrão
+    (admin/admin123 vai embutida no pacote) nem de um fluxo de login que a
+    interface hoje não tem. Se o login voltar, os dois somam.
+    """
+    cliente = request.client.host if request.client else None
+    if cliente not in ("127.0.0.1", "::1"):
+        raise HTTPException(
+            status_code=403,
+            detail="A atualização só pode ser aplicada na própria máquina do Prisma.",
+        )
+    for cabecalho in CABECALHOS_DE_PROXY:
+        if cabecalho in request.headers:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "A atualização só pode ser aplicada na própria máquina do "
+                    "Prisma, sem passar por proxy."
+                ),
+            )
+
+
+def _caminho_atualizador() -> Optional[str]:
+    """Executável (ou script) que faz a troca dos arquivos.
+
+    Precisa ser um processo separado: no Windows um executável em uso não pode
+    sobrescrever a si mesmo.
+    """
+    if getattr(sys, "frozen", False):
+        caminho = os.path.join(pasta_base_execucao(), "atualizador.exe")
+        return caminho if os.path.isfile(caminho) else None
+    caminho = os.path.join(RAIZ_PROJETO, "atualizador", "atualizador.py")
+    return caminho if os.path.isfile(caminho) else None
+
+
+@app.post("/api/atualizacoes/aplicar")
+def aplicar_atualizacao(request: Request, usuario: str = Depends(exigir_login)):
+    """Valida o pacote, entrega a troca ao atualizador e encerra este processo."""
+    _exigir_origem_local(request)
+
+    if not getattr(sys, "frozen", False):
+        # Rodando do fonte não há o que substituir: aplicar aqui sobrescreveria a
+        # árvore de desenvolvimento com um build empacotado.
+        raise HTTPException(
+            status_code=400,
+            detail="A atualização automática só funciona na versão empacotada (.exe).",
+        )
+
+    status = atualizacoes.consultar_canal(db.obter_config_app(CHAVE_CAMINHO_ATUALIZACOES))
+    if not status.atualizavel:
+        raise HTTPException(status_code=400, detail=status.motivo)
+
+    atualizador = _caminho_atualizador()
+    if not atualizador:
+        raise HTTPException(
+            status_code=500,
+            detail="atualizador.exe não foi encontrado ao lado do Prisma.",
+        )
+
+    pasta_temporaria = tempfile.mkdtemp(prefix="prisma-update-")
+    pacote, erro = atualizacoes.preparar_pacote(status, pasta_temporaria)
+    if erro:
+        shutil.rmtree(pasta_temporaria, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=erro)
+
+    instalacao = pasta_base_execucao()
+
+    # O atualizador precisa rodar de FORA da pasta que vai substituir. Rodando de
+    # dentro, o Windows mantém handle aberto no próprio binário em execução e na
+    # pasta de trabalho do processo, e o rename da instalação falha com
+    # WinError 32 ("o arquivo já está sendo usado por outro processo"). Copiar
+    # para o temporário e apontar a cwd para lá solta os dois handles.
+    try:
+        atualizador_local = shutil.copy2(atualizador, pasta_temporaria)
+    except OSError as exc:
+        shutil.rmtree(pasta_temporaria, ignore_errors=True)
+        raise HTTPException(
+            status_code=500, detail=f"Não foi possível preparar o atualizador: {exc}"
+        )
+
+    comando = [
+        atualizador_local,
+        "--pid", str(os.getpid()),
+        "--zip", pacote,
+        "--destino", instalacao,
+        "--versao", status.versao_disponivel or "",
+    ]
+
+    logger.info("Aplicando atualização para %s: %s", status.versao_disponivel, comando)
+    try:
+        subprocess.Popen(
+            comando,
+            cwd=pasta_temporaria,
+            close_fds=True,
+            # CREATE_NEW_CONSOLE: o atualizador precisa sobreviver à morte deste
+            # processo — que é justamente o que ele espera acontecer — e mostrar o
+            # andamento da troca. DETACHED_PROCESS também desacopla, mas deixa uma
+            # aplicação de console sem console, e aí o bootloader do PyInstaller
+            # morre antes de rodar (foi o que aconteceu com o religamento).
+            creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+        )
+    except OSError as exc:
+        shutil.rmtree(pasta_temporaria, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"Não foi possível iniciar o atualizador: {exc}")
+
+    return Response(
+        content=json.dumps(
+            {
+                "ok": True,
+                "versao": status.versao_disponivel,
+                "mensagem": (
+                    "Atualização iniciada. O Prisma vai fechar e reabrir sozinho "
+                    "em alguns instantes."
+                ),
+            }
+        ),
+        media_type="application/json",
+        # Encerrar só depois da resposta ir embora, senão o navegador mostra erro
+        # de conexão em vez da mensagem. O atualizador está esperando este PID
+        # morrer para começar.
+        background=BackgroundTask(_encerrar_para_atualizar),
+    )
+
+
+def _encerrar_para_atualizar() -> None:
+    time.sleep(1.0)
+    logger.info("Encerrando para a atualização assumir.")
+    # os._exit em vez de sys.exit: já estamos numa task de background, e uma
+    # exceção de saída aqui seria capturada pelo servidor em vez de encerrá-lo.
+    os._exit(0)
 
 
 class AguardandoBaseDadosBody(BaseModel):

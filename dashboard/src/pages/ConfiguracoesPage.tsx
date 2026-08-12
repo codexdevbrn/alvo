@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { FolderOpen, Loader2, Pencil, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
+import { Download, FolderOpen, Loader2, Pencil, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
 import { NumberStepper } from '../components/analisador/NumberStepper';
 import { PastaPickerModal } from '../components/PastaPickerModal';
@@ -12,6 +12,7 @@ import {
   obterAguardandoBaseDados,
   obterCaminhoFonteDados,
   obterCaminhoTrabalho,
+  aplicarAtualizacao,
   definirCaminhoAtualizacoes,
   obterCaminhoAtualizacoes,
   obterStatusAtualizacao,
@@ -83,6 +84,7 @@ export default function ConfiguracoesPage() {
   const [caminhoAtualizacoes, setCaminhoAtualizacoes] = useState('');
   const [statusAtualizacao, setStatusAtualizacao] = useState<StatusAtualizacao | null>(null);
   const [verificandoAtualizacao, setVerificandoAtualizacao] = useState(false);
+  const [aplicandoAtualizacao, setAplicandoAtualizacao] = useState(false);
   const [feedbackAtualizacao, setFeedbackAtualizacao] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
   const [feedbackDados, setFeedbackDados] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
   const [aguardandoBaseDados, setAguardandoBaseDados] = useState(false);
@@ -297,6 +299,21 @@ export default function ConfiguracoesPage() {
       setCaminhoAtualizacoes(caminho);
     }
     setBuscando(null);
+  };
+
+  const aplicar = async () => {
+    setAplicandoAtualizacao(true);
+    setFeedbackAtualizacao(null);
+    try {
+      const { mensagem } = await aplicarAtualizacao();
+      setFeedbackAtualizacao({ tipo: 'ok', texto: mensagem });
+      // O backend se encerra logo após responder, então daqui para frente não há
+      // mais nada a fazer nesta aba: o atualizador religa o app e o usuário
+      // recarrega. Deixar o botão travado evita um segundo clique inútil.
+    } catch (erro) {
+      setFeedbackAtualizacao({ tipo: 'erro', texto: (erro as Error).message });
+      setAplicandoAtualizacao(false);
+    }
   };
 
   /** Salva o canal e já consulta, para o usuário ver o resultado num clique. */
@@ -540,7 +557,11 @@ export default function ConfiguracoesPage() {
             )}
 
             {feedbackAtualizacao && (
-              <p className="config-page-feedback" style={{ color: '#f43f5e' }} role="alert">
+              <p
+                className="config-page-feedback"
+                style={{ color: feedbackAtualizacao.tipo === 'erro' ? '#f43f5e' : '#34d399' }}
+                role={feedbackAtualizacao.tipo === 'erro' ? 'alert' : 'status'}
+              >
                 {feedbackAtualizacao.texto}
               </p>
             )}
@@ -557,6 +578,19 @@ export default function ConfiguracoesPage() {
                   : <RefreshCw size={14} />}
                 Salvar e verificar
               </button>
+              {statusAtualizacao?.atualizavel && (
+                <button
+                  type="button"
+                  className="analisador-btn analisador-btn-pri"
+                  onClick={() => void aplicar()}
+                  disabled={verificandoAtualizacao || aplicandoAtualizacao}
+                >
+                  {aplicandoAtualizacao
+                    ? <Loader2 size={14} className="dashboard-filter-spinner" />
+                    : <Download size={14} />}
+                  Atualizar para {statusAtualizacao.versao_disponivel}
+                </button>
+              )}
             </div>
           </section>
 

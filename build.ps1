@@ -63,6 +63,17 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller falhou." }
 $pacote = Join-Path $distPy 'Prisma'
 if (-not (Test-Path (Join-Path $pacote 'Prisma.exe'))) { throw "Prisma.exe não foi gerado." }
 
+Etapa "PyInstaller (atualizador)"
+# Empacotado separado porque no Windows um executável em uso não sobrescreve a si
+# mesmo. Vai para dentro do pacote: é o Prisma.exe que o invoca, ao seu lado.
+python -m PyInstaller (Join-Path $raiz 'atualizador.spec') --noconfirm `
+    --distpath $distPy --workpath (Join-Path $raiz 'build_pyinstaller')
+if ($LASTEXITCODE -ne 0) { throw "PyInstaller do atualizador falhou." }
+
+$atualizador = Join-Path $distPy 'atualizador.exe'
+if (-not (Test-Path $atualizador)) { throw "atualizador.exe não foi gerado." }
+Copy-Item $atualizador -Destination $pacote -Force
+
 Etapa "Empacotando release"
 $release = Join-Path $raiz 'dist_release'
 New-Item -ItemType Directory -Force -Path $release | Out-Null

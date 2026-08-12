@@ -2,10 +2,13 @@
 OneDrive produz na prática (placeholder não baixado, sync pela metade)."""
 
 import json
+import os
 
 import pytest
+from fastapi import HTTPException
 
 import atualizacoes
+import main
 from atualizacoes import consultar_canal
 from versao import VERSAO
 
@@ -134,3 +137,92 @@ def test_todos_os_campos_obrigatorios_sao_checados(tmp_path, campo):
     status = consultar_canal(str(tmp_path))
     assert not status.atualizavel
     assert f"'{campo}'" in status.motivo
+
+
+# ---------------------------------------------------------------------------
+# preparar_pacote — cópia local + conferência do hash antes de instalar
+# ---------------------------------------------------------------------------
+
+def test_prepara_pacote_copiando_e_conferindo(tmp_path):
+    canal = tmp_path / "canal"
+    temporario = tmp_path / "tmp"
+    canal.mkdir()
+    temporario.mkdir()
+    _publicar(canal, _versao_maior(), conteudo=b"pacote-valido")
+
+    caminho, erro = atualizacoes.preparar_pacote(
+        consultar_canal(str(canal)), str(temporario)
+    )
+    assert not erro
+    assert caminho is not None
+    # A cópia local é o que será instalado, e precisa estar fora do canal.
+    assert os.path.dirname(caminho) == str(temporario)
+    assert open(caminho, "rb").read() == b"pacote-valido"
+
+
+def test_prepara_pacote_recusa_hash_diferente(tmp_path):
+    """Cobre o pacote trocado entre a consulta e a cópia — sem isto, um zip
+    diferente do publicado seria instalado por cima da versão boa."""
+    canal = tmp_path / "canal"
+    temporario = tmp_path / "tmp"
+    canal.mkdir()
+    temporario.mkdir()
+    pacote = _publicar(canal, _versao_maior(), conteudo=b"pacote-original")
+
+    status = consultar_canal(str(canal))
+    assert status.atualizavel
+    # Mesmo tamanho, conteúdo outro: passa pela checagem de tamanho e só o hash pega.
+    pacote.write_bytes(b"pacote-trocado!")
+
+    caminho, erro = atualizacoes.preparar_pacote(status, str(temporario))
+    assert caminho is None
+    assert "sha256" in erro
+    assert not list(temporario.iterdir()), "a cópia inválida deve ser removida"
+
+
+def test_prepara_pacote_sem_atualizacao_disponivel(tmp_path):
+    status = consultar_canal(None)
+    caminho, erro = atualizacoes.preparar_pacote(status, str(tmp_path))
+    assert caminho is None
+    assert erro
+
+
+# ---------------------------------------------------------------------------
+# Gate de origem local do POST /api/atualizacoes/aplicar
+# ---------------------------------------------------------------------------
+
+class _RequisicaoFalsa:
+    """Só o que `_exigir_origem_local` olha: IP do cliente e cabeçalhos."""
+
+    def __init__(self, host, headers=None):
+        self.client = type("Cliente", (), {"host": host})() if host else None
+        self.headers = headers or {}
+
+
+def test_aceita_requisicao_de_loopback():
+    main._exigir_origem_local(_RequisicaoFalsa("127.0.0.1"))
+    main._exigir_origem_local(_RequisicaoFalsa("::1"))
+
+
+def test_recusa_requisicao_de_outra_maquina():
+    with pytest.raises(HTTPException) as excecao:
+        main._exigir_origem_local(_RequisicaoFalsa("192.168.1.50"))
+    assert excecao.value.status_code == 403
+
+
+def test_recusa_requisicao_sem_cliente_identificado():
+    with pytest.raises(HTTPException) as excecao:
+        main._exigir_origem_local(_RequisicaoFalsa(None))
+    assert excecao.value.status_code == 403
+
+
+@pytest.mark.parametrize("cabecalho", main.CABECALHOS_DE_PROXY)
+def test_recusa_loopback_repassado_por_proxy(cabecalho):
+    """O caso que motiva o gate: o Apache do XAMPP escuta na LAN e faz
+    ProxyPass /api para 127.0.0.1, então o IP chega como loopback."""
+    with pytest.raises(HTTPException) as excecao:
+        main._exigir_origem_local(
+            _RequisicaoFalsa("127.0.0.1", {cabecalho: "192.168.1.50"})
+        )
+    assert excecao.value.status_code == 403
+    assert "proxy" in excecao.value.detail

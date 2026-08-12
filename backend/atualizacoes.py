@@ -19,6 +19,7 @@ para trabalhar, não para atualizar.
 import hashlib
 import json
 import os
+import shutil
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -142,3 +143,39 @@ def consultar_canal(canal: Optional[str]) -> StatusAtualizacao:
     status.caminho_pacote = pacote
     status.detalhes = {"sha256": str(manifesto["sha256"]).lower(), "tamanho": tamanho_esperado}
     return status
+
+
+def preparar_pacote(status: StatusAtualizacao, pasta_temporaria: str) -> tuple[Optional[str], str]:
+    """Copia o pacote do canal para o disco local e confere o sha256.
+
+    `(caminho_local, motivo_do_erro)` — exatamente um dos dois vem preenchido.
+
+    A cópia acontece antes da troca de arquivos de propósito: extrair lendo
+    direto do OneDrive deixaria a atualização à mercê de uma reconexão de rede no
+    pior momento possível, com a instalação já desmontada. O hash é conferido
+    depois da cópia, e não no canal, porque é a cópia que vai ser instalada.
+    """
+    if not status.atualizavel or not status.caminho_pacote:
+        return None, status.motivo or "Não há atualização a aplicar."
+
+    origem = status.caminho_pacote
+    destino = os.path.join(pasta_temporaria, os.path.basename(origem))
+    try:
+        shutil.copyfile(origem, destino)
+    except OSError as exc:
+        return None, f"Não foi possível copiar o pacote do canal: {exc}"
+
+    esperado = str(status.detalhes.get("sha256", "")).lower()
+    obtido = sha256_do_arquivo(destino)
+    if obtido != esperado:
+        # Chega aqui quando o arquivo mudou entre a consulta e a cópia, ou quando
+        # o OneDrive entregou bytes diferentes dos que o build publicou.
+        try:
+            os.remove(destino)
+        except OSError:
+            pass
+        return None, (
+            "O pacote baixado não confere com o publicado (sha256 diferente). "
+            "Tente de novo mais tarde."
+        )
+    return destino, ""
