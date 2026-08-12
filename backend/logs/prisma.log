@@ -1,0 +1,14 @@
+2026-08-12 15:58:28,536 INFO    uvicorn.error: Servindo o frontend a partir de C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Prisma-exe\dashboard\dist
+2026-08-12 15:58:28,618 INFO    uvicorn.error: Started server process [33000]
+2026-08-12 15:58:28,618 INFO    uvicorn.error: Waiting for application startup.
+2026-08-12 15:58:28,621 INFO    uvicorn.error: Application startup complete.
+2026-08-12 15:58:28,621 INFO    uvicorn.error: Uvicorn running on http://127.0.0.1:8004 (Press CTRL+C to quit)
+2026-08-12 15:58:29,059 INFO    uvicorn.access: 127.0.0.1:58878 - "GET /api/versao HTTP/1.1" 200
+2026-08-12 15:58:29,324 INFO    uvicorn.access: 127.0.0.1:65292 - "GET / HTTP/1.1" 200
+2026-08-12 15:58:29,346 INFO    uvicorn.access: 127.0.0.1:65292 - "GET /assets/index-IXJWtClm.js HTTP/1.1" 200
+2026-08-12 15:58:29,347 INFO    uvicorn.access: 127.0.0.1:50155 - "GET /assets/index-THluidYR.css HTTP/1.1" 200
+2026-08-12 15:58:29,496 INFO    uvicorn.access: 127.0.0.1:50155 - "GET /api/dashboard/aguardando-base-dados HTTP/1.1" 200
+2026-08-12 15:58:29,498 INFO    uvicorn.access: 127.0.0.1:65292 - "GET /api/dashboard/summary/Frandiesel HTTP/1.1" 200
+2026-08-12 15:58:32,783 INFO    uvicorn.access: 127.0.0.1:65292 - "GET /api/dashboard/empresas HTTP/1.1" 200
+2026-08-12 15:58:32,791 INFO    uvicorn.access: 127.0.0.1:65292 - "GET /api/atualizacoes/status HTTP/1.1" 200
+2026-08-12 15:58:42,720 INFO    uvicorn.access: 127.0.0.1:50157 - "GET /api/versao HTTP/1.1" 200

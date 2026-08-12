@@ -18,6 +18,8 @@ import urllib.error
 import urllib.request
 import webbrowser
 
+import registro
+
 PORTA_PREFERIDA = 8003
 TENTATIVAS_DE_PORTA = 10
 HOST = "127.0.0.1"
@@ -122,6 +124,9 @@ def main() -> None:
     # executável em vez de bifurcar; sem isto o app abriria cópias de si mesmo.
     multiprocessing.freeze_support()
     _preparar_console()
+    # Antes de qualquer print: sem console (modo janela) `sys.stdout` é None e
+    # `print` levantaria AttributeError. configurar() cobre isso e liga o arquivo.
+    caminho_log = registro.configurar()
 
     from versao import NOME_APP, VERSAO
 
@@ -148,7 +153,12 @@ def main() -> None:
     _abrir_navegador_quando_subir(porta)
     # `app` como objeto, não "main:app": a string faria o uvicorn reimportar o
     # módulo por nome, o que não funciona dentro do pacote congelado.
-    uvicorn.run(app, host=HOST, port=porta, log_level="info")
+    # log_config=None: sem isto o uvicorn instala a configuração própria dele,
+    # que só tem handlers de stream, e o log pararia de ir para o arquivo.
+    uvicorn.run(
+        app, host=HOST, port=porta, log_level="info",
+        log_config=registro.config_uvicorn(),
+    )
 
 
 if __name__ == "__main__":
