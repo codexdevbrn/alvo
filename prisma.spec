@@ -29,8 +29,12 @@ if not os.path.isfile(os.path.join(DIST_WEB, "index.html")):
 # lê quando congelado. `data/` fica de fora: é o summary.json do modo estático
 # (~20 MB), um retrato congelado que o executável não usa — no pacote ele só
 # engordaria todo release. O modo por empresa busca o summary do backend.
+# Destino "assets" na raiz do bundle, e NÃO "engine/assets": `recursos.caminho_recurso`
+# resolve a partir de `sys._MEIPASS`, então é ali que o código procura o logo. Com o
+# destino errado, todo PDF e Excel saía sem logo e a bandeja não achava o ícone — sem
+# erro nenhum, porque quem lê o logo o trata como opcional (`if os.path.exists`).
 datas = [
-    (os.path.join(BACKEND, "engine", "assets"), os.path.join("engine", "assets")),
+    (os.path.join(BACKEND, "engine", "assets"), "assets"),
 ]
 for pasta_atual, _subpastas, arquivos in os.walk(DIST_WEB):
     relativo = os.path.relpath(pasta_atual, DIST_WEB)
@@ -59,6 +63,8 @@ hiddenimports = [
     # Extensão compilada resolvida por nome pelo pandas (engine="calamine"), então
     # a análise estática não a encontra sozinha.
     "python_calamine",
+    # O pystray escolhe o backend em tempo de execução pelo sistema operacional.
+    "pystray._win32",
 ]
 
 # Pesados e sem uso aqui. tkinter em especial arrasta DLLs de GUI inteiras.

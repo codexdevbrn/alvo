@@ -9,3 +9,7 @@ python-calamine
 reportlab
 python-docx
 python-multipart
+# Ícone na bandeja do Windows: é a interface do app depois que a janela do
+# console fecha. Pillow vem por exigência do pystray, só para o ícone.
+pystray
+pillow

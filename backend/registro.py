@@ -124,6 +124,26 @@ def _redirecionar_saida_ausente() -> None:
         sys.stderr = _SaidaParaLog(logging.getLogger("stderr"), logging.ERROR)
 
 
+def desviar_saida_do_console() -> None:
+    """Troca stdout/stderr pelo log, mesmo que ainda pareçam válidos.
+
+    Chamado imediatamente antes de `FreeConsole()`: soltar o console invalida os
+    handles sem torná-los None, e aí o primeiro `print` levantaria OSError em vez
+    de só não aparecer. Também remove o StreamHandler do console, que passaria a
+    escrever num handle morto a cada linha de log.
+    """
+    sys.stdout = _SaidaParaLog(logging.getLogger("stdout"), logging.INFO)
+    sys.stderr = _SaidaParaLog(logging.getLogger("stderr"), logging.ERROR)
+
+    raiz = logging.getLogger()
+    for handler in list(raiz.handlers):
+        if isinstance(handler, logging.StreamHandler) and not isinstance(
+            handler, logging.handlers.RotatingFileHandler
+        ):
+            raiz.removeHandler(handler)
+            handler.close()
+
+
 def config_uvicorn() -> None:
     """O que passar em `uvicorn.run(log_config=...)`.
 

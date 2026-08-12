@@ -12,3 +12,24 @@
 2026-08-12 15:58:32,783 INFO    uvicorn.access: 127.0.0.1:65292 - "GET /api/dashboard/empresas HTTP/1.1" 200
 2026-08-12 15:58:32,791 INFO    uvicorn.access: 127.0.0.1:65292 - "GET /api/atualizacoes/status HTTP/1.1" 200
 2026-08-12 15:58:42,720 INFO    uvicorn.access: 127.0.0.1:50157 - "GET /api/versao HTTP/1.1" 200
+2026-08-12 16:08:25,516 INFO    uvicorn.error: Servindo o frontend a partir de C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Prisma-exe\dashboard\dist
+2026-08-12 16:08:25,555 INFO    bandeja: Ícone da bandeja ativo (duplo clique abre a interface).
+2026-08-12 16:08:25,612 INFO    uvicorn.error: Started server process [23592]
+2026-08-12 16:08:25,612 INFO    uvicorn.error: Waiting for application startup.
+2026-08-12 16:08:25,615 INFO    uvicorn.error: Application startup complete.
+2026-08-12 16:08:25,616 INFO    uvicorn.error: Uvicorn running on http://127.0.0.1:8004 (Press CTRL+C to quit)
+2026-08-12 16:08:26,031 INFO    uvicorn.access: 127.0.0.1:56254 - "GET /api/versao HTTP/1.1" 200
+2026-08-12 16:08:26,324 INFO    uvicorn.access: 127.0.0.1:50892 - "GET / HTTP/1.1" 200
+2026-08-12 16:08:26,351 INFO    uvicorn.access: 127.0.0.1:50892 - "GET /assets/index-IXJWtClm.js HTTP/1.1" 200
+2026-08-12 16:08:26,352 INFO    uvicorn.access: 127.0.0.1:65286 - "GET /assets/index-THluidYR.css HTTP/1.1" 200
+2026-08-12 16:08:26,452 INFO    uvicorn.access: 127.0.0.1:65286 - "GET /api/dashboard/aguardando-base-dados HTTP/1.1" 200
+2026-08-12 16:08:26,454 INFO    uvicorn.access: 127.0.0.1:50892 - "GET /api/dashboard/summary/Frandiesel HTTP/1.1" 200
+2026-08-12 16:08:29,867 INFO    uvicorn.access: 127.0.0.1:50892 - "GET /api/dashboard/empresas HTTP/1.1" 200
+2026-08-12 16:08:30,277 INFO    uvicorn.access: 127.0.0.1:50892 - "GET /api/dashboard/empresas HTTP/1.1" 200
+2026-08-12 16:08:30,983 INFO    uvicorn.access: 127.0.0.1:50892 - "GET /logo_2d_icone.png HTTP/1.1" 200
+2026-08-12 16:08:31,053 INFO    uvicorn.access: 127.0.0.1:50892 - "GET /api/dashboard/empresas HTTP/1.1" 200
+2026-08-12 16:08:31,057 INFO    uvicorn.access: 127.0.0.1:65286 - "GET /api/atualizacoes/status HTTP/1.1" 200
+2026-08-12 16:08:31,301 INFO    uvicorn.access: 127.0.0.1:65286 - "GET /config HTTP/1.1" 200
+2026-08-12 16:08:31,664 INFO    uvicorn.access: 127.0.0.1:65286 - "GET / HTTP/1.1" 200
+2026-08-12 16:08:32,088 INFO    uvicorn.access: 127.0.0.1:65286 - "GET /api/dashboard/empresas HTTP/1.1" 200
+2026-08-12 16:08:41,285 INFO    uvicorn.access: 127.0.0.1:63072 - "GET /api/versao HTTP/1.1" 200

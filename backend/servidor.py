@@ -7,7 +7,9 @@ Rodando do fonte o fluxo continua sendo `uvicorn main:app` (ou
 não há linha de comando para digitar.
 """
 
+import ctypes
 import json
+import logging
 import multiprocessing
 import os
 import socket
@@ -18,6 +20,7 @@ import urllib.error
 import urllib.request
 import webbrowser
 
+import bandeja
 import registro
 
 PORTA_PREFERIDA = 8003
@@ -119,6 +122,48 @@ def _preparar_console() -> None:
             pass
 
 
+def _fechar_console() -> bool:
+    """Solta a janela do console, mantendo o processo servindo.
+
+    O usuário pediu que a janela apareça no início e feche "quando estiver tudo
+    ok". `FreeConsole` faz exatamente isso, e é bem menos invasivo que empacotar
+    como aplicação de janela: o executável continua sendo aplicação de console, o
+    que mantém o bootloader do PyInstaller e as flags de religamento do atualizador
+    exatamente como estão — e um erro no boot continua visível, porque nesse caso
+    nunca chegamos aqui.
+
+    A saída padrão é desviada para o log ANTES de soltar: `FreeConsole` invalida os
+    handles sem torná-los None, então o primeiro print depois disso levantaria
+    OSError.
+    """
+    if sys.platform != "win32":
+        return False
+    if not getattr(sys, "frozen", False):
+        # Rodando do fonte, a janela é do desenvolvedor e deve continuar lá.
+        return False
+
+    registro.desviar_saida_do_console()
+    try:
+        liberou = bool(ctypes.windll.kernel32.FreeConsole())
+    except Exception as exc:  # noqa: BLE001
+        logging.getLogger(__name__).warning("Não foi possível fechar o console: %s", exc)
+        return False
+    logging.getLogger(__name__).info(
+        "Console fechado; o Prisma segue rodando na bandeja." if liberou
+        else "FreeConsole não liberou o console."
+    )
+    return liberou
+
+
+def _esperar_servidor(porta: int) -> bool:
+    """True quando o servidor responde; False se estourar a espera."""
+    for _ in range(ESPERAS_ATE_ABRIR):
+        if _prisma_nesta_porta(porta):
+            return True
+        time.sleep(INTERVALO_DE_ESPERA)
+    return False
+
+
 def main() -> None:
     # Congelado no Windows, qualquer uso de multiprocessing relança o
     # executável em vez de bifurcar; sem isto o app abriria cópias de si mesmo.
@@ -143,22 +188,63 @@ def main() -> None:
 
     print(f"{NOME_APP} v{VERSAO}")
     print(f"Interface: {url}")
-    print("Mantenha esta janela aberta enquanto estiver usando o sistema.")
-    print("Para encerrar, feche a janela ou pressione Ctrl+C.\n")
+    print(f"Log: {caminho_log}")
 
     import uvicorn
 
     from main import app
 
-    _abrir_navegador_quando_subir(porta)
     # `app` como objeto, não "main:app": a string faria o uvicorn reimportar o
     # módulo por nome, o que não funciona dentro do pacote congelado.
     # log_config=None: sem isto o uvicorn instala a configuração própria dele,
     # que só tem handlers de stream, e o log pararia de ir para o arquivo.
-    uvicorn.run(
+    configuracao = uvicorn.Config(
         app, host=HOST, port=porta, log_level="info",
         log_config=registro.config_uvicorn(),
     )
+    servidor = uvicorn.Server(configuracao)
+
+    # Servidor na thread e bandeja no principal, e não o contrário: o laço de
+    # mensagens do Windows que a bandeja usa só roda no thread principal.
+    thread_servidor = threading.Thread(target=servidor.run, name="uvicorn", daemon=True)
+    thread_servidor.start()
+
+    _abrir_navegador_quando_subir(porta)
+
+    def encerrar():
+        print("Encerrando o Prisma...")
+        servidor.should_exit = True
+
+    def quando_a_bandeja_subir():
+        # Só fecha a janela depois de o servidor responder de fato. Fechar antes
+        # esconderia justamente a falha que o usuário precisa ver.
+        if _esperar_servidor(porta):
+            _fechar_console()
+        else:
+            print(
+                "O servidor não respondeu; a janela fica aberta para você ver o erro."
+            )
+
+    com_bandeja = bandeja.executar(
+        url=url, ao_sair=encerrar, ao_iniciar=quando_a_bandeja_subir,
+    )
+
+    if com_bandeja:
+        # `executar` só retorna quando o usuário escolheu Sair; dar tempo ao
+        # uvicorn de fechar as conexões antes de o processo terminar.
+        thread_servidor.join(timeout=10)
+        return
+
+    # Sem bandeja (sessão sem shell gráfico, ou biblioteca ausente) o console volta
+    # a ser a única interface, então ele não pode fechar.
+    print("Mantenha esta janela aberta enquanto estiver usando o sistema.")
+    print("Para encerrar, feche a janela ou pressione Ctrl+C.\n")
+    try:
+        while thread_servidor.is_alive():
+            thread_servidor.join(timeout=1.0)
+    except KeyboardInterrupt:
+        encerrar()
+        thread_servidor.join(timeout=10)
 
 
 if __name__ == "__main__":
