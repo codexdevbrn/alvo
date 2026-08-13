@@ -5234,8 +5234,8 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
    altura do contêiner, e um min-height maior que o height vence em silêncio — foi o
    que manteve o gráfico em 7,4rem quando só o height mudou. */
 .monitor-sparkline {
-  height: 6.6rem;
-  min-height: 6.6rem;
+  height: 8.2rem;
+  min-height: 8.2rem;
   margin: 0.35rem -0.35rem 0;
   color: var(--text-muted);
   font-size: 0.72rem;

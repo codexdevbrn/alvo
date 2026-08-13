@@ -101,7 +101,10 @@ function Sparkline({ pontos, moeda }: { pontos: PontoSparkline[]; moeda: boolean
   return (
     <div className="monitor-sparkline">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={pontos} margin={{ top: 16, right: 18, left: 18, bottom: 4 }}>
+        {/* Margens enxutas: o que sobra aqui vira altura útil de plotagem, que é o
+            que faz a variação aparecer. `top` continua reservando espaço para os
+            rótulos de valor acima dos pontos. */}
+        <AreaChart data={pontos} margin={{ top: 14, right: 18, left: 18, bottom: 0 }}>
           <defs>
             <linearGradient id="monitorSpark" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={COR_ANO_RECENTE} stopOpacity={0.3} />
@@ -113,9 +116,10 @@ function Sparkline({ pontos, moeda }: { pontos: PontoSparkline[]; moeda: boolean
             axisLine={false}
             tickLine={false}
             // Reserva altura e afastamento reais para o texto. Com 14px e
-            // margem inferior zero, o SVG cortava a metade dos rótulos.
-            height={22}
-            tickMargin={5}
+            // margem inferior zero, o SVG cortava a metade dos rótulos — 18 é o
+            // mínimo que ainda mostra o texto inteiro.
+            height={18}
+            tickMargin={3}
             // Mostra ~4 marcas: com 12 períodos os rótulos se sobrepõem.
             interval={Math.max(0, Math.ceil(pontos.length / 4) - 1)}
           />

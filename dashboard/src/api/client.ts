@@ -33,7 +33,7 @@ function authHeaders(): HeadersInit {
  */
 async function chamar(url: string, init?: RequestInit): Promise<Response> {
   try {
-    return await chamar(url, init);
+    return await fetch(url, init);
   } catch (erro) {
     if (erro instanceof DOMException && erro.name === 'AbortError') throw erro;
     throw new Error(
