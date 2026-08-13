@@ -5480,3 +5480,82 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   .banner-atualizacao { flex-wrap: wrap; }
   .banner-atualizacao-acao { width: 100%; justify-content: center; }
 }
+
+/* ==========================================================================
+   Dados mercadológicos (Pregão embutido)
+   ========================================================================== */
+
+.mercadologico-cabecalho {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.mercadologico-cabecalho h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 800;
+}
+
+.mercadologico-cabecalho p {
+  margin: 0.15rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.mercadologico-acoes {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.5rem;
+}
+
+/* Altura calculada em vez de 100%: o iframe precisa de altura explícita para o
+   app interno ocupar a tela, e um pai em % não resolve dentro do fluxo do main.
+   O desconto cobre o cabeçalho desta tela e o respiro do shell. */
+.mercadologico-moldura {
+  position: relative;
+  height: calc(100vh - 11rem);
+  min-height: 26rem;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--bg-elevated, #16161c);
+}
+
+.mercadologico-iframe {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+/* Sobreposto ao iframe, e não no lugar dele: trocar de estado sem desmontar o
+   iframe evita recarregar o app externo a cada render. */
+.mercadologico-estado {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 1.5rem;
+  color: var(--text-muted);
+  background: var(--bg-elevated, #16161c);
+  text-align: center;
+  font-size: 0.85rem;
+}
+
+.mercadologico-estado strong {
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+
+@media (max-width: 640px) {
+  .mercadologico-cabecalho { flex-direction: column; }
+  .mercadologico-acoes { width: 100%; }
+  .mercadologico-moldura { height: calc(100vh - 14rem); }
+}

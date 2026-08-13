@@ -11,6 +11,7 @@ import {
   Settings,
   BarChart3,
   Gauge,
+  Store,
   Wallet,
   PanelLeftClose,
   PanelLeftOpen,
@@ -102,6 +103,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   const emAnalisador = location.pathname.startsWith('/analisador');
   const emMonitor = location.pathname.startsWith('/monitor');
   const emConfig = location.pathname.startsWith('/config');
+  const emMercadologico = location.pathname.startsWith('/mercadologico');
   const emDashboard = location.pathname === '/';
   const initialCollapsed = lerCollapsed();
   const [collapsed, setCollapsed] = useState(initialCollapsed);
@@ -236,6 +238,13 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
             collapsed={colapsado}
             ativo={emMonitor}
             onClick={() => navigate('/monitor')}
+          />
+          <NavItem
+            icon={<Store size={17} />}
+            label="Dados mercadológicos"
+            collapsed={colapsado}
+            ativo={emMercadologico}
+            onClick={() => navigate('/mercadologico')}
           />
         </nav>
 
