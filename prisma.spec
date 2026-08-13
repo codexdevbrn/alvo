@@ -51,6 +51,9 @@ hiddenimports = [
     "normalizar_base",
     "normalizar_liquidez",
     "harmonizar_descricoes",
+    # Modo Prisma.exe --pre-gerar: o lote é importado sob demanda, então a análise
+    # estática não o alcança pelo entrypoint.
+    "normalizar_todas_empresas",
     # uvicorn resolve estes por nome em tempo de execução.
     "uvicorn.logging",
     "uvicorn.loops.auto",

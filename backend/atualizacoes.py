@@ -18,6 +18,7 @@ para trabalhar, não para atualizar.
 
 import hashlib
 import json
+import logging
 import os
 import shutil
 import threading
@@ -26,6 +27,8 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from versao import VERSAO, versao_mais_nova
+
+logger = logging.getLogger(__name__)
 
 NOME_ARQUIVO_MANIFESTO = "version.json"
 
@@ -225,6 +228,14 @@ def invalidar_cache() -> None:
         _cache_canal = None
 
 
+#: Intervalo entre verificações automáticas. Seis horas e não uma: release nova é
+#: evento de semanas, o canal é pasta de rede, e checar de hora em hora só geraria
+#: acesso ao OneDrive sem ninguém pedindo.
+INTERVALO_VERIFICACAO_S = 6 * 60 * 60
+
+_verificacao_iniciada = False
+
+
 def aquecer_em_background(canal: Optional[str]) -> None:
     """Consulta o canal numa thread, para o boot não esperar pelo OneDrive.
 
@@ -239,6 +250,37 @@ def aquecer_em_background(canal: Optional[str]) -> None:
             pass
 
     threading.Thread(target=tarefa, daemon=True, name="aquecer-atualizacoes").start()
+
+
+def iniciar_verificacao_periodica(resolver_canal) -> None:
+    """Reconsulta o canal a cada `INTERVALO_VERIFICACAO_S`, indefinidamente.
+
+    Antes disto, a verificação acontecia só no boot e a cada navegação de tela. Isso
+    bastava quando o app era aberto e fechado no dia a dia; agora ele inicia com o
+    Windows e vive na bandeja por semanas, então uma máquina onde ninguém navega
+    podia nunca descobrir que existe versão nova.
+
+    Recebe uma função e não o caminho, porque o canal pode ser reconfigurado
+    enquanto o app roda — resolver a cada volta evita ficar preso na pasta antiga.
+
+    Idempotente: chamar duas vezes não cria duas threads (o startup do FastAPI pode
+    rodar mais de uma vez em cenários de recarga).
+    """
+    global _verificacao_iniciada
+    with _trava_cache:
+        if _verificacao_iniciada:
+            return
+        _verificacao_iniciada = True
+
+    def laco():
+        while True:
+            time.sleep(INTERVALO_VERIFICACAO_S)
+            try:
+                consultar_canal_cacheado(resolver_canal(), forcar=True)
+            except Exception:  # noqa: BLE001 - nada aqui pode derrubar o app
+                logger.warning("Verificação periódica de atualização falhou.", exc_info=True)
+
+    threading.Thread(target=laco, daemon=True, name="verificar-atualizacoes").start()
 
 
 def preparar_pacote(status: StatusAtualizacao, pasta_temporaria: str) -> tuple[Optional[str], str]:

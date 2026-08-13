@@ -113,6 +113,9 @@ def _startup():
     # Em background porque o canal é pasta de rede: esperar por ele aqui atrasaria
     # o servidor a ficar de pé.
     atualizacoes.aquecer_em_background(_resolver_caminho_atualizacoes())
+    # E segue verificando a cada 6h: o app agora fica dias no ar sem ninguém
+    # navegar, e a verificação por navegação sozinha deixaria máquinas para trás.
+    atualizacoes.iniciar_verificacao_periodica(_resolver_caminho_atualizacoes)
 
 
 # ---------------------------------------------------------------------------
@@ -179,6 +182,16 @@ CHAVE_EMPRESAS_FAVORITAS = "empresas_favoritas"
 #: publica é o build. Configurável em vez de fixa porque o caminho local do
 #: OneDrive muda de máquina para máquina.
 CHAVE_CAMINHO_ATUALIZACOES = "caminho_atualizacoes"
+#: "1" = esta instalação pode regenerar bases na pasta de trabalho.
+#:
+#: Existe porque a pasta de trabalho é compartilhada e, com o app distribuído como
+#: executável, várias máquinas passam a poder escrever nela. Duas regenerando a
+#: mesma empresa ao mesmo tempo não dá erro: o OneDrive resolve criando cópia de
+#: conflito, em silêncio, e alguém depois lê o arquivo errado. A pré-geração é
+#: tarefa do lote noturno; as demais máquinas só leem.
+#:
+#: É guarda contra acidente, não controle de acesso — quem tem a tela pode ligar.
+CHAVE_REGENERACAO_PERMITIDA = "regeneracao_permitida"
 # Legadas — só leitura de fallback / aliases de rota
 CHAVE_CAMINHO_DADOS_DASHBOARD = "caminho_dados_dashboard"
 CHAVE_CAMINHO_EMPRESAS = "caminho_empresas"
@@ -1807,6 +1820,49 @@ def definir_inicio_automatico(
     return inicio_automatico.estado()
 
 
+def regeneracao_permitida() -> bool:
+    return db.obter_config_app(CHAVE_REGENERACAO_PERMITIDA, "0") == "1"
+
+
+def _exigir_regeneracao_permitida() -> None:
+    if not regeneracao_permitida():
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "Esta máquina não regenera bases. A pré-geração é feita pelo lote "
+                "noturno na máquina servidora — duas máquinas escrevendo a mesma "
+                "empresa na pasta compartilhada criam cópia de conflito no OneDrive. "
+                "Se esta é a máquina do lote, habilite em Configurações."
+            ),
+        )
+
+
+@app.get("/api/config/regeneracao")
+def obter_regeneracao(usuario: str = Depends(exigir_login)):
+    return {"permitida": regeneracao_permitida()}
+
+
+class RegeneracaoBody(BaseModel):
+    permitida: bool
+
+
+@app.post("/api/config/regeneracao")
+def definir_regeneracao(
+    corpo: RegeneracaoBody,
+    request: Request,
+    usuario: str = Depends(exigir_login),
+):
+    """Liga/desliga a regeneração nesta instalação.
+
+    Com gate de origem local, como as outras rotas que mudam o comportamento desta
+    máquina: quem está na rede não deve poder habilitar escrita na pasta
+    compartilhada a partir de outro computador.
+    """
+    _exigir_origem_local(request)
+    db.definir_config_app(CHAVE_REGENERACAO_PERMITIDA, "1" if corpo.permitida else "0")
+    return {"permitida": regeneracao_permitida()}
+
+
 def _caminho_atualizador() -> Optional[str]:
     """Executável (ou script) que faz a troca dos arquivos.
 
@@ -2157,6 +2213,7 @@ def ensure_base_empresa(
     (equivalente a Regenerar base).
     """
     if forcar:
+        _exigir_regeneracao_permitida()
         return _regenerar_base_empresa(nome)
     _pastas_empresa(nome)  # 404 se a empresa não tiver o XLSX na fonte
     return {"ok": True, "empresa": nome}
@@ -2165,6 +2222,7 @@ def ensure_base_empresa(
 @app.post("/api/empresas/{nome}/regenerar-base")
 def regenerar_base_empresa(nome: str, usuario: str = Depends(exigir_login)):
     """Limpa caches e força reprocessamento direto da fonte (Analisador)."""
+    _exigir_regeneracao_permitida()
     return _regenerar_base_empresa(nome)
 
 
@@ -2335,6 +2393,7 @@ def definir_favoritas(corpo: FavoritasBody):
 @app.post("/api/dashboard/empresas/{empresa}/regenerar-base")
 def regenerar_base_dashboard(empresa: str):
     """Limpa caches e força reprocessamento direto da fonte (Dashboard público)."""
+    _exigir_regeneracao_permitida()
     return _regenerar_base_empresa(empresa)
 
 

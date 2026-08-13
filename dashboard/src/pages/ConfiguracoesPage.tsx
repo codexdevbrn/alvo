@@ -15,9 +15,11 @@ import {
   aplicarAtualizacao,
   definirCaminhoAtualizacoes,
   definirDadosNoDisco,
+  definirRegeneracao,
   definirInicioAutomatico,
   obterCaminhoAtualizacoes,
   obterDadosNoDisco,
+  obterRegeneracao,
   obterInicioAutomatico,
   obterStatusAtualizacao,
   obterTagsClientes,
@@ -111,6 +113,8 @@ export default function ConfiguracoesPage() {
   const [inicio, setInicio] = useState<InicioAutomatico | null>(null);
   const [dadosDisco, setDadosDisco] = useState<DadosNoDisco | null>(null);
   const [salvandoDisco, setSalvandoDisco] = useState(false);
+  const [podeRegenerar, setPodeRegenerar] = useState(false);
+  const [salvandoRegen, setSalvandoRegen] = useState(false);
   const [horarioInicio, setHorarioInicio] = useState('08:00');
   const [comHorario, setComHorario] = useState(false);
   const [salvandoInicio, setSalvandoInicio] = useState(false);
@@ -192,7 +196,26 @@ export default function ConfiguracoesPage() {
 
   useEffect(() => {
     void obterDadosNoDisco().then(setDadosDisco).catch(() => setDadosDisco(null));
+    void obterRegeneracao().then(setPodeRegenerar).catch(() => setPodeRegenerar(false));
   }, []);
+
+  const alternarRegeneracao = async (permitida: boolean) => {
+    setSalvandoRegen(true);
+    setFeedbackDados(null);
+    try {
+      setPodeRegenerar(await definirRegeneracao(permitida));
+      setFeedbackDados({
+        tipo: 'ok',
+        texto: permitida
+          ? 'Esta máquina passa a poder regenerar bases.'
+          : 'Regeneração desligada nesta máquina.',
+      });
+    } catch (erro) {
+      setFeedbackDados({ tipo: 'erro', texto: (erro as Error).message });
+    } finally {
+      setSalvandoRegen(false);
+    }
+  };
 
   const alternarDadosNoDisco = async (fixar: boolean) => {
     setSalvandoDisco(true);
@@ -573,6 +596,21 @@ export default function ConfiguracoesPage() {
             <label className="analisador-check-linha">
               <input
                 type="checkbox"
+                checked={podeRegenerar}
+                onChange={(e) => void alternarRegeneracao(e.target.checked)}
+                disabled={salvandoRegen}
+              />
+              Esta máquina pode regenerar bases (máquina do lote noturno)
+            </label>
+            <p className="analisador-hint">
+              A pré-geração é feita pelo lote noturno. Duas máquinas regenerando a mesma
+              empresa na pasta compartilhada criam cópia de conflito no OneDrive, sem aviso —
+              por isso o botão Regenerar base só aparece onde isto está marcado.
+            </p>
+
+            <label className="analisador-check-linha">
+              <input
+                type="checkbox"
                 checked={aguardandoBaseDados}
                 onChange={(e) => void alternarAguardandoBaseDados(e.target.checked)}
                 disabled={salvandoFlag}
@@ -599,7 +637,7 @@ export default function ConfiguracoesPage() {
                 {sincronizando ? <Loader2 size={14} className="dashboard-filter-spinner" /> : <RefreshCw size={14} />}
                 Sincronizar
               </button>
-              <button
+              {podeRegenerar && <button
                 type="button"
                 className="analisador-btn analisador-btn-pri"
                 onClick={() => void regenerarBase()}
@@ -607,7 +645,7 @@ export default function ConfiguracoesPage() {
               >
                 {regenerando ? <Loader2 size={14} className="dashboard-filter-spinner" /> : <RefreshCw size={14} />}
                 Regenerar base
-              </button>
+              </button>}
             </div>
           </section>
 

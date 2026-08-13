@@ -239,6 +239,31 @@ def test_cache_expira_pelo_tempo(tmp_path, monkeypatch):
     assert not atualizacoes.consultar_canal_cacheado(str(tmp_path)).atualizavel
 
 
+def test_verificacao_periodica_sobe_uma_thread_so(tmp_path, monkeypatch):
+    """O startup do FastAPI pode rodar mais de uma vez; duas threads consultariam o
+    OneDrive em dobro para sempre."""
+    monkeypatch.setattr(atualizacoes, "_verificacao_iniciada", False)
+    criadas = []
+    real = atualizacoes.threading.Thread
+
+    def espiar(*args, **kwargs):
+        if kwargs.get("name") == "verificar-atualizacoes":
+            criadas.append(kwargs["name"])
+        t = real(*args, **kwargs)
+        t.start = lambda: None  # não deixa o laço rodar no teste
+        return t
+
+    monkeypatch.setattr(atualizacoes.threading, "Thread", espiar)
+    atualizacoes.iniciar_verificacao_periodica(lambda: str(tmp_path))
+    atualizacoes.iniciar_verificacao_periodica(lambda: str(tmp_path))
+    assert criadas == ["verificar-atualizacoes"]
+
+
+def test_intervalo_de_verificacao_em_horas():
+    """Seis horas: release nova é evento de semanas e o canal é pasta de rede."""
+    assert atualizacoes.INTERVALO_VERIFICACAO_S == 6 * 60 * 60
+
+
 def test_aquecer_em_background_popula_o_cache(tmp_path):
     """O boot dispara isto para o indicador já existir na primeira tela."""
     nova = _versao_maior()

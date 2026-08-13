@@ -1,10 +1,17 @@
 """
-Ponto de entrada do executável: sobe o backend, que também serve o frontend, e
-abre o navegador padrão na interface.
+Ponto de entrada do executável. Dois modos:
 
-Rodando do fonte o fluxo continua sendo `uvicorn main:app` (ou
-`iniciar_motor_prisma.bat`) — este módulo existe para o pacote congelado, onde
-não há linha de comando para digitar.
+    Prisma.exe                 sobe o backend, serve o frontend, abre o navegador
+    Prisma.exe --pre-gerar     roda o lote de pré-geração de summaries e encerra
+
+O modo de lote existe para a máquina que hospeda a tarefa agendada não precisar de
+Python nem do repositório: o executável já carrega o lote, e o canal de atualização
+mantém os dois em versão igual. Antes disso, o lote era um script solto da árvore de
+código, e ficou três semanas quebrado sem ninguém notar porque nada o mantinha
+junto do app.
+
+Rodando do fonte, o fluxo continua sendo `uvicorn main:app` (ou
+`iniciar_motor_prisma.bat`) e `python normalizar_todas_empresas.py`.
 """
 
 import ctypes
@@ -164,6 +171,44 @@ def _esperar_servidor(porta: int) -> bool:
     return False
 
 
+ARG_PRE_GERAR = "--pre-gerar"
+
+
+def _rodar_lote() -> int:
+    """Executa a pré-geração e devolve o código de saída.
+
+    Reusa `normalizar_todas_empresas.main()` em vez de reimplementar: é a mesma
+    razão de o lote gerar o summary pelo mesmo caminho do app — duas
+    implementações divergem com o tempo. Os argumentos restantes são repassados,
+    então `Prisma.exe --pre-gerar --so Comkit` funciona.
+    """
+    # Congelado, o módulo vem embutido (ver hiddenimports no prisma.spec). Rodando
+    # do fonte, ele fica na raiz do projeto e este arquivo em backend/, então a raiz
+    # precisa entrar no path — é o mesmo ajuste que main.py faz para os scripts de
+    # normalização.
+    if not getattr(sys, "frozen", False):
+        raiz = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        if raiz not in sys.path:
+            sys.path.insert(0, raiz)
+
+    import normalizar_todas_empresas as lote
+
+    argv_original = sys.argv
+    sys.argv = [argv_original[0]] + [a for a in argv_original[1:] if a != ARG_PRE_GERAR]
+    try:
+        lote.main()
+    except SystemExit as saida:
+        # argparse e o próprio lote encerram com sys.exit; o código importa para o
+        # Agendador de Tarefas registrar sucesso ou falha.
+        return int(saida.code or 0)
+    except Exception:
+        logging.getLogger(__name__).exception("Falha inesperada na pré-geração.")
+        return 1
+    finally:
+        sys.argv = argv_original
+    return 0
+
+
 def main() -> None:
     # Congelado no Windows, qualquer uso de multiprocessing relança o
     # executável em vez de bifurcar; sem isto o app abriria cópias de si mesmo.
@@ -177,6 +222,14 @@ def main() -> None:
 
     if sys.platform == "win32":
         os.system(f"title {NOME_APP} v{VERSAO}")
+
+    if ARG_PRE_GERAR in sys.argv:
+        # Sai antes de escolher porta, subir bandeja ou fechar console: é execução
+        # de lote, sem interface, e a janela precisa ficar para o log ser visto.
+        print(f"{NOME_APP} v{VERSAO} — pré-geração de summaries")
+        print(f"Log: {caminho_log}")
+        print()
+        sys.exit(_rodar_lote())
 
     porta, ja_esta_rodando = escolher_porta()
     url = f"http://{HOST}:{porta}"
@@ -225,8 +278,22 @@ def main() -> None:
                 "O servidor não respondeu; a janela fica aberta para você ver o erro."
             )
 
+    def versao_no_canal():
+        """Versão nova, se houver, lida do cache que a verificação periódica mantém.
+
+        Lê o cache do mesmo processo em vez de chamar a própria API: é o mesmo dado,
+        sem custo de rede, e o menu abre sem esperar.
+        """
+        import atualizacoes
+
+        status = atualizacoes._cache_status
+        return status.versao_disponivel if status and status.atualizavel else None
+
     com_bandeja = bandeja.executar(
-        url=url, ao_sair=encerrar, ao_iniciar=quando_a_bandeja_subir,
+        url=url,
+        ao_sair=encerrar,
+        ao_iniciar=quando_a_bandeja_subir,
+        versao_disponivel=versao_no_canal,
     )
 
     if com_bandeja:
