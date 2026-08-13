@@ -278,8 +278,22 @@ def main() -> None:
                 "O servidor não respondeu; a janela fica aberta para você ver o erro."
             )
 
+    def versao_no_canal():
+        """Versão nova, se houver, lida do cache que a verificação periódica mantém.
+
+        Lê o cache do mesmo processo em vez de chamar a própria API: é o mesmo dado,
+        sem custo de rede, e o menu abre sem esperar.
+        """
+        import atualizacoes
+
+        status = atualizacoes._cache_status
+        return status.versao_disponivel if status and status.atualizavel else None
+
     com_bandeja = bandeja.executar(
-        url=url, ao_sair=encerrar, ao_iniciar=quando_a_bandeja_subir,
+        url=url,
+        ao_sair=encerrar,
+        ao_iniciar=quando_a_bandeja_subir,
+        versao_disponivel=versao_no_canal,
     )
 
     if com_bandeja:

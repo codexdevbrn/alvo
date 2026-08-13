@@ -639,6 +639,22 @@ export async function definirCaminhoAtualizacoes(caminho: string): Promise<strin
  * Status do canal. O backend responde de um cache de 15 min alimentado no boot;
  * `forcar` ignora o cache, para quando o usuário pede a verificação na mão.
  */
+export async function obterRegeneracao(): Promise<boolean> {
+  const res = await chamar('/api/config/regeneracao', { headers: authHeaders() });
+  const dados = await tratarResposta<{ permitida: boolean }>(res);
+  return dados.permitida;
+}
+
+export async function definirRegeneracao(permitida: boolean): Promise<boolean> {
+  const res = await chamar('/api/config/regeneracao', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ permitida }),
+  });
+  const dados = await tratarResposta<{ permitida: boolean }>(res);
+  return dados.permitida;
+}
+
 export interface EstadoPasta {
   suportado: boolean;
   caminho: string | null;

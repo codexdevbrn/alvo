@@ -53,18 +53,30 @@ def _pystray_falso(monkeypatch, icone_classe=_IconeFalso):
     return criados
 
 
+def _itens(icone):
+    """Itens do menu, resolvendo o callable.
+
+    O menu é montado como função, e não como lista, porque o pystray o reconstrói
+    quando o usuário abre — é isso que faz o rótulo mostrar a versão disponível do
+    momento em vez da do boot.
+    """
+    menu = icone.menu
+    alvo = menu[0] if isinstance(menu, list) and len(menu) == 1 and callable(menu[0]) else menu
+    return list(alvo() if callable(alvo) else alvo)
+
+
 def _item(icone, rotulo):
-    for it in icone.menu:
+    itens = _itens(icone)
+    for it in itens:
         if getattr(it, "rotulo", None) == rotulo:
             return it
-    raise AssertionError(f"item {rotulo!r} não está no menu: {icone.menu}")
+    raise AssertionError(f"item {rotulo!r} não está no menu: {itens}")
 
 
 def test_menu_tem_os_tres_itens(monkeypatch):
     criados = _pystray_falso(monkeypatch)
     assert bandeja.executar("http://127.0.0.1:8004", ao_sair=lambda: None) is True
-    icone = criados[0]
-    rotulos = [getattr(i, "rotulo", i) for i in icone.menu]
+    rotulos = [getattr(i, "rotulo", i) for i in _itens(criados[0])]
     assert rotulos == ["Abrir Prisma", "Verificar atualização", "---", "Sair"]
 
 
@@ -154,3 +166,41 @@ def test_falha_ao_criar_icone_devolve_false(monkeypatch):
 
     _pystray_falso(monkeypatch, icone_classe=_Explode)
     assert bandeja.executar("http://127.0.0.1:8004", ao_sair=lambda: None) is False
+
+
+def test_rotulo_mostra_a_versao_quando_ha_atualizacao(monkeypatch):
+    """O menu da bandeja é o único lugar onde o usuário do modo segundo plano olha
+    sem abrir a interface — o rótulo precisa dizer que há versão nova."""
+    criados = _pystray_falso(monkeypatch)
+    bandeja.executar(
+        "http://127.0.0.1:8004",
+        ao_sair=lambda: None,
+        versao_disponivel=lambda: "1.0.11",
+    )
+    rotulos = [getattr(i, "rotulo", i) for i in _itens(criados[0])]
+    assert "Atualizar para 1.0.11" in rotulos
+    assert "Verificar atualização" not in rotulos
+
+
+def test_rotulo_generico_quando_nao_ha_atualizacao(monkeypatch):
+    criados = _pystray_falso(monkeypatch)
+    bandeja.executar(
+        "http://127.0.0.1:8004", ao_sair=lambda: None, versao_disponivel=lambda: None,
+    )
+    rotulos = [getattr(i, "rotulo", i) for i in _itens(criados[0])]
+    assert "Verificar atualização" in rotulos
+
+
+def test_falha_ao_ler_versao_nao_derruba_o_menu(monkeypatch):
+    """Se a consulta explodir, o menu ainda tem de abrir — é por ele que se sai do app."""
+    criados = _pystray_falso(monkeypatch)
+
+    def explodir():
+        raise RuntimeError("cache indisponível")
+
+    bandeja.executar(
+        "http://127.0.0.1:8004", ao_sair=lambda: None, versao_disponivel=explodir,
+    )
+    rotulos = [getattr(i, "rotulo", i) for i in _itens(criados[0])]
+    assert "Verificar atualização" in rotulos
+    assert "Sair" in rotulos

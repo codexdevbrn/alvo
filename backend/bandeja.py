@@ -45,12 +45,17 @@ def executar(
     ao_sair: Callable[[], None],
     ao_verificar_atualizacao: Optional[Callable[[], None]] = None,
     ao_iniciar: Optional[Callable[[], None]] = None,
+    versao_disponivel: Optional[Callable[[], Optional[str]]] = None,
 ) -> bool:
     """Mostra o ícone e **bloqueia** até o usuário escolher Sair.
 
     `ao_iniciar` roda uma vez, já com o ícone registrado na bandeja. É onde o
     chamador fecha a janela do console: só é seguro fechá-la depois que existe
     outra forma de o usuário abrir a interface e encerrar o app.
+
+    `versao_disponivel` é consultada cada vez que o menu é aberto, para o rótulo
+    mostrar a versão nova quando houver. É o único momento em que o usuário do modo
+    segundo plano olha para o app sem abrir a interface.
 
     Devolve False sem bloquear se a bandeja não estiver disponível, para o
     chamador decidir como esperar pelo servidor.
@@ -83,12 +88,22 @@ def executar(
         finally:
             icone.stop()
 
-    menu = pystray.Menu(
+    def rotulo_atualizacao():
+        """Texto do item, reavaliado a cada abertura do menu."""
+        try:
+            nova = versao_disponivel() if versao_disponivel else None
+        except Exception:  # noqa: BLE001 - rótulo não pode derrubar o menu
+            nova = None
+        return f"Atualizar para {nova}" if nova else "Verificar atualização"
+
+    # Menu como callable: o pystray o reconstrói quando o usuário abre, então o
+    # rótulo reflete o estado do momento em vez do estado do boot.
+    menu = pystray.Menu(lambda: (
         pystray.MenuItem("Abrir Prisma", abrir, default=True),
-        pystray.MenuItem("Verificar atualização", verificar),
+        pystray.MenuItem(rotulo_atualizacao(), verificar),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Sair", sair),
-    )
+    ))
 
     try:
         icone = pystray.Icon("prisma", icone_imagem, TITULO, menu)
