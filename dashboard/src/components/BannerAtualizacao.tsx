@@ -46,12 +46,40 @@ export function BannerAtualizacao({ status }: Props) {
     setErro(null);
     try {
       await aplicarAtualizacao();
-      // O backend se encerra logo após responder; daqui não há mais nada a fazer
-      // além de manter o botão travado até o app voltar.
     } catch (e) {
       setErro((e as Error).message);
       setAplicando(false);
+      return;
     }
+    // O backend se encerra logo após responder. Sem esperar e recarregar, esta aba
+    // fica apontando para um servidor que não existe mais e toda ação seguinte
+    // falha — foi exatamente o que aconteceu em uso real.
+    esperarERecarregar();
+  };
+
+  /** Aguarda o app voltar (o atualizador o religa) e recarrega esta aba. */
+  const esperarERecarregar = async () => {
+    const limite = Date.now() + 120_000;
+    // Começa depois de um instante: enquanto o processo antigo não morre, ele ainda
+    // responde e a página recarregaria na versão velha.
+    await new Promise((r) => setTimeout(r, 4000));
+    while (Date.now() < limite) {
+      try {
+        const res = await fetch('/api/versao', { cache: 'no-store' });
+        if (res.ok) {
+          window.location.reload();
+          return;
+        }
+      } catch {
+        /* ainda reiniciando */
+      }
+      await new Promise((r) => setTimeout(r, 2000));
+    }
+    setErro(
+      'O Prisma reabriu, mas esta aba não conseguiu se reconectar. '
+      + 'Feche esta aba e use a janela que ele abriu.',
+    );
+    setAplicando(false);
   };
 
   return (
@@ -69,7 +97,7 @@ export function BannerAtualizacao({ status }: Props) {
         disabled={aplicando}
       >
         {aplicando ? <Loader2 size={14} className="dashboard-filter-spinner" /> : <Download size={14} />}
-        {aplicando ? 'Atualizando...' : 'Atualizar agora'}
+        {aplicando ? 'Atualizando, aguarde...' : 'Atualizar agora'}
       </button>
 
       <button

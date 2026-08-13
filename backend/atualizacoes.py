@@ -66,10 +66,34 @@ def sha256_do_arquivo(caminho: str) -> str:
     return digest.hexdigest()
 
 
+def _subpasta_com_manifesto(canal: str) -> Optional[str]:
+    r"""Nome da subpasta imediata que tem o manifesto, se houver.
+
+    Serve para uma confusão real: a pasta que o usuário navega até (`...\Prisma`)
+    contém o instalador, e o canal é a subpasta (`...\Prisma\Atualizações`).
+    Apontar o erro com o caminho certo é mais útil que só dizer que falta o arquivo.
+    """
+    try:
+        entradas = os.listdir(canal)
+    except OSError:
+        return None
+    for nome in sorted(entradas):
+        sub = os.path.join(canal, nome)
+        if os.path.isdir(sub) and os.path.isfile(os.path.join(sub, NOME_ARQUIVO_MANIFESTO)):
+            return nome
+    return None
+
+
 def _ler_manifesto(canal: str) -> tuple[Optional[dict], str]:
     """`(manifesto, motivo_do_erro)` — exatamente um dos dois vem preenchido."""
     caminho = os.path.join(canal, NOME_ARQUIVO_MANIFESTO)
     if not os.path.isfile(caminho):
+        sub = _subpasta_com_manifesto(canal)
+        if sub:
+            return None, (
+                f"Esta pasta não tem {NOME_ARQUIVO_MANIFESTO}, mas a subpasta "
+                f"\"{sub}\" tem. Aponte o canal para ela."
+            )
         return None, f"O canal não tem {NOME_ARQUIVO_MANIFESTO}."
     try:
         with open(caminho, "r", encoding="utf-8") as arquivo:

@@ -56,6 +56,26 @@ def test_canal_sem_manifesto(tmp_path):
     assert "version.json" in status.motivo
 
 
+def test_aponta_a_subpasta_quando_o_manifesto_esta_nela(tmp_path):
+    r"""Confusão real de uso: o usuário navegou até a pasta que contém o instalador
+    (`...\Prisma`) em vez da subpasta do canal (`...\Prisma\Atualizações`).
+    Dizer só "falta version.json" não ajuda; dizer onde ele está, sim."""
+    (tmp_path / "Atualizações").mkdir()
+    _publicar(tmp_path / "Atualizações", _versao_maior())
+    (tmp_path / "Prisma-1.0.0-instalador.exe").write_bytes(b"x")
+
+    status = consultar_canal(str(tmp_path))
+    assert not status.atualizavel
+    assert "Atualizações" in status.motivo
+    assert "subpasta" in status.motivo
+
+
+def test_sem_subpasta_com_manifesto_mantem_mensagem_simples(tmp_path):
+    (tmp_path / "vazia").mkdir()
+    status = consultar_canal(str(tmp_path))
+    assert status.motivo == "O canal não tem version.json."
+
+
 def test_manifesto_corrompido(tmp_path):
     (tmp_path / "version.json").write_text("{isso não é json", encoding="utf-8")
     status = consultar_canal(str(tmp_path))
