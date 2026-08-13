@@ -5514,19 +5514,26 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 /* Altura calculada em vez de 100%: o iframe precisa de altura explícita para o
    app interno ocupar a tela, e um pai em % não resolve dentro do fluxo do main.
    O desconto cobre o cabeçalho desta tela e o respiro do shell. */
+/* `overflow: auto` e não `hidden`: com hidden, o que não cabe é cortado — e o
+   Pregão tem layout próprio que não reflui, então ficava clipado nas laterais em
+   janela estreita. Rolando, nada se perde. */
 .mercadologico-moldura {
   position: relative;
   height: calc(100vh - 11rem);
   min-height: 26rem;
-  overflow: hidden;
+  overflow: auto;
   border: 1px solid var(--border);
   border-radius: 0.75rem;
   background: var(--bg-elevated, #16161c);
 }
 
+/* min-width garante ao app embutido um viewport de desktop mesmo quando a janela
+   do Prisma é estreita. Sem isso ele recebe a largura do iframe, e como não reflui,
+   corta. Com isso, quem rola é a moldura. */
 .mercadologico-iframe {
   display: block;
   width: 100%;
+  min-width: 1180px;
   height: 100%;
   border: 0;
 }
