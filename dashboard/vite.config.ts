@@ -3,7 +3,10 @@ import react from '@vitejs/plugin-react'
 
 const apiProxy = {
   '/api': {
-    target: 'http://127.0.0.1:8003',
+    // 8004: esta é a árvore de empacotamento (branch feat/empacotamento-exe).
+    // A instalação oficial roda na 8003 — apontar para ela daqui faria o dev
+    // desta cópia mexer nos dados de produção.
+    target: 'http://127.0.0.1:8004',
     changeOrigin: true,
     // Summaries grandes (dezenas de MB); não cortar no meio.
     timeout: 600_000,

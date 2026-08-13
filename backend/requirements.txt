@@ -3,6 +3,13 @@ uvicorn[standard]
 pandas
 numpy
 openpyxl
+# Leitor de xlsx ~7x mais rapido que o openpyxl (98s -> 13s numa base de
+# 54 MB). Custa 1,6 MB no pacote; ver engine.analise_funil._engine_excel.
+python-calamine
 reportlab
 python-docx
 python-multipart
+# Ícone na bandeja do Windows: é a interface do app depois que a janela do
+# console fecha. Pillow vem por exigência do pystray, só para o ícone.
+pystray
+pillow

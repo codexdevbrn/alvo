@@ -19,6 +19,30 @@ function authHeaders(): HeadersInit {
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
+/**
+ * `fetch` com mensagem legível quando a requisição não chega ao backend.
+ *
+ * O `fetch` nativo lança `TypeError: Failed to fetch` para qualquer falha de rede,
+ * e esse texto vazava para a tela sem dizer nada ao usuário. Acontece de verdade em
+ * dois casos: o Prisma foi encerrado (pela bandeja ou pelo Gerenciador de Tarefas)
+ * e a aba continuou aberta; ou ele está reiniciando no meio de uma atualização.
+ *
+ * `AbortError` é repassado como está — cancelamento é fluxo normal de quem troca de
+ * empresa antes de a requisição anterior terminar, e virar mensagem de erro seria
+ * ruído.
+ */
+async function chamar(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (erro) {
+    if (erro instanceof DOMException && erro.name === 'AbortError') throw erro;
+    throw new Error(
+      'O Prisma não respondeu. Ele pode ter sido encerrado ou estar reiniciando '
+      + 'após uma atualização — recarregue a página.',
+    );
+  }
+}
+
 async function tratarResposta<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const texto = await res.text().catch(() => '');
@@ -57,7 +81,7 @@ async function tratarResposta<T>(res: Response): Promise<T> {
 }
 
 export async function login(usuario: string, senha: string): Promise<string> {
-  const res = await fetch('/api/login', {
+  const res = await chamar('/api/login', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ usuario, senha }),
@@ -78,7 +102,7 @@ export interface CategoriaCatalogo {
 }
 
 export async function obterCatalogo(): Promise<CategoriaCatalogo[]> {
-  const res = await fetch('/api/catalogo', { headers: authHeaders() });
+  const res = await chamar('/api/catalogo', { headers: authHeaders() });
   return tratarResposta(res);
 }
 
@@ -104,7 +128,7 @@ export async function obterBase(
   if (empresa) params.set('empresa', empresa);
   if (loja) params.set('loja', loja);
   const qs = params.toString() ? `?${params}` : '';
-  const res = await fetch(`/api/base${qs}`, { headers: authHeaders() });
+  const res = await chamar(`/api/base${qs}`, { headers: authHeaders() });
   return tratarResposta(res);
 }
 
@@ -169,7 +193,7 @@ export interface ParametrosGrupos {
 export async function obterPreviaGrupos(
   parametros: ParametrosGrupos,
 ): Promise<{ cortes_clientes: [number, number, number]; grupos: Grupo[]; itens: ItemClientePrevia[] }> {
-  const res = await fetch('/api/grupos/previa', {
+  const res = await chamar('/api/grupos/previa', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(parametros),
@@ -198,7 +222,7 @@ export async function obterPreviaProdutos(parametros: {
   produtos_demais: string[];
   produtos_nao_harmonizados: string[];
 }> {
-  const res = await fetch('/api/produtos/previa', {
+  const res = await chamar('/api/produtos/previa', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(parametros),
@@ -207,7 +231,7 @@ export async function obterPreviaProdutos(parametros: {
 }
 
 export async function obterCaminhoFonteDados(auth = false): Promise<string | null> {
-  const res = await fetch(
+  const res = await chamar(
     auth ? '/api/config/caminho-fonte-dados' : '/api/dashboard/caminho-fonte-dados',
     { headers: auth ? authHeaders() : {} },
   );
@@ -216,7 +240,7 @@ export async function obterCaminhoFonteDados(auth = false): Promise<string | nul
 }
 
 export async function definirCaminhoFonteDados(caminho: string, auth = false): Promise<string> {
-  const res = await fetch(
+  const res = await chamar(
     auth ? '/api/config/caminho-fonte-dados' : '/api/dashboard/caminho-fonte-dados',
     {
       method: 'POST',
@@ -229,7 +253,7 @@ export async function definirCaminhoFonteDados(caminho: string, auth = false): P
 }
 
 export async function obterCaminhoTrabalho(auth = false): Promise<string | null> {
-  const res = await fetch(
+  const res = await chamar(
     auth ? '/api/config/caminho-trabalho' : '/api/dashboard/caminho-trabalho',
     { headers: auth ? authHeaders() : {} },
   );
@@ -238,7 +262,7 @@ export async function obterCaminhoTrabalho(auth = false): Promise<string | null>
 }
 
 export async function definirCaminhoTrabalho(caminho: string, auth = false): Promise<string> {
-  const res = await fetch(
+  const res = await chamar(
     auth ? '/api/config/caminho-trabalho' : '/api/dashboard/caminho-trabalho',
     {
       method: 'POST',
@@ -252,7 +276,7 @@ export async function definirCaminhoTrabalho(caminho: string, auth = false): Pro
 
 /** Público — usado pelo Dashboard para mostrar o aviso de base em montagem. */
 export async function obterAguardandoBaseDados(auth = false): Promise<boolean> {
-  const res = await fetch(
+  const res = await chamar(
     auth ? '/api/config/aguardando-base-dados' : '/api/dashboard/aguardando-base-dados',
     { headers: auth ? authHeaders() : {} },
   );
@@ -261,7 +285,7 @@ export async function obterAguardandoBaseDados(auth = false): Promise<boolean> {
 }
 
 export async function definirAguardandoBaseDados(aguardando: boolean, auth = false): Promise<boolean> {
-  const res = await fetch(
+  const res = await chamar(
     auth ? '/api/config/aguardando-base-dados' : '/api/dashboard/aguardando-base-dados',
     {
       method: 'POST',
@@ -294,12 +318,12 @@ export async function listarPastas(
 ): Promise<ListagemPastas> {
   const base = auth ? '/api/config/listar-pastas' : '/api/dashboard/listar-pastas';
   const qs = caminho ? `?caminho=${encodeURIComponent(caminho)}` : '';
-  const res = await fetch(`${base}${qs}`, { headers: auth ? authHeaders() : {} });
+  const res = await chamar(`${base}${qs}`, { headers: auth ? authHeaders() : {} });
   return tratarResposta<ListagemPastas>(res);
 }
 
 export async function listarEmpresas(): Promise<string[]> {
-  const res = await fetch('/api/empresas', { headers: authHeaders() });
+  const res = await chamar('/api/empresas', { headers: authHeaders() });
   return tratarResposta(res);
 }
 
@@ -315,7 +339,7 @@ export async function salvarConfiguracaoEmpresa(
   dados: unknown,
   loja?: string | null,
 ): Promise<{ ok: boolean; caminho: string; loja?: string | null }> {
-  const res = await fetch(
+  const res = await chamar(
     `/api/empresas/${encodeURIComponent(nome)}/configuracao${queryLoja(loja)}`,
     {
       method: 'POST',
@@ -354,7 +378,7 @@ export async function carregarConfiguracaoEmpresa<T = ConfigEmpresaSalva>(
   nome: string,
   loja?: string | null,
 ): Promise<T> {
-  const res = await fetch(
+  const res = await chamar(
     `/api/empresas/${encodeURIComponent(nome)}/configuracao${queryLoja(loja)}`,
     { headers: authHeaders() },
   );
@@ -366,7 +390,7 @@ export async function tentarCarregarConfiguracaoEmpresa(
   nome: string,
   loja?: string | null,
 ): Promise<ConfigEmpresaSalva | null> {
-  const res = await fetch(
+  const res = await chamar(
     `/api/empresas/${encodeURIComponent(nome)}/configuracao${queryLoja(loja)}`,
     { headers: authHeaders() },
   );
@@ -410,7 +434,7 @@ export async function obterTagsClientes(
   empresa: string,
   loja?: string | null,
 ): Promise<TagsClientesResposta> {
-  const res = await fetch(
+  const res = await chamar(
     `/api/empresas/${encodeURIComponent(empresa)}/clientes-tags${queryLoja(loja)}`,
     { headers: authHeaders() },
   );
@@ -422,7 +446,7 @@ export async function salvarCatalogoTags(
   catalogo: TagCatalogoItem[],
   loja?: string | null,
 ): Promise<TagsClientesResposta> {
-  const res = await fetch(
+  const res = await chamar(
     `/api/empresas/${encodeURIComponent(empresa)}/clientes-tags/catalogo${queryLoja(loja)}`,
     {
       method: 'PUT',
@@ -438,7 +462,7 @@ export async function salvarGruposManuais(
   grupos: GrupoManualClientes[],
   loja?: string | null,
 ): Promise<TagsClientesResposta> {
-  const res = await fetch(
+  const res = await chamar(
     `/api/empresas/${encodeURIComponent(empresa)}/clientes-grupos${queryLoja(loja)}`,
     {
       method: 'PUT',
@@ -465,7 +489,7 @@ export async function buscarClientes(
   if (loja) params.set('loja', loja);
   if (q.trim()) params.set('q', q.trim());
   params.set('limite', String(limite));
-  const res = await fetch(`/api/clientes/buscar?${params}`, { headers: authHeaders() });
+  const res = await chamar(`/api/clientes/buscar?${params}`, { headers: authHeaders() });
   const dados = await tratarResposta<{ itens: ItemClienteBusca[] }>(res);
   return Array.isArray(dados.itens) ? dados.itens : [];
 }
@@ -476,7 +500,7 @@ export async function salvarTagsUmCliente(
   tags: TagCliente[],
   loja?: string | null,
 ): Promise<TagsClientesResposta> {
-  const res = await fetch(
+  const res = await chamar(
     `/api/empresas/${encodeURIComponent(empresa)}/clientes-tags/cliente${queryLoja(loja)}`,
     {
       method: 'PUT',
@@ -538,7 +562,7 @@ export async function obterExplorarSchema(
   if (empresa) params.set('empresa', empresa);
   if (loja) params.set('loja', loja);
   const q = params.toString() ? `?${params}` : '';
-  const res = await fetch(`/api/explorar/schema${q}`, { headers: authHeaders(), signal });
+  const res = await chamar(`/api/explorar/schema${q}`, { headers: authHeaders(), signal });
   return tratarResposta(res);
 }
 
@@ -546,7 +570,7 @@ export async function explorarAgregar(
   parametros: ParametrosExplorar,
   signal?: AbortSignal,
 ): Promise<ExplorarAgregado> {
-  const res = await fetch('/api/explorar/agregar', {
+  const res = await chamar('/api/explorar/agregar', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(parametros),
@@ -556,7 +580,7 @@ export async function explorarAgregar(
 }
 
 export async function ensureBaseEmpresa(nome: string): Promise<void> {
-  const res = await fetch(`/api/empresas/${encodeURIComponent(nome)}/ensure-base`, {
+  const res = await chamar(`/api/empresas/${encodeURIComponent(nome)}/ensure-base`, {
     method: 'POST',
     headers: authHeaders(),
   });
@@ -568,7 +592,124 @@ export async function ensureBaseEmpresa(nome: string): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function listarEmpresasDashboard(): Promise<string[]> {
-  const res = await fetch('/api/dashboard/empresas');
+  const res = await chamar('/api/dashboard/empresas');
+  return tratarResposta(res);
+}
+
+export interface VersaoApp {
+  versao: string;
+  app: string;
+}
+
+/** Versão do backend em execução. Exibida em Configurações para o suporte. */
+export async function obterVersao(): Promise<VersaoApp> {
+  const res = await chamar('/api/versao');
+  return tratarResposta(res);
+}
+
+export interface StatusAtualizacao {
+  versao_atual: string;
+  versao_disponivel: string | null;
+  /** Só true quando o pacote está no canal e íntegro; o botão depende disto. */
+  atualizavel: boolean;
+  /** Sempre preenchido, inclusive quando não há o que atualizar. */
+  motivo: string;
+  notas: string;
+  data: string;
+}
+
+export async function obterCaminhoAtualizacoes(): Promise<string> {
+  const res = await chamar('/api/config/caminho-atualizacoes', { headers: authHeaders() });
+  const dados = await tratarResposta<{ caminho: string | null }>(res);
+  return dados.caminho ?? '';
+}
+
+/** Caminho vazio limpa o canal e desliga a verificação de atualização. */
+export async function definirCaminhoAtualizacoes(caminho: string): Promise<string> {
+  const res = await chamar('/api/config/caminho-atualizacoes', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ caminho }),
+  });
+  const dados = await tratarResposta<{ caminho: string }>(res);
+  return dados.caminho;
+}
+
+/**
+ * Status do canal. O backend responde de um cache de 15 min alimentado no boot;
+ * `forcar` ignora o cache, para quando o usuário pede a verificação na mão.
+ */
+export interface EstadoPasta {
+  suportado: boolean;
+  caminho: string | null;
+  arquivos: number;
+  fixados: number;
+  /** Arquivos que ainda são placeholder: a primeira leitura paga o download. */
+  na_nuvem: number;
+  bytes: number;
+}
+
+export interface DadosNoDisco {
+  fonte: EstadoPasta;
+  trabalho: EstadoPasta;
+}
+
+export async function obterDadosNoDisco(): Promise<DadosNoDisco> {
+  const res = await chamar('/api/config/dados-no-disco', { headers: authHeaders() });
+  return tratarResposta(res);
+}
+
+export async function definirDadosNoDisco(fixar: boolean): Promise<DadosNoDisco> {
+  const res = await chamar('/api/config/dados-no-disco', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ fixar }),
+  });
+  return tratarResposta(res);
+}
+
+export interface InicioAutomatico {
+  /** false na versão rodando do fonte: não há executável para agendar. */
+  disponivel: boolean;
+  logon: boolean;
+  /** "HH:MM" ou null quando não há agendamento. */
+  horario: string | null;
+  motivo: string;
+}
+
+export async function obterInicioAutomatico(): Promise<InicioAutomatico> {
+  const res = await chamar('/api/config/inicio-automatico', { headers: authHeaders() });
+  return tratarResposta(res);
+}
+
+export async function definirInicioAutomatico(
+  logon: boolean,
+  horario: string | null,
+): Promise<InicioAutomatico> {
+  const res = await chamar('/api/config/inicio-automatico', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ logon, horario }),
+  });
+  return tratarResposta(res);
+}
+
+export async function obterStatusAtualizacao(forcar = false): Promise<StatusAtualizacao> {
+  const url = forcar ? '/api/atualizacoes/status?forcar=true' : '/api/atualizacoes/status';
+  const res = await chamar(url, { headers: authHeaders() });
+  return tratarResposta(res);
+}
+
+/**
+ * Dispara a troca da instalação. O backend responde e então se encerra, por isso
+ * quem chama deve tratar a perda de conexão a seguir como esperada, não como
+ * falha — o app volta sozinho em alguns instantes.
+ */
+export async function aplicarAtualizacao(): Promise<{ versao: string; mensagem: string }> {
+  const res = await chamar('/api/atualizacoes/aplicar', {
+    method: 'POST',
+    headers: authHeaders(),
+  });
   return tratarResposta(res);
 }
 
@@ -580,7 +721,7 @@ export async function regenerarBaseEmpresa(
   const url = auth
     ? `/api/empresas/${encodeURIComponent(empresa)}/regenerar-base`
     : `/api/dashboard/empresas/${encodeURIComponent(empresa)}/regenerar-base`;
-  const res = await fetch(url, {
+  const res = await chamar(url, {
     method: 'POST',
     headers: auth ? authHeaders() : undefined,
   });
@@ -589,7 +730,7 @@ export async function regenerarBaseEmpresa(
 
 export async function obterSummaryEmpresa(empresa: string, signal?: AbortSignal): Promise<DashboardData> {
   try {
-    const res = await fetch(`/api/dashboard/summary/${encodeURIComponent(empresa)}`, { signal });
+    const res = await chamar(`/api/dashboard/summary/${encodeURIComponent(empresa)}`, { signal });
     const data = await tratarResposta<DashboardData>(res);
     const ultimo = res.headers.get('X-Ultimo-Movimento');
     if (ultimo) {
@@ -623,7 +764,7 @@ export interface RespostaAnalise {
 }
 
 export async function analisar(parametros: ParametrosAnalise): Promise<RespostaAnalise> {
-  const res = await fetch('/api/analisar', {
+  const res = await chamar('/api/analisar', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(parametros),
@@ -643,7 +784,7 @@ export async function exportarRelatorio(
   parametros: ParametrosAnalise,
   resultadoId?: string | null,
 ): Promise<Blob> {
-  const res = await fetch(`/api/exportar/${formato}`, {
+  const res = await chamar(`/api/exportar/${formato}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -707,12 +848,12 @@ export async function obterMonitorEmpresas(
   if (parametros.metrica) query.set('metrica', parametros.metrica);
   if (parametros.meses) query.set('meses', String(parametros.meses));
   if (parametros.forcar) query.set('forcar', 'true');
-  const res = await fetch(`/api/monitor/empresas?${query}`, { headers: authHeaders(), signal });
+  const res = await chamar(`/api/monitor/empresas?${query}`, { headers: authHeaders(), signal });
   return tratarResposta(res);
 }
 
 export async function salvarFavoritas(empresas: string[]): Promise<{ empresas: string[] }> {
-  const res = await fetch('/api/monitor/favoritas', {
+  const res = await chamar('/api/monitor/favoritas', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ empresas }),

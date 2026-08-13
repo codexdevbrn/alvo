@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { FolderOpen, Loader2, Pencil, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
+import { Download, FolderOpen, Loader2, Pencil, Plus, RefreshCw, Save, Trash2 } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
 import { NumberStepper } from '../components/analisador/NumberStepper';
 import { PastaPickerModal } from '../components/PastaPickerModal';
@@ -12,13 +12,25 @@ import {
   obterAguardandoBaseDados,
   obterCaminhoFonteDados,
   obterCaminhoTrabalho,
+  aplicarAtualizacao,
+  definirCaminhoAtualizacoes,
+  definirDadosNoDisco,
+  definirInicioAutomatico,
+  obterCaminhoAtualizacoes,
+  obterDadosNoDisco,
+  obterInicioAutomatico,
+  obterStatusAtualizacao,
   obterTagsClientes,
+  obterVersao,
   regenerarBaseEmpresa,
   salvarCatalogoTags,
   salvarConfiguracaoEmpresa,
   tentarCarregarConfiguracaoEmpresa,
   TAGS_CATALOGO_PADRAO,
   type ConfigEmpresaSalva,
+  type DadosNoDisco,
+  type InicioAutomatico,
+  type StatusAtualizacao,
   type TagCatalogoItem,
 } from '../api/client';
 import { invalidarSummary } from '../utils/cacheSummary';
@@ -65,6 +77,22 @@ function novoIdTag(rotulo: string, existentes: Set<string>): string {
   return id;
 }
 
+function formatarGB(bytes: number): string {
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2).replace('.', ',')} GB`;
+}
+
+/** Resumo do que está baixado, para o usuário decidir sabendo o custo em disco. */
+function formatarDadosDisco(dados: DadosNoDisco): string {
+  const arquivos = dados.fonte.arquivos + dados.trabalho.arquivos;
+  const bytes = dados.fonte.bytes + dados.trabalho.bytes;
+  const naNuvem = dados.fonte.na_nuvem + dados.trabalho.na_nuvem;
+  const tamanho = `${formatarGB(bytes)} em ${arquivos} arquivos`;
+  if (naNuvem === 0) {
+    return `${tamanho} — tudo já está baixado. Marcado, o OneDrive não os transforma em atalho para liberar espaço.`;
+  }
+  return `${tamanho}, dos quais ${naNuvem} ainda estão só na nuvem — a primeira leitura de cada um espera o download.`;
+}
+
 /** Uma única tela de Configurações, organizada por setores. */
 export default function ConfiguracoesPage() {
   const [, setEmpresas] = useState<string[]>([]);
@@ -74,9 +102,22 @@ export default function ConfiguracoesPage() {
   const [sincronizando, setSincronizando] = useState(false);
   const [salvando, setSalvando] = useState(false);
   const [regenerando, setRegenerando] = useState(false);
-  const [buscando, setBuscando] = useState<'fonte' | 'trabalho' | null>(null);
+  const [buscando, setBuscando] = useState<'fonte' | 'trabalho' | 'atualizacoes' | null>(null);
+  const [caminhoAtualizacoes, setCaminhoAtualizacoes] = useState('');
+  const [statusAtualizacao, setStatusAtualizacao] = useState<StatusAtualizacao | null>(null);
+  const [verificandoAtualizacao, setVerificandoAtualizacao] = useState(false);
+  const [aplicandoAtualizacao, setAplicandoAtualizacao] = useState(false);
+  const [feedbackAtualizacao, setFeedbackAtualizacao] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
+  const [inicio, setInicio] = useState<InicioAutomatico | null>(null);
+  const [dadosDisco, setDadosDisco] = useState<DadosNoDisco | null>(null);
+  const [salvandoDisco, setSalvandoDisco] = useState(false);
+  const [horarioInicio, setHorarioInicio] = useState('08:00');
+  const [comHorario, setComHorario] = useState(false);
+  const [salvandoInicio, setSalvandoInicio] = useState(false);
+  const [feedbackInicio, setFeedbackInicio] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
   const [feedbackDados, setFeedbackDados] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
   const [aguardandoBaseDados, setAguardandoBaseDados] = useState(false);
+  const [versao, setVersao] = useState<string | null>(null);
   const [salvandoFlag, setSalvandoFlag] = useState(false);
 
   const [tagsCatalogo, setTagsCatalogo] = useState<TagCatalogoItem[]>(TAGS_CATALOGO_PADRAO);
@@ -127,6 +168,76 @@ export default function ConfiguracoesPage() {
       setFeedbackDados({ tipo: 'erro', texto: e instanceof Error ? e.message : 'Falha ao salvar a flag.' });
     } finally {
       setSalvandoFlag(false);
+    }
+  };
+
+  useEffect(() => {
+    // Versão é informativa: se a chamada falhar, o rodapé simplesmente não
+    // aparece — nada aqui depende dela.
+    void obterVersao()
+      .then((info) => setVersao(info.versao))
+      .catch(() => setVersao(null));
+  }, []);
+
+  useEffect(() => {
+    // Consulta o canal ao abrir a tela. O backend já trata canal ausente ou
+    // fora do ar como estado normal, então não há erro a exibir aqui.
+    void obterCaminhoAtualizacoes()
+      .then(async (caminho) => {
+        setCaminhoAtualizacoes(caminho);
+        setStatusAtualizacao(await obterStatusAtualizacao());
+      })
+      .catch(() => setStatusAtualizacao(null));
+  }, []);
+
+  useEffect(() => {
+    void obterDadosNoDisco().then(setDadosDisco).catch(() => setDadosDisco(null));
+  }, []);
+
+  const alternarDadosNoDisco = async (fixar: boolean) => {
+    setSalvandoDisco(true);
+    setFeedbackDados(null);
+    try {
+      setDadosDisco(await definirDadosNoDisco(fixar));
+      setFeedbackDados({
+        tipo: 'ok',
+        texto: fixar
+          ? 'Os dados serão mantidos nesta máquina. O download roda em segundo plano.'
+          : 'O OneDrive pode liberar espaço removendo os arquivos locais.',
+      });
+    } catch (erro) {
+      setFeedbackDados({ tipo: 'erro', texto: (erro as Error).message });
+    } finally {
+      setSalvandoDisco(false);
+    }
+  };
+
+  useEffect(() => {
+    void obterInicioAutomatico()
+      .then((estado) => {
+        setInicio(estado);
+        setComHorario(estado.horario !== null);
+        if (estado.horario) setHorarioInicio(estado.horario);
+      })
+      .catch(() => setInicio(null));
+  }, []);
+
+  const salvarInicio = async (logon: boolean, horario: string | null) => {
+    setSalvandoInicio(true);
+    setFeedbackInicio(null);
+    try {
+      const estado = await definirInicioAutomatico(logon, horario);
+      setInicio(estado);
+      setComHorario(estado.horario !== null);
+      if (estado.horario) setHorarioInicio(estado.horario);
+      setFeedbackInicio({ tipo: 'ok', texto: 'Configuração de inicialização salva.' });
+    } catch (erro) {
+      setFeedbackInicio({ tipo: 'erro', texto: (erro as Error).message });
+      // Recarrega o estado real: o backend pode ter aplicado uma das duas coisas
+      // antes de falhar na outra, e deixar a tela mentindo seria pior.
+      void obterInicioAutomatico().then(setInicio).catch(() => { /* mantém */ });
+    } finally {
+      setSalvandoInicio(false);
     }
   };
 
@@ -264,8 +375,41 @@ export default function ConfiguracoesPage() {
     } else if (buscando === 'trabalho') {
       setCaminhoTrabalho(caminho);
       gravarLocal(LS_CAMINHO_TRABALHO, caminho);
+    } else if (buscando === 'atualizacoes') {
+      setCaminhoAtualizacoes(caminho);
     }
     setBuscando(null);
+  };
+
+  const aplicar = async () => {
+    setAplicandoAtualizacao(true);
+    setFeedbackAtualizacao(null);
+    try {
+      const { mensagem } = await aplicarAtualizacao();
+      setFeedbackAtualizacao({ tipo: 'ok', texto: mensagem });
+      // O backend se encerra logo após responder, então daqui para frente não há
+      // mais nada a fazer nesta aba: o atualizador religa o app e o usuário
+      // recarrega. Deixar o botão travado evita um segundo clique inútil.
+    } catch (erro) {
+      setFeedbackAtualizacao({ tipo: 'erro', texto: (erro as Error).message });
+      setAplicandoAtualizacao(false);
+    }
+  };
+
+  /** Salva o canal e já consulta, para o usuário ver o resultado num clique. */
+  const salvarCanalEVerificar = async () => {
+    setVerificandoAtualizacao(true);
+    setFeedbackAtualizacao(null);
+    try {
+      const salvo = await definirCaminhoAtualizacoes(caminhoAtualizacoes);
+      setCaminhoAtualizacoes(salvo);
+      setStatusAtualizacao(await obterStatusAtualizacao());
+    } catch (erro) {
+      setStatusAtualizacao(null);
+      setFeedbackAtualizacao({ tipo: 'erro', texto: (erro as Error).message });
+    } finally {
+      setVerificandoAtualizacao(false);
+    }
   };
 
   const ocupado = sincronizando || salvando || regenerando;
@@ -405,6 +549,27 @@ export default function ConfiguracoesPage() {
               Onde o app grava summary, config.json e caches. Deve ser distinta da fonte.
             </p>
 
+            {dadosDisco?.fonte.suportado && (
+              <>
+                <label className="analisador-check-linha">
+                  <input
+                    type="checkbox"
+                    checked={
+                      dadosDisco.fonte.arquivos > 0
+                      && dadosDisco.fonte.fixados === dadosDisco.fonte.arquivos
+                      && dadosDisco.trabalho.fixados === dadosDisco.trabalho.arquivos
+                    }
+                    onChange={(e) => void alternarDadosNoDisco(e.target.checked)}
+                    disabled={salvandoDisco}
+                  />
+                  Manter os dados sempre nesta máquina
+                </label>
+                <p className="analisador-hint">
+                  {formatarDadosDisco(dadosDisco)}
+                </p>
+              </>
+            )}
+
             <label className="analisador-check-linha">
               <input
                 type="checkbox"
@@ -446,7 +611,147 @@ export default function ConfiguracoesPage() {
             </div>
           </section>
 
-          {/* ——— Setor 2: Tags ——— */}
+          {/* ——— Setor 2: Atualizações ——— */}
+          <section className="glass-card glass-card-flat config-page-card" aria-labelledby="setor-atualizacoes">
+            <h2 id="setor-atualizacoes" className="config-page-card-titulo">Atualizações</h2>
+            <p className="config-page-card-desc">
+              Pasta compartilhada de onde o Prisma lê as novas versões publicadas.
+            </p>
+
+            <label className="analisador-campo">
+              <span>Canal de atualização (somente leitura)</span>
+              <div className="caminho-pasta-row">
+                <input
+                  className="analisador-input"
+                  value={caminhoAtualizacoes}
+                  onChange={(e) => setCaminhoAtualizacoes(e.target.value)}
+                  placeholder="Ex.: C:\...\OneDrive - Empresa\Prisma\atualizacoes"
+                />
+                <button
+                  type="button"
+                  className="analisador-btn analisador-btn-sec caminho-pasta-btn"
+                  onClick={() => setBuscando('atualizacoes')}
+                  disabled={verificandoAtualizacao}
+                  aria-label="Buscar pasta do canal de atualização"
+                >
+                  <FolderOpen size={14} />
+                  Buscar
+                </button>
+              </div>
+            </label>
+            <p className="analisador-hint">
+              A pasta precisa ter o version.json e o pacote da versão. Deixe em branco para
+              desligar a verificação de atualizações.
+            </p>
+
+            {statusAtualizacao && (
+              <p
+                className="config-page-atualizacao-status"
+                role="status"
+                data-disponivel={statusAtualizacao.atualizavel ? 'sim' : 'nao'}
+              >
+                {statusAtualizacao.motivo}
+                {statusAtualizacao.atualizavel && statusAtualizacao.notas
+                  ? ` — ${statusAtualizacao.notas}`
+                  : ''}
+              </p>
+            )}
+
+            {feedbackAtualizacao && (
+              <p
+                className="config-page-feedback"
+                style={{ color: feedbackAtualizacao.tipo === 'erro' ? '#f43f5e' : '#34d399' }}
+                role={feedbackAtualizacao.tipo === 'erro' ? 'alert' : 'status'}
+              >
+                {feedbackAtualizacao.texto}
+              </p>
+            )}
+
+            <div className="config-page-card-acoes">
+              <button
+                type="button"
+                className="analisador-btn analisador-btn-sec"
+                onClick={() => void salvarCanalEVerificar()}
+                disabled={verificandoAtualizacao}
+              >
+                {verificandoAtualizacao
+                  ? <Loader2 size={14} className="dashboard-filter-spinner" />
+                  : <RefreshCw size={14} />}
+                Salvar e verificar
+              </button>
+              {statusAtualizacao?.atualizavel && (
+                <button
+                  type="button"
+                  className="analisador-btn analisador-btn-pri"
+                  onClick={() => void aplicar()}
+                  disabled={verificandoAtualizacao || aplicandoAtualizacao}
+                >
+                  {aplicandoAtualizacao
+                    ? <Loader2 size={14} className="dashboard-filter-spinner" />
+                    : <Download size={14} />}
+                  Atualizar para {statusAtualizacao.versao_disponivel}
+                </button>
+              )}
+            </div>
+          </section>
+
+          {/* ——— Setor 3: Inicialização ——— */}
+          {inicio?.disponivel && (
+            <section className="glass-card glass-card-flat config-page-card" aria-labelledby="setor-inicio">
+              <h2 id="setor-inicio" className="config-page-card-titulo">Inicialização</h2>
+              <p className="config-page-card-desc">
+                Quando o Prisma deve abrir sozinho nesta máquina.
+              </p>
+
+              <label className="analisador-check-linha">
+                <input
+                  type="checkbox"
+                  checked={inicio.logon}
+                  onChange={(e) => void salvarInicio(e.target.checked, comHorario ? horarioInicio : null)}
+                  disabled={salvandoInicio}
+                />
+                Abrir junto com o Windows
+              </label>
+
+              <label className="analisador-check-linha">
+                <input
+                  type="checkbox"
+                  checked={comHorario}
+                  onChange={(e) => {
+                    setComHorario(e.target.checked);
+                    void salvarInicio(inicio.logon, e.target.checked ? horarioInicio : null);
+                  }}
+                  disabled={salvandoInicio}
+                />
+                Abrir todo dia às
+                <input
+                  type="time"
+                  className="analisador-input config-page-inicio-hora"
+                  value={horarioInicio}
+                  onChange={(e) => setHorarioInicio(e.target.value)}
+                  onBlur={() => { if (comHorario) void salvarInicio(inicio.logon, horarioInicio); }}
+                  disabled={salvandoInicio || !comHorario}
+                  aria-label="Horário para abrir o Prisma"
+                />
+              </label>
+              <p className="analisador-hint">
+                O horário só vale com a máquina ligada. Se o Prisma já estiver aberto na hora,
+                nada acontece — ele apenas traz a janela do navegador.
+              </p>
+
+              {feedbackInicio && (
+                <p
+                  className="config-page-feedback"
+                  style={{ color: feedbackInicio.tipo === 'erro' ? '#f43f5e' : '#34d399' }}
+                  role={feedbackInicio.tipo === 'erro' ? 'alert' : 'status'}
+                >
+                  {feedbackInicio.texto}
+                </p>
+              )}
+            </section>
+          )}
+
+          {/* ——— Setor 4: Tags ——— */}
           <section className="glass-card glass-card-flat config-page-card config-tipos-card" aria-labelledby="setor-tags">
             <div className="config-tipos-head">
               <h2 id="setor-tags" className="config-page-card-titulo">Tags de clientes</h2>
@@ -707,6 +1012,7 @@ export default function ConfiguracoesPage() {
             )}
           </section>
         </div>
+        {versao && <footer className="config-page-versao">Prisma v{versao}</footer>}
       </div>
       <PastaPickerModal
         aberto={buscando !== null}

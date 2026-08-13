@@ -619,6 +619,31 @@ h3 {
   font-size: 0.88rem;
 }
 
+/* Status do canal de atualização. Só ganha destaque quando há release nova de
+   verdade — "você já está na versão mais recente" é informação de rotina e
+   destacá-la treinaria o usuário a ignorar a linha. */
+.config-page-atualizacao-status {
+  margin: 0;
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+}
+
+.config-page-atualizacao-status[data-disponivel='sim'] {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+/* Versão em execução — dado de suporte, não de navegação: fica discreto no fim
+   da página, sem competir com o conteúdo. */
+.config-page-versao {
+  margin: 0.5rem 0 0;
+  text-align: right;
+  font-size: 0.75rem;
+  letter-spacing: 0.04em;
+  color: var(--text-secondary);
+  opacity: 0.6;
+}
+
 .config-page-setor-bloqueado {
   display: flex;
   flex-wrap: wrap;
@@ -5034,7 +5059,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 .monitor-card {
   position: relative;
   min-width: 0;
-  min-height: 17.5rem;
+  min-height: 13.5rem;
   padding: 0;
   overflow: hidden;
   transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
@@ -5114,6 +5139,17 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   white-space: nowrap;
 }
 
+/* Empurrada para a direita da linha do nome; `flex: 0 0 auto` para o nome longo
+   ser truncado em vez de comprimir a data. O padding-right do .monitor-card-topo
+   reserva o espaço da estrela. */
+.monitor-card-data {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: var(--text-muted);
+  font-size: 0.64rem;
+  white-space: nowrap;
+}
+
 .monitor-favorita-tag {
   flex: 0 0 auto;
   padding: 0.12rem 0.4rem;
@@ -5163,11 +5199,21 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   opacity: 0.55;
 }
 
+/* Valor e variação na mesma linha: é o par que se lê junto — quanto foi e se
+   subiu ou caiu. Antes a variação ficava no rodapé, longe do número. */
+.monitor-kpi-linha {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
 .monitor-kpi {
   display: flex;
   flex-direction: column;
   gap: 0.12rem;
-  margin-top: 0.85rem;
+  margin-top: 0.5rem;
 }
 
 .monitor-kpi span {
@@ -5184,9 +5230,12 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   white-space: nowrap;
 }
 
+/* height e min-height juntos de propósito: o ResponsiveContainer do Recharts lê a
+   altura do contêiner, e um min-height maior que o height vence em silêncio — foi o
+   que manteve o gráfico em 7,4rem quando só o height mudou. */
 .monitor-sparkline {
-  height: 7.4rem;
-  min-height: 7.4rem;
+  height: 8.2rem;
+  min-height: 8.2rem;
   margin: 0.35rem -0.35rem 0;
   color: var(--text-muted);
   font-size: 0.72rem;
@@ -5219,10 +5268,12 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 0.35rem;
-  margin: 0.1rem 0 0.65rem;
-  padding: 0.55rem 0;
+  margin: 0.1rem 0 0.35rem;
+  padding: 0.4rem 0 0;
+  /* Só o traço de cima: separa o bloco do gráfico. As divisórias entre as três
+     colunas e a linha de baixo saíram a pedido — com rótulo e período em cada
+     coluna, o alinhamento já separa, e as bordas só somavam ruído. */
   border-top: 1px solid var(--border);
-  border-bottom: 1px solid var(--border);
 }
 
 .monitor-card-metrica {
@@ -5230,10 +5281,6 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   gap: 0.1rem;
   min-width: 0;
   padding-inline: 0.4rem;
-}
-
-.monitor-card-metrica + .monitor-card-metrica {
-  border-left: 1px solid var(--border);
 }
 
 .monitor-card-metrica span,
@@ -5264,16 +5311,6 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   font-size: 0.58rem;
 }
 
-.monitor-card-rodape {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin-top: auto;
-  color: var(--text-muted);
-  font-size: 0.67rem;
-}
-
 .monitor-variacao {
   display: inline-flex;
   align-items: center;
@@ -5285,12 +5322,6 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 .monitor-variacao.is-positiva { color: var(--success); }
 .monitor-variacao.is-negativa { color: var(--danger); }
 .monitor-variacao.is-neutra { color: var(--text-muted); }
-
-.monitor-parcial {
-  margin-top: 0.45rem;
-  color: var(--accent-hover);
-  font-size: 0.65rem;
-}
 
 .monitor-card-sem-base {
   display: flex;
@@ -5342,7 +5373,6 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   .monitor-busca { grid-column: auto; }
   .monitor-grid { grid-template-columns: minmax(0, 1fr); }
   .monitor-segmentado button { flex: 1; }
-  .monitor-card-rodape { align-items: flex-start; flex-direction: column; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -5354,4 +5384,185 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   }
 
   .monitor-card.is-esqueleto { opacity: 0.55; }
+}
+
+/* Ponto de aviso no ícone da sidebar (hoje: atualização disponível). Fica sobre o
+   ícone, não ao lado do rótulo, porque a sidebar recolhida esconde o texto e o
+   aviso precisa continuar visível. */
+.app-sidebar-nav-icon {
+  position: relative;
+}
+
+.app-sidebar-nav-aviso {
+  position: absolute;
+  top: -2px;
+  right: -3px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  /* Contorno na cor do painel para o ponto não encostar no traço do ícone. */
+  box-shadow: 0 0 0 2px var(--bg-elevated, #16161c);
+}
+
+/* Campo de hora dentro da linha de checkbox da Inicialização. Estreito porque só
+   contém HH:MM — com a largura padrão do input ficaria desproporcional ao lado do
+   texto da opção. */
+.config-page-inicio-hora {
+  width: auto;
+  min-width: 6.5rem;
+  margin-left: 0.4rem;
+}
+
+/* ==========================================================================
+   Faixa de atualização disponível (topo de qualquer tela)
+   ========================================================================== */
+
+/* Cor de acento em vez de vermelho/amarelo de alerta: é uma oferta, não um
+   problema. Fica no fluxo do conteúdo, e não fixa no topo, para não roubar
+   espaço permanente de quem ainda não quer atualizar. */
+.banner-atualizacao {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  margin-bottom: 1rem;
+  padding: 0.7rem 0.85rem;
+  border: 1px solid rgba(218, 187, 108, 0.45);
+  border-radius: 0.75rem;
+  background: var(--accent-soft);
+}
+
+.banner-atualizacao-texto {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  flex: 1;
+}
+
+.banner-atualizacao-texto strong {
+  color: var(--accent-hover);
+  font-size: 0.9rem;
+}
+
+.banner-atualizacao-texto span {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+}
+
+.banner-atualizacao-erro {
+  color: var(--danger) !important;
+}
+
+.banner-atualizacao-acao {
+  flex: 0 0 auto;
+}
+
+.banner-atualizacao-fechar {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  padding: 0.3rem;
+  border: 0;
+  border-radius: 0.4rem;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: pointer;
+}
+
+.banner-atualizacao-fechar:hover {
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+@media (max-width: 640px) {
+  .banner-atualizacao { flex-wrap: wrap; }
+  .banner-atualizacao-acao { width: 100%; justify-content: center; }
+}
+
+/* ==========================================================================
+   Dados mercadológicos (Pregão embutido)
+   ========================================================================== */
+
+.mercadologico-cabecalho {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.9rem;
+}
+
+.mercadologico-cabecalho h1 {
+  margin: 0;
+  font-size: 1.5rem;
+  font-weight: 800;
+}
+
+.mercadologico-cabecalho p {
+  margin: 0.15rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.mercadologico-acoes {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.5rem;
+}
+
+/* Altura calculada em vez de 100%: o iframe precisa de altura explícita para o
+   app interno ocupar a tela, e um pai em % não resolve dentro do fluxo do main.
+   O desconto cobre o cabeçalho desta tela e o respiro do shell. */
+/* `overflow: auto` e não `hidden`: com hidden, o que não cabe é cortado — e o
+   Pregão tem layout próprio que não reflui, então ficava clipado nas laterais em
+   janela estreita. Rolando, nada se perde. */
+.mercadologico-moldura {
+  position: relative;
+  height: calc(100vh - 11rem);
+  min-height: 26rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 0.75rem;
+  background: var(--bg-elevated, #16161c);
+}
+
+/* min-width garante ao app embutido um viewport de desktop mesmo quando a janela
+   do Prisma é estreita. Sem isso ele recebe a largura do iframe, e como não reflui,
+   corta. Com isso, quem rola é a moldura. */
+.mercadologico-iframe {
+  display: block;
+  width: 100%;
+  min-width: 1180px;
+  height: 100%;
+  border: 0;
+}
+
+/* Sobreposto ao iframe, e não no lugar dele: trocar de estado sem desmontar o
+   iframe evita recarregar o app externo a cada render. */
+.mercadologico-estado {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.6rem;
+  padding: 1.5rem;
+  color: var(--text-muted);
+  background: var(--bg-elevated, #16161c);
+  text-align: center;
+  font-size: 0.85rem;
+}
+
+.mercadologico-estado strong {
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+
+@media (max-width: 640px) {
+  .mercadologico-cabecalho { flex-direction: column; }
+  .mercadologico-acoes { width: 100%; }
+  .mercadologico-moldura { height: calc(100vh - 14rem); }
 }

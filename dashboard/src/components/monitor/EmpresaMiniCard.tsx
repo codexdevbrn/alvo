@@ -101,7 +101,10 @@ function Sparkline({ pontos, moeda }: { pontos: PontoSparkline[]; moeda: boolean
   return (
     <div className="monitor-sparkline">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={pontos} margin={{ top: 16, right: 18, left: 18, bottom: 4 }}>
+        {/* Margens enxutas: o que sobra aqui vira altura útil de plotagem, que é o
+            que faz a variação aparecer. `top` continua reservando espaço para os
+            rótulos de valor acima dos pontos. */}
+        <AreaChart data={pontos} margin={{ top: 14, right: 18, left: 18, bottom: 0 }}>
           <defs>
             <linearGradient id="monitorSpark" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={COR_ANO_RECENTE} stopOpacity={0.3} />
@@ -113,14 +116,27 @@ function Sparkline({ pontos, moeda }: { pontos: PontoSparkline[]; moeda: boolean
             axisLine={false}
             tickLine={false}
             // Reserva altura e afastamento reais para o texto. Com 14px e
-            // margem inferior zero, o SVG cortava a metade dos rótulos.
-            height={22}
-            tickMargin={5}
+            // margem inferior zero, o SVG cortava a metade dos rótulos — 18 é o
+            // mínimo que ainda mostra o texto inteiro.
+            height={18}
+            tickMargin={3}
             // Mostra ~4 marcas: com 12 períodos os rótulos se sobrepõem.
             interval={Math.max(0, Math.ceil(pontos.length / 4) - 1)}
           />
-          {/* Escondido, só para reservar folga vertical aos rótulos de valor. */}
-          <YAxis hide domain={[0, (max: number) => max * 1.3]} />
+          {/* Escondido, e com domínio ajustado à faixa dos dados em vez de começar
+              no zero: com base zero, uma série entre 4,3M e 6,3M ocupa a metade de
+              cima de uma escala de 0 a 8,2M e vira quase uma reta — a variação, que
+              é a razão do gráfico existir, desaparece. A folga embaixo é maior que
+              em cima porque os rótulos de valor alternam acima/abaixo do ponto.
+              Os números absolutos ficam nos rótulos, então a base não-zero não
+              esconde informação. */}
+          <YAxis
+            hide
+            domain={[
+              (min: number) => min - (min > 0 ? min * 0.35 : 0),
+              (max: number) => max * 1.12,
+            ]}
+          />
           <Tooltip
             content={<TooltipSparkline moeda={moeda} />}
             cursor={{ stroke: 'rgba(255,255,255,0.18)', strokeWidth: 1 }}
@@ -136,7 +152,12 @@ function Sparkline({ pontos, moeda }: { pontos: PontoSparkline[]; moeda: boolean
             // de quantos meses a linha cobre.
             dot={{ r: 2, fill: COR_ANO_RECENTE, strokeWidth: 0 }}
             activeDot={{ r: 3.5, fill: '#fff', stroke: COR_ANO_RECENTE, strokeWidth: 2 }}
-            label={(props: object) => <RotuloIntercalado {...props} moeda={moeda} />}
+            // `total` explícito: o Recharts não o passa no render prop, e sem ele
+            // `ultimo` era sempre falso — o último ponto, que é o número que se lê
+            // primeiro, ficava sem rótulo sempre que a série tinha tamanho par.
+            label={(props: object) => (
+              <RotuloIntercalado {...props} total={pontos.length} moeda={moeda} />
+            )}
           />
         </AreaChart>
       </ResponsiveContainer>
@@ -220,6 +241,13 @@ function EmpresaMiniCardInterno({
         <div className="monitor-card-topo">
           <h2 title={item.empresa}>{item.empresa}</h2>
           {favorita && <span className="monitor-favorita-tag">favorita</span>}
+          {/* Data na linha do nome, e não num rodapé próprio: é metadado do card, e
+              uma linha inteira só para ela custava altura em dezenas de cards. */}
+          {item.updated_at && (
+            <span className="monitor-card-data" title="Última atualização">
+              {item.updated_at}
+            </span>
+          )}
         </div>
 
         {semBase ? (
@@ -233,7 +261,35 @@ function EmpresaMiniCardInterno({
               <span>
                 {ROTULOS_METRICA[metrica]} · {ehMedia ? 'média por dia útil' : 'total do período'}
               </span>
-              <strong>{moeda ? formatCurrency(destaque) : formatNumber(destaque)}</strong>
+              {/* Variação ao lado do valor, e não no rodapé: é o par que o usuário
+                  lê junto — quanto foi e se subiu ou caiu. */}
+              <div className="monitor-kpi-linha">
+                <strong>{moeda ? formatCurrency(destaque) : formatNumber(destaque)}</strong>
+                {variacao != null ? (
+                  <span
+                    className={`monitor-variacao ${classeVariacao}`}
+                    title={
+                      item.ano_comparado
+                        ? `${item.meses_comparados} ${item.meses_comparados === 1 ? 'mês' : 'meses'} de ${item.ano_comparado} vs ${item.ano_comparado - 1}`
+                        : undefined
+                    }
+                  >
+                    {variacao >= 0 ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
+                    {formatPercent(variacao)}
+                  </span>
+                ) : (
+                  <span
+                    className="monitor-variacao is-neutra"
+                    title={
+                      item.base_comparavel === false
+                        ? 'O ano anterior teve movimento irrisório nesses meses — o percentual não ajudaria a decidir.'
+                        : 'Sem os mesmos meses no ano anterior para comparar.'
+                    }
+                  >
+                    sem base
+                  </span>
+                )}
+              </div>
             </div>
 
             <Sparkline pontos={pontos} moeda={moeda} />
@@ -262,39 +318,6 @@ function EmpresaMiniCardInterno({
               </div>
             </div>
 
-            <div className="monitor-card-rodape">
-              <span>{item.updated_at ?? '—'}</span>
-              {variacao != null ? (
-                <span
-                  className={`monitor-variacao ${classeVariacao}`}
-                  title={
-                    item.ano_comparado
-                      ? `${item.meses_comparados} ${item.meses_comparados === 1 ? 'mês' : 'meses'} de ${item.ano_comparado} vs ${item.ano_comparado - 1}`
-                      : undefined
-                  }
-                >
-                  {variacao >= 0 ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
-                  {formatPercent(variacao)}
-                </span>
-              ) : (
-                <span
-                  className="monitor-variacao is-neutra"
-                  title={
-                    item.base_comparavel === false
-                      ? 'O ano anterior teve movimento irrisório nesses meses — o percentual não ajudaria a decidir.'
-                      : 'Sem os mesmos meses no ano anterior para comparar.'
-                  }
-                >
-                  sem base
-                </span>
-              )}
-            </div>
-
-            {item.ultimo_periodo_parcial && (
-              <p className="monitor-parcial">
-                Último período em andamento — o valor ainda vai subir até o fechamento.
-              </p>
-            )}
           </>
         )}
       </button>

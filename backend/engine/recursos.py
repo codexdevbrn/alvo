@@ -28,6 +28,19 @@ def pasta_base_execucao():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def pasta_web():
+    """Pasta com o build do frontend (`dashboard/dist`), servida pelo backend.
+
+    Congelado, o build vai embutido como `web/` no pacote; em desenvolvimento
+    aponta para `dashboard/dist` na raiz do projeto — que pode não existir se
+    ninguém rodou `npm run build`, então quem chama precisa checar.
+    """
+    if getattr(sys, "frozen", False):
+        return caminho_recurso("web")
+    raiz_projeto = os.path.dirname(pasta_base_execucao())
+    return os.path.join(raiz_projeto, "dashboard", "dist")
+
+
 def pasta_dados_locais_ja_existe():
     """True se 'dados_locais' ou 'logs' já existem ao lado do executável (ou seja, não é a primeira execução aqui)."""
     base = pasta_base_execucao()

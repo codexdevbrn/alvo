@@ -154,7 +154,13 @@ def carregar_excel_base(caminho_arquivo):
     Retorna um DataFrame limpo e pronto para análise.
     """
     try:
-        df = pd.read_excel(caminho_arquivo, usecols=list(MAPA_COLUNAS_BASE_PADRAO.keys()))
+        # Mesmo motor rápido do fluxo por empresa (ver _engine_excel); esta base
+        # padrão também passa de dezenas de MB.
+        df = _ler_excel_com_retry(
+            caminho_arquivo, usecols=list(MAPA_COLUNAS_BASE_PADRAO.keys()),
+        )
+    except ErroCarregamentoCSV:
+        raise
     except Exception as exc:
         raise ErroCarregamentoCSV(f"Não foi possível ler a base de dados: {exc}") from exc
 
@@ -242,6 +248,26 @@ def _mensagem_erro_leitura(caminho_arquivo, exc: Exception) -> str | None:
     return None
 
 
+def _engine_excel():
+    """Motor de leitura de xlsx: `calamine` quando disponível, senão o padrão.
+
+    Medido nas bases reais: a mesma planilha de 54 MB e 1 milhão de linhas leva
+    ~98 s com openpyxl e ~13 s com calamine, com resultado idêntico. O parser é
+    94% do tempo de gerar um summary — o pandas agregando o milhão de linhas leva
+    2 s —, então isto é a diferença entre o usuário esperar dois minutos ou quinze
+    segundos.
+
+    Devolve None (pandas escolhe) quando a biblioteca não está instalada, para não
+    quebrar quem rode do fonte com o requirements antigo. É só velocidade, nunca
+    correção: a paridade dos dados foi verificada nas 46 empresas.
+    """
+    try:
+        import python_calamine  # noqa: F401
+    except ImportError:
+        return None
+    return "calamine"
+
+
 def _ler_excel_com_retry(caminho_arquivo, **kwargs):
     """`pd.read_excel` com algumas tentativas para erros transitórios de I/O.
 
@@ -249,6 +275,13 @@ def _ler_excel_com_retry(caminho_arquivo, **kwargs):
     falhar na primeira tentativa obrigava o usuário a recarregar a tela sem saber
     por quê. Erro de formato/estrutura não é repetido — só I/O.
     """
+    if "engine" not in kwargs:
+        engine = _engine_excel()
+        # Só passa a chave quando há motor escolhido: manter `engine` fora do
+        # dicionário preserva exatamente o comportamento anterior.
+        if engine:
+            kwargs["engine"] = engine
+
     ultimo_erro: Exception | None = None
     for tentativa in range(_TENTATIVAS_LEITURA):
         try:

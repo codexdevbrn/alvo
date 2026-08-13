@@ -8,6 +8,8 @@ import logging
 import os
 import re
 import secrets
+import shutil
+import subprocess
 import unicodedata
 import sys
 import tempfile
@@ -24,13 +26,18 @@ logger = logging.getLogger("uvicorn.error")
 
 import pandas as pd
 import numpy as np
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
+import atualizacoes
+import caminhos_padrao
+import dados_no_disco
 import db
+import inicio_automatico
+import versao
 from auth import criar_token, exigir_login
 from dashboard_summary import (
     caminho_summary_dashboard,
@@ -40,6 +47,7 @@ from dashboard_summary import (
     summary_dashboard_atualizado,
 )
 from engine import analise_funil as af
+from engine.recursos import pasta_base_execucao, pasta_web
 from engine.exportadores_pdf_word import exportar_relatorio_pdf
 from exportar_html import exportar_relatorio_html
 from monitor_empresas import METRICAS_MONITOR, montar_card, obter_resumo_monitor
@@ -53,9 +61,19 @@ from exportar_excel import (
 # Raiz do projeto, um nível acima de backend/. base_de_dados.xlsx e os
 # scripts generalistas de normalização/harmonização (normalizar_base.py,
 # harmonizar_descricoes.py) ficam lá.
-RAIZ_PROJETO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-if RAIZ_PROJETO not in sys.path:
-    sys.path.insert(0, RAIZ_PROJETO)
+#
+# Congelado, `__file__` aponta para dentro do bundle (`_internal/`), que é
+# somente leitura e é substituído a cada atualização — não serve para achar
+# dados. `pasta_base_execucao()` devolve a pasta do executável, onde
+# base_de_dados.xlsx e base-clientes/ ficam ao lado dele, sobrevivendo aos
+# updates. Os módulos de normalização vêm embutidos, então o sys.path só
+# precisa de ajuste rodando do fonte.
+if getattr(sys, "frozen", False):
+    RAIZ_PROJETO = pasta_base_execucao()
+else:
+    RAIZ_PROJETO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    if RAIZ_PROJETO not in sys.path:
+        sys.path.insert(0, RAIZ_PROJETO)
 
 from normalizar_base import (  # noqa: E402
     ErroNormalizacao,
@@ -90,6 +108,22 @@ app.add_middleware(
 @app.on_event("startup")
 def _startup():
     db.inicializar_banco()
+    # Consulta o canal de atualização já no boot, em thread separada, para o
+    # indicador da sidebar aparecer sem o usuário precisar abrir Configurações.
+    # Em background porque o canal é pasta de rede: esperar por ele aqui atrasaria
+    # o servidor a ficar de pé.
+    atualizacoes.aquecer_em_background(_resolver_caminho_atualizacoes())
+
+
+# ---------------------------------------------------------------------------
+# Versão
+# ---------------------------------------------------------------------------
+
+@app.get("/api/versao")
+def obter_versao():
+    """Versão em execução. Sem login: o Dashboard é público e a versão é o
+    primeiro dado que suporte pede quando alguém reporta um problema."""
+    return {"versao": versao.VERSAO, "app": versao.NOME_APP}
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +174,11 @@ CHAVE_AGUARDANDO_BASE_DADOS = "aguardando_base_dados"
 #: Fica no SQLite, não no navegador: o app é interno e sem separação de usuário,
 #: então favoritar numa máquina precisa valer na outra.
 CHAVE_EMPRESAS_FAVORITAS = "empresas_favoritas"
+#: Pasta compartilhada (OneDrive da empresa) com version.json + o pacote da
+#: release. Somente leitura, como a fonte de dados: o app consome o canal, quem
+#: publica é o build. Configurável em vez de fixa porque o caminho local do
+#: OneDrive muda de máquina para máquina.
+CHAVE_CAMINHO_ATUALIZACOES = "caminho_atualizacoes"
 # Legadas — só leitura de fallback / aliases de rota
 CHAVE_CAMINHO_DADOS_DASHBOARD = "caminho_dados_dashboard"
 CHAVE_CAMINHO_EMPRESAS = "caminho_empresas"
@@ -206,9 +245,19 @@ def _esta_sob(caminho: str, raiz: str) -> bool:
 
 
 def _resolver_config_dir(
-    chaves: tuple[str, ...], *, usar_padrao_base_clientes: bool = False,
+    chaves: tuple[str, ...],
+    *,
+    usar_padrao_base_clientes: bool = False,
+    padrao_onedrive=None,
 ) -> Optional[str]:
-    """Primeiro caminho configurado que existe como pasta; senão o valor bruto.
+    """Primeiro caminho configurado que existe como pasta; senão o padrão; senão
+    o valor bruto configurado.
+
+    `padrao_onedrive` é a função de `caminhos_padrao` correspondente. Ela entra
+    antes do fallback `base-clientes/` porque é o lugar real dos dados: uma
+    instalação nova precisa funcionar sem ninguém digitar caminho, e a pasta do
+    OneDrive corporativo é a mesma em toda máquina da empresa (só a raiz local
+    muda, e ela é resolvida em tempo de execução).
 
     O fallback `base-clientes/` só é usado quando `usar_padrao_base_clientes=True`
     (pasta fonte). A pasta de trabalho NÃO herda esse padrão — senão fonte e
@@ -221,6 +270,12 @@ def _resolver_config_dir(
             ultimo = caminho
             if os.path.isdir(caminho):
                 return caminho
+    if padrao_onedrive is not None:
+        # A função só devolve pasta que existe, então não há risco de apontar o
+        # app para um caminho inválido.
+        padrao = padrao_onedrive()
+        if padrao:
+            return padrao
     if usar_padrao_base_clientes and os.path.isdir(CAMINHO_BASE_CLIENTES_PADRAO):
         return CAMINHO_BASE_CLIENTES_PADRAO
     return ultimo
@@ -230,6 +285,7 @@ def _resolver_caminho_fonte() -> Optional[str]:
     return _resolver_config_dir(
         (CHAVE_CAMINHO_FONTE_DADOS, CHAVE_CAMINHO_DADOS_DASHBOARD),
         usar_padrao_base_clientes=True,
+        padrao_onedrive=caminhos_padrao.fonte_dados,
     )
 
 
@@ -237,7 +293,21 @@ def _resolver_caminho_trabalho() -> Optional[str]:
     return _resolver_config_dir(
         (CHAVE_CAMINHO_TRABALHO, CHAVE_CAMINHO_EMPRESAS),
         usar_padrao_base_clientes=False,
+        padrao_onedrive=caminhos_padrao.trabalho,
     )
+
+
+def _resolver_caminho_atualizacoes() -> Optional[str]:
+    """Canal de atualização: o configurado, senão o padrão do OneDrive.
+
+    Diferente dos outros dois, aceita ficar vazio de propósito — canal em branco
+    é como se desliga a verificação de atualizações. Por isso o valor salvo vazio
+    NÃO cai no padrão: se o usuário limpou o campo, foi porque quis.
+    """
+    salvo = db.obter_config_app(CHAVE_CAMINHO_ATUALIZACOES)
+    if salvo is not None:
+        return salvo
+    return caminhos_padrao.atualizacoes()
 
 
 def _exigir_caminho_fonte() -> str:
@@ -1573,6 +1643,288 @@ def obter_caminho_trabalho(usuario: str = Depends(exigir_login)):
 @app.post("/api/config/caminho-trabalho")
 def definir_caminho_trabalho(corpo: CaminhoPasta, usuario: str = Depends(exigir_login)):
     return {"caminho": _salvar_caminho_trabalho(corpo.caminho)}
+
+
+@app.get("/api/config/caminho-atualizacoes")
+def obter_caminho_atualizacoes(usuario: str = Depends(exigir_login)):
+    return {"caminho": _resolver_caminho_atualizacoes()}
+
+
+@app.post("/api/config/caminho-atualizacoes")
+def definir_caminho_atualizacoes(corpo: CaminhoPasta, usuario: str = Depends(exigir_login)):
+    caminho = corpo.caminho.strip()
+    # Vazio limpa a configuração: é como se desliga a verificação de atualização.
+    if caminho and not os.path.isdir(caminho):
+        raise HTTPException(
+            status_code=400,
+            detail="A pasta do canal de atualização deve existir e estar acessível.",
+        )
+    db.definir_config_app(CHAVE_CAMINHO_ATUALIZACOES, caminho)
+    atualizacoes.invalidar_cache()
+    return {"caminho": caminho}
+
+
+@app.get("/api/atualizacoes/status")
+def obter_status_atualizacao(forcar: bool = False, usuario: str = Depends(exigir_login)):
+    """Consulta o canal sob demanda.
+
+    Sob demanda em vez de periódico porque o canal é uma pasta de rede — checar
+    em intervalo fixo geraria acesso ao OneDrive sem ninguém pedindo.
+
+    Usa `exigir_login` como as demais rotas de /api/config, o que hoje só
+    identifica o usuário no log: `auth.LOGIN_DESATIVADO` deixa passar quem não
+    tem token. Vale registrar para o T5, porque aplicar uma atualização é
+    destrutivo e não deveria depender só de o servidor escutar em 127.0.0.1.
+    """
+    canal = _resolver_caminho_atualizacoes()
+    return atualizacoes.consultar_canal_cacheado(canal, forcar=forcar).como_dicionario()
+
+
+#: Cabeçalhos que um proxy reverso acrescenta ao repassar a requisição. A
+#: presença de qualquer um deles denuncia que o pedido não nasceu nesta máquina,
+#: mesmo chegando com IP de loopback.
+#:
+#: `x-forwarded-for` está na lista por completude, mas na prática o pedido nem
+#: chega aqui com ele: o `uvicorn[standard]` habilita o ProxyHeadersMiddleware por
+#: padrão, que confia nesse cabeçalho vindo de loopback e substitui
+#: `request.client.host` pelo IP declarado — então a checagem de IP abaixo já
+#: rejeita. Os outros três o middleware ignora, e é para eles que esta lista serve.
+CABECALHOS_DE_PROXY = ("x-forwarded-for", "x-forwarded-host", "x-real-ip", "forwarded")
+
+
+def _exigir_origem_local(request: Request) -> None:
+    """Recusa a requisição que não nasceu nesta máquina.
+
+    Aplicar uma atualização troca os arquivos do disco onde este processo roda e
+    reinicia o serviço — é uma ação de máquina local, não de rede. O uvicorn
+    escutar em 127.0.0.1 não basta como fronteira: em produção o Apache do XAMPP
+    escuta na porta 80 de todas as interfaces e faz `ProxyPass /api` para
+    127.0.0.1:8003, então qualquer PC da rede alcança a API — e o login está
+    desativado (ver auth.LOGIN_DESATIVADO). Sem esta checagem, um curl de
+    qualquer máquina derrubaria e substituiria a instalação no meio do dia.
+
+    Preferido a exigir token porque não depende de trocar a senha padrão
+    (admin/admin123 vai embutida no pacote) nem de um fluxo de login que a
+    interface hoje não tem. Se o login voltar, os dois somam.
+    """
+    # Não é o peer TCP puro: o ProxyHeadersMiddleware do uvicorn já pode ter
+    # substituído isto pelo IP de um X-Forwarded-For confiável. Para o propósito
+    # aqui isso ajuda — um pedido repassado pelo Apache chega com o IP real do PC
+    # da rede, e é exatamente o que se quer rejeitar.
+    cliente = request.client.host if request.client else None
+    if cliente not in ("127.0.0.1", "::1"):
+        raise HTTPException(
+            status_code=403,
+            detail="A atualização só pode ser aplicada na própria máquina do Prisma.",
+        )
+    for cabecalho in CABECALHOS_DE_PROXY:
+        if cabecalho in request.headers:
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "A atualização só pode ser aplicada na própria máquina do "
+                    "Prisma, sem passar por proxy."
+                ),
+            )
+
+
+@app.get("/api/config/dados-no-disco")
+def obter_dados_no_disco(usuario: str = Depends(exigir_login)):
+    """Quanto das pastas fonte e trabalho já está baixado nesta máquina."""
+    return {
+        "fonte": dados_no_disco.estado(_resolver_caminho_fonte()),
+        "trabalho": dados_no_disco.estado(_resolver_caminho_trabalho()),
+    }
+
+
+class DadosNoDiscoBody(BaseModel):
+    #: True = "sempre manter nesta máquina"; False = deixar o OneDrive liberar espaço.
+    fixar: bool
+
+
+@app.post("/api/config/dados-no-disco")
+def definir_dados_no_disco(
+    corpo: DadosNoDiscoBody,
+    request: Request,
+    usuario: str = Depends(exigir_login),
+):
+    """Marca fonte e trabalho como "sempre manter nesta máquina", ou desmarca.
+
+    Gate de origem local, como /aplicar: isto dispara download de gigabytes no disco
+    de quem hospeda o servidor, e não deve ser acionável pela rede.
+    """
+    _exigir_origem_local(request)
+    try:
+        return {
+            "fonte": dados_no_disco.aplicar(_resolver_caminho_fonte(), corpo.fixar),
+            "trabalho": dados_no_disco.aplicar(_resolver_caminho_trabalho(), corpo.fixar),
+        }
+    except dados_no_disco.ErroDadosNoDisco as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+
+@app.get("/api/config/inicio-automatico")
+def obter_inicio_automatico(usuario: str = Depends(exigir_login)):
+    return inicio_automatico.estado()
+
+
+class InicioAutomaticoBody(BaseModel):
+    logon: bool
+    #: None ou "" remove o agendamento; "HH:MM" cria/atualiza.
+    horario: Optional[str] = None
+
+
+@app.post("/api/config/inicio-automatico")
+def definir_inicio_automatico(
+    corpo: InicioAutomaticoBody,
+    request: Request,
+    usuario: str = Depends(exigir_login),
+):
+    """Liga/desliga o início com o Windows e o agendamento diário.
+
+    Com o gate de origem local, como /aplicar: isto altera o que roda no logon
+    desta máquina, e o Apache do XAMPP expõe a API para a rede inteira.
+    """
+    _exigir_origem_local(request)
+
+    if not inicio_automatico.disponivel():
+        raise HTTPException(
+            status_code=400,
+            detail="O início automático só existe na versão instalada (.exe).",
+        )
+    try:
+        inicio_automatico.definir_logon(corpo.logon)
+        horario = (corpo.horario or "").strip() or None
+        inicio_automatico.definir_horario(
+            inicio_automatico.validar_horario(horario) if horario else None
+        )
+    except inicio_automatico.ErroInicioAutomatico as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        raise HTTPException(
+            status_code=500, detail=f"Falha ao gravar a configuração de início: {exc}"
+        )
+    return inicio_automatico.estado()
+
+
+def _caminho_atualizador() -> Optional[str]:
+    """Executável (ou script) que faz a troca dos arquivos.
+
+    Precisa ser um processo separado: no Windows um executável em uso não pode
+    sobrescrever a si mesmo.
+    """
+    if getattr(sys, "frozen", False):
+        caminho = os.path.join(pasta_base_execucao(), "atualizador.exe")
+        return caminho if os.path.isfile(caminho) else None
+    caminho = os.path.join(RAIZ_PROJETO, "atualizador", "atualizador.py")
+    return caminho if os.path.isfile(caminho) else None
+
+
+@app.post("/api/atualizacoes/aplicar")
+def aplicar_atualizacao(request: Request, usuario: str = Depends(exigir_login)):
+    """Valida o pacote, entrega a troca ao atualizador e encerra este processo."""
+    _exigir_origem_local(request)
+
+    if not getattr(sys, "frozen", False):
+        # Rodando do fonte não há o que substituir: aplicar aqui sobrescreveria a
+        # árvore de desenvolvimento com um build empacotado.
+        raise HTTPException(
+            status_code=400,
+            detail="A atualização automática só funciona na versão empacotada (.exe).",
+        )
+
+    # Sem cache: o pacote pode ter terminado de sincronizar (ou sumido) depois da
+    # última consulta, e aqui a decisão substitui a instalação.
+    status = atualizacoes.consultar_canal(_resolver_caminho_atualizacoes())
+    if not status.atualizavel:
+        raise HTTPException(status_code=400, detail=status.motivo)
+
+    atualizador = _caminho_atualizador()
+    if not atualizador:
+        raise HTTPException(
+            status_code=500,
+            detail="atualizador.exe não foi encontrado ao lado do Prisma.",
+        )
+
+    pasta_temporaria = tempfile.mkdtemp(prefix="prisma-update-")
+    pacote, erro = atualizacoes.preparar_pacote(status, pasta_temporaria)
+    if erro:
+        shutil.rmtree(pasta_temporaria, ignore_errors=True)
+        raise HTTPException(status_code=400, detail=erro)
+
+    instalacao = pasta_base_execucao()
+
+    # O atualizador precisa rodar de FORA da pasta que vai substituir. Rodando de
+    # dentro, o Windows mantém handle aberto no próprio binário em execução e na
+    # pasta de trabalho do processo, e o rename da instalação falha com
+    # WinError 32 ("o arquivo já está sendo usado por outro processo"). Copiar
+    # para o temporário e apontar a cwd para lá solta os dois handles.
+    try:
+        atualizador_local = shutil.copy2(atualizador, pasta_temporaria)
+    except OSError as exc:
+        shutil.rmtree(pasta_temporaria, ignore_errors=True)
+        raise HTTPException(
+            status_code=500, detail=f"Não foi possível preparar o atualizador: {exc}"
+        )
+
+    comando = [
+        atualizador_local,
+        "--pid", str(os.getpid()),
+        "--zip", pacote,
+        "--destino", instalacao,
+        "--versao", status.versao_disponivel or "",
+    ]
+
+    logger.info("Aplicando atualização para %s: %s", status.versao_disponivel, comando)
+    try:
+        subprocess.Popen(
+            comando,
+            cwd=pasta_temporaria,
+            close_fds=True,
+            # Os três explícitos porque o app fecha o próprio console depois do boot
+            # (ver servidor._fechar_console): a partir dali os handles padrão estão
+            # inválidos, e herdá-los faz o Popen falhar com WinError 50 — a
+            # atualização deixaria de funcionar justamente no modo normal de uso.
+            # O atualizador reconecta a saída ao console novo que recebe.
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            # CREATE_NEW_CONSOLE: o atualizador precisa sobreviver à morte deste
+            # processo — que é justamente o que ele espera acontecer — e mostrar o
+            # andamento da troca. DETACHED_PROCESS também desacopla, mas deixa uma
+            # aplicação de console sem console, e aí o bootloader do PyInstaller
+            # morre antes de rodar (foi o que aconteceu com o religamento).
+            creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+        )
+    except OSError as exc:
+        shutil.rmtree(pasta_temporaria, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"Não foi possível iniciar o atualizador: {exc}")
+
+    return Response(
+        content=json.dumps(
+            {
+                "ok": True,
+                "versao": status.versao_disponivel,
+                "mensagem": (
+                    "Atualização iniciada. O Prisma vai fechar e reabrir sozinho "
+                    "em alguns instantes."
+                ),
+            }
+        ),
+        media_type="application/json",
+        # Encerrar só depois da resposta ir embora, senão o navegador mostra erro
+        # de conexão em vez da mensagem. O atualizador está esperando este PID
+        # morrer para começar.
+        background=BackgroundTask(_encerrar_para_atualizar),
+    )
+
+
+def _encerrar_para_atualizar() -> None:
+    time.sleep(1.0)
+    logger.info("Encerrando para a atualização assumir.")
+    # os._exit em vez de sys.exit: já estamos numa task de background, e uma
+    # exceção de saída aqui seria capturada pelo servidor em vez de encerrá-lo.
+    os._exit(0)
 
 
 class AguardandoBaseDadosBody(BaseModel):
@@ -2929,4 +3281,82 @@ def exportar(
         caminho_saida, media_type=media_type, filename=nome_arquivo,
         background=BackgroundTask(os.remove, caminho_saida),
         headers={"X-Resultado-Cache": "HIT" if cache_hit else "MISS"},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Frontend (SPA)
+#
+# Quando existe um build do dashboard, o próprio backend o serve — é o que
+# permite distribuir o Prisma como um executável único, sem depender de Apache/
+# XAMPP na máquina do usuário. Em desenvolvimento (sem `npm run build`) nada é
+# montado e o Vite continua servindo o front na 5173 com proxy para /api.
+#
+# Este bloco precisa ficar no FIM do arquivo: a rota curinga abaixo casa com
+# qualquer GET, então qualquer rota declarada depois dela nunca seria alcançada.
+# ---------------------------------------------------------------------------
+
+PASTA_WEB = os.path.realpath(pasta_web())
+INDEX_WEB = os.path.join(PASTA_WEB, "index.html")
+
+
+def _arquivo_sob(raiz: str, caminho_relativo: str) -> Optional[str]:
+    """Caminho absoluto do arquivo dentro de `raiz`, ou None se não existir ou
+    escapar dela (ex.: `../../dados_locais/app.db`)."""
+    destino = os.path.realpath(os.path.join(raiz, caminho_relativo))
+    if destino != raiz and not destino.startswith(raiz + os.sep):
+        return None
+    return destino if os.path.isfile(destino) else None
+
+
+# Pasta `data/` ao lado do executável, para o `summary.json` do modo estático do
+# Dashboard: são ~20 MB de retrato de uma base, que não cabem no pacote (todo
+# release engordaria carregando dado congelado). Aqui é opcional, sobrevive às
+# atualizações e pode ser trocado sem novo release — mesmo tratamento que
+# `base_de_dados.xlsx` já recebe.
+PASTA_DADOS_ESTATICOS = os.path.realpath(os.path.join(RAIZ_PROJETO, "data"))
+PREFIXO_DADOS_ESTATICOS = "data/"
+
+
+def _arquivo_estatico(caminho_relativo: str) -> Optional[str]:
+    """Procura o arquivo no build; para `data/...`, também ao lado do executável.
+
+    A segunda raiz é restrita a `data/` de propósito: liberar a pasta do
+    executável inteira serviria `dados_locais/app.db`, com os hashes de senha.
+    """
+    do_build = _arquivo_sob(PASTA_WEB, caminho_relativo)
+    if do_build or not caminho_relativo.startswith(PREFIXO_DADOS_ESTATICOS):
+        return do_build
+    return _arquivo_sob(
+        PASTA_DADOS_ESTATICOS, caminho_relativo[len(PREFIXO_DADOS_ESTATICOS):]
+    )
+
+
+if os.path.isfile(INDEX_WEB):
+    logger.info("Servindo o frontend a partir de %s", PASTA_WEB)
+
+    @app.get("/{caminho:path}")
+    def servir_frontend(caminho: str):
+        # Rota /api inexistente é erro de API, não navegação — não devolver HTML.
+        if caminho == "api" or caminho.startswith("api/"):
+            raise HTTPException(status_code=404, detail="Rota não encontrada.")
+
+        arquivo = _arquivo_estatico(caminho) if caminho else None
+        if arquivo:
+            return FileResponse(arquivo)
+
+        # Pedido de arquivo que não existe (ex.: /data/summary.json antes de
+        # rodar process_data.py) precisa dar 404 — devolver o index.html faria
+        # o fetch receber HTML com status 200 e quebrar no JSON.parse.
+        if os.path.splitext(caminho)[1]:
+            raise HTTPException(status_code=404, detail="Arquivo não encontrado.")
+
+        # Qualquer outra rota é rota do BrowserRouter (/analisador, /config,
+        # /monitor, /login): devolve o index e o React resolve no cliente.
+        return FileResponse(INDEX_WEB, headers={"Cache-Control": "no-store"})
+else:
+    logger.warning(
+        "Build do frontend não encontrado em %s — o backend vai servir apenas /api. "
+        "Rode `npm run build` em dashboard/ para servir a interface daqui.",
+        PASTA_WEB,
     )
