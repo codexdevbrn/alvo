@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import {
   Area,
   AreaChart,
@@ -8,7 +8,7 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { AlertTriangle, Loader2 } from 'lucide-react';
+import { AlertTriangle, Filter, Loader2, Tag } from 'lucide-react';
 import {
   explorarAgregar,
   type TagCatalogoItem,
@@ -66,7 +66,7 @@ function normalizarTexto(s: string): string {
 }
 
 /** Resolve a tag "Alerta" pelo rótulo ou id (ex.: nova_tag / Alerta). */
-export function resolverTagAlerta(catalogo: TagCatalogoItem[]): TagCatalogoItem | null {
+function resolverTagAlerta(catalogo: TagCatalogoItem[]): TagCatalogoItem | null {
   const candidatas = catalogo.filter((t) => t.ativa !== false);
   const exata = candidatas.find((t) => {
     const id = normalizarTexto(t.id);
@@ -315,12 +315,36 @@ export function ClientesAlertaCard({
   const [seriePorCliente, setSeriePorCliente] = useState<SeriePorCliente>({});
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  // `null` mantém a tag Alerta como foco inicial; string vazia representa todas.
+  const [tagSelecionada, setTagSelecionada] = useState<string | null>(null);
 
   const balcaoSet = useMemo(() => new Set(clientesBalcao), [clientesBalcao]);
+  const tagsDisponiveis = useMemo(
+    () => tagsCatalogo.filter((tag) => tag.ativa && tag.id !== 'cliente_balcao'),
+    [tagsCatalogo],
+  );
   const tagAlerta = useMemo(() => resolverTagAlerta(tagsCatalogo), [tagsCatalogo]);
 
+  // Catálogo pode mudar por empresa; não deixa filtro apontar para tag removida.
+  useEffect(() => {
+    setTagSelecionada((atual) => {
+      if (atual === '') return atual;
+      if (atual && tagsDisponiveis.some((tag) => tag.id === atual)) return atual;
+      return tagAlerta?.id ?? tagsDisponiveis[0]?.id ?? null;
+    });
+  }, [tagAlerta, tagsDisponiveis]);
+
+  const tagEmFoco = useMemo(() => {
+    if (tagSelecionada === '') return null;
+    if (tagSelecionada) {
+      return tagsDisponiveis.find((tag) => tag.id === tagSelecionada) ?? null;
+    }
+    return tagAlerta ?? tagsDisponiveis[0] ?? null;
+  }, [tagAlerta, tagSelecionada, tagsDisponiveis]);
+  const avaliarTodas = tagSelecionada === '';
+
   const clientesAlerta = useMemo(() => {
-    if (!tagAlerta) return [];
+    if (!tagEmFoco && !avaliarTodas) return [];
     const receitaPorCliente = new Map(
       itensClientes.map((i) => [i.cliente.trim(), i.receita] as const),
     );
@@ -339,13 +363,15 @@ export function ClientesAlertaCard({
         if (balcaoNorm.has(cliente)) return false;
         const tags = tagsPorCliente[cliente] ?? [];
         if (tags.includes('cliente_balcao')) return false;
-        return tags.includes(tagAlerta.id);
+        return avaliarTodas
+          ? tags.some((tag) => tagsDisponiveis.some((item) => item.id === tag))
+          : tags.includes(tagEmFoco?.id ?? '');
       })
       .map((cliente) => ({
         cliente,
         receita: receitaPorCliente.get(cliente) ?? 0,
       }));
-  }, [tagAlerta, tagsPorCliente, itensClientes, balcaoSet]);
+  }, [avaliarTodas, tagEmFoco, tagsDisponiveis, tagsPorCliente, itensClientes, balcaoSet]);
 
   /** Maior perda de receita (R$ vs mês anterior) primeiro; depois pior %; depois receita. */
   const clientesAlertaOrdenados = useMemo(() => {
@@ -461,9 +487,9 @@ export function ClientesAlertaCard({
 
   if (!empresa) return null;
 
-  const cor = tagAlerta?.cor ?? '#ec1818';
+  const cor = tagEmFoco?.cor ?? 'var(--accent)';
 
-  if (!tagAlerta) {
+  if (!tagsDisponiveis.length) {
     return (
       <div className="glass-card glass-card-flat analisador-alerta-card">
         <h2 className="analisador-titulo">
@@ -477,17 +503,56 @@ export function ClientesAlertaCard({
     );
   }
 
+  const tituloFiltro = avaliarTodas ? 'Todas as tags' : (tagEmFoco?.rotulo ?? 'Clientes');
+  const tituloCard = avaliarTodas ? 'Clientes com tags' : `Clientes em ${tituloFiltro.toLowerCase()}`;
+  const corBorda = cor.startsWith('var(') ? 'var(--border)' : `${cor}55`;
+
   return (
     <div
       className="glass-card glass-card-flat analisador-alerta-card"
-      style={{ borderColor: `${cor}55` }}
+      style={{ borderColor: corBorda }}
     >
+      <div className="analisador-alerta-filtros" aria-label="Filtrar avaliação por tag">
+        <span className="analisador-alerta-filtros-label">
+          <Filter size={14} aria-hidden="true" /> Avaliar por tag
+        </span>
+        <div className="analisador-alerta-filtros-lista">
+          <button
+            type="button"
+            className={`analisador-alerta-filtro${avaliarTodas ? ' is-ativo' : ''}`}
+            onClick={() => setTagSelecionada('')}
+            aria-pressed={avaliarTodas}
+          >
+            Todas as tags
+            <span>{clientesAlerta.length}</span>
+          </button>
+          {tagsDisponiveis.map((tag) => {
+            const total = Object.values(tagsPorCliente).filter((tags) => tags.includes(tag.id)).length;
+            const ativo = !avaliarTodas && tagEmFoco?.id === tag.id;
+            return (
+              <button
+                key={tag.id}
+                type="button"
+                className={`analisador-alerta-filtro${ativo ? ' is-ativo' : ''}`}
+                style={{ '--tag-cor': tag.cor } as CSSProperties}
+                onClick={() => setTagSelecionada(tag.id)}
+                aria-pressed={ativo}
+              >
+                {tag.rotulo}
+                <span>{total}</span>
+              </button>
+            );
+          })}
+        </div>
+      </div>
       <header className="analisador-alerta-header">
         <h2 className="analisador-titulo">
-          <AlertTriangle size={18} style={{ color: cor, flexShrink: 0 }} />
-          Clientes em alerta
+          {tagEmFoco?.id === 'alerta'
+            ? <AlertTriangle size={18} style={{ color: cor, flexShrink: 0 }} />
+            : <Tag size={18} style={{ color: cor, flexShrink: 0 }} />}
+          {tituloCard}
           <span className="analisador-tag-chip" style={{ borderColor: cor, color: cor }}>
-            {tagAlerta.rotulo}
+            {tituloFiltro}
           </span>
           {clientesAlerta.length > 0 && (
             <span className="analisador-alerta-count">{clientesAlerta.length}</span>
@@ -501,7 +566,9 @@ export function ClientesAlertaCard({
 
       {clientesAlerta.length === 0 ? (
         <p className="analisador-lista-vazia" role="status">
-          Nenhum cliente com a tag “{tagAlerta.rotulo}”. Marque na prévia de clientes.
+          {avaliarTodas
+            ? 'Nenhum cliente possui tags de acompanhamento. Marque na base de clientes abaixo.'
+            : <>Nenhum cliente com a tag “{tagEmFoco?.rotulo}”. Marque na base de clientes abaixo.</>}
         </p>
       ) : (
         <>

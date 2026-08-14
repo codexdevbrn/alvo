@@ -35,6 +35,24 @@ $raiz = $PSScriptRoot
 
 function Etapa($texto) { Write-Host "`n=== $texto ===" -ForegroundColor Cyan }
 
+function Testar-ComDefender([string]$caminho) {
+    # Release local precisa passar pelo mesmo antivírus das máquinas de uso.
+    # DisableRemediation detecta sem apagar/quarentenar o artefato, permitindo
+    # abortar com diagnóstico e preservar o arquivo para envio como falso positivo.
+    $mpCmdRun = Get-ChildItem `
+        -Path "$env:ProgramData\Microsoft\Windows Defender\Platform\*\MpCmdRun.exe" `
+        -ErrorAction SilentlyContinue |
+        Sort-Object DirectoryName -Descending |
+        Select-Object -First 1
+    if (-not $mpCmdRun) {
+        throw "Microsoft Defender CLI não encontrado; release sem varredura foi bloqueada."
+    }
+    & $mpCmdRun.FullName -Scan -ScanType 3 -File $caminho -DisableRemediation
+    if ($LASTEXITCODE -ne 0) {
+        throw "Defender recusou o artefato '$caminho' (código $LASTEXITCODE). Release abortada."
+    }
+}
+
 # A versão sai de backend/versao.py, a fonte única — assim o nome do zip e o
 # version.json nunca divergem do número que o app reporta.
 $versao = (python -c "import sys; sys.path.insert(0, r'$raiz\backend'); import versao; print(versao.VERSAO)").Trim()
@@ -78,6 +96,10 @@ if ($LASTEXITCODE -ne 0) { throw "PyInstaller do atualizador falhou." }
 $atualizador = Join-Path $distPy 'atualizador.exe'
 if (-not (Test-Path $atualizador)) { throw "atualizador.exe não foi gerado." }
 Copy-Item $atualizador -Destination $pacote -Force
+
+Etapa "Porta antivírus (executáveis)"
+Testar-ComDefender (Join-Path $pacote 'Prisma.exe')
+Testar-ComDefender (Join-Path $pacote 'atualizador.exe')
 
 Etapa "Empacotando release"
 $release = Join-Path $raiz 'dist_release'
@@ -132,6 +154,12 @@ if (-not $iscc) {
     $instalador = Join-Path $release "Prisma-$versao-instalador.exe"
     if (-not (Test-Path $instalador)) { throw "O instalador não foi gerado." }
     Write-Host ("Instalador: {0} ({1:N0} MB)" -f $instalador, ((Get-Item $instalador).Length / 1MB))
+}
+
+Etapa "Porta antivírus (release)"
+Testar-ComDefender $zip
+if ($instalador -and (Test-Path $instalador)) {
+    Testar-ComDefender $instalador
 }
 
 Etapa "Pronto"

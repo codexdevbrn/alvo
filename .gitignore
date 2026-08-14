@@ -34,3 +34,10 @@ logs_agendador/
 dist_pyinstaller/
 build_pyinstaller/
 dist_release/
+
+# Artefatos temporários de validação e capturas locais
+/.recovery-*/
+/backend/.tmp-*/
+/.pytest_cache/
+/backend/.pytest_cache/
+/clientes-print.png

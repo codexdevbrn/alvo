@@ -420,6 +420,7 @@ export type TagsClientesResposta = {
   clientes_balcao: string[];
   catalogo?: TagCatalogoItem[];
   grupos?: GrupoManualClientes[];
+  regras_alerta?: RegraAlertaCliente[];
   caminho?: string;
   loja?: string | null;
 };
@@ -473,9 +474,98 @@ export async function salvarGruposManuais(
   return tratarResposta(res);
 }
 
+export async function obterAlertasClientes(
+  empresa: string,
+  loja?: string | null,
+): Promise<AlertasClientesResposta> {
+  const res = await chamar(
+    `/api/empresas/${encodeURIComponent(empresa)}/clientes-alertas${queryLoja(loja)}`,
+    { headers: authHeaders() },
+  );
+  return tratarResposta(res);
+}
+
+export async function salvarRegrasAlertasClientes(
+  empresa: string,
+  regras: RegraAlertaCliente[],
+  loja?: string | null,
+): Promise<TagsClientesResposta> {
+  const res = await chamar(
+    `/api/empresas/${encodeURIComponent(empresa)}/clientes-alertas/regras${queryLoja(loja)}`,
+    {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ regras }),
+    },
+  );
+  return tratarResposta(res);
+}
+
 export type ItemClienteBusca = {
   cliente: string;
   receita: number;
+};
+
+export type DirecaoAlertaCliente = 'queda' | 'alta' | 'ambos';
+export type GranularidadeAlertaCliente = 'diaria' | 'semanal' | 'mensal';
+
+export type RegraAlertaCliente = {
+  id: string;
+  tag_id: string;
+  ativa: boolean;
+  metrica: 'receita';
+  granularidade: GranularidadeAlertaCliente;
+  direcao: DirecaoAlertaCliente;
+  limite_percentual: number;
+  limite_valor: number;
+  meses_historico: number;
+  min_dias_uteis: number;
+};
+
+export type AlertaRitmoCliente = {
+  id: string;
+  regra_id: string;
+  tag_id: string;
+  cliente: string;
+  granularidade: GranularidadeAlertaCliente;
+  sentido: 'queda' | 'alta';
+  realizado: number;
+  esperado: number;
+  diferenca: number;
+  variacao_percentual: number;
+  media_diaria_atual: number;
+  media_diaria_esperada: number;
+  dia_realizado: number;
+  dia_esperado: number;
+  semana_realizado: number;
+  semana_esperado: number;
+  mes_realizado: number;
+  mes_esperado: number;
+};
+
+export type AlertasClientesResposta = {
+  disponivel: boolean;
+  motivo: string | null;
+  data_referencia: string | null;
+  dia_referencia: string | null;
+  semana_inicio: string | null;
+  semana_fim: string | null;
+  dias_uteis_decorridos: number;
+  alertas: AlertaRitmoCliente[];
+  regras: RegraAlertaCliente[];
+  loja: string | null;
+  resumo: {
+    ativos: number;
+    quedas: number;
+    altas: number;
+    clientes_avaliados: number;
+  };
+};
+
+export type ClientesBuscaResposta = {
+  itens: ItemClienteBusca[];
+  total: number;
+  limitado: boolean;
 };
 
 export async function buscarClientes(
@@ -492,6 +582,22 @@ export async function buscarClientes(
   const res = await chamar(`/api/clientes/buscar?${params}`, { headers: authHeaders() });
   const dados = await tratarResposta<{ itens: ItemClienteBusca[] }>(res);
   return Array.isArray(dados.itens) ? dados.itens : [];
+}
+
+/** Catálogo amplo usado pela tela dedicada de acompanhamento de clientes. */
+export async function obterBaseClientes(
+  empresa: string,
+  loja?: string | null,
+): Promise<ClientesBuscaResposta> {
+  const params = new URLSearchParams({ empresa, limite: '5000' });
+  if (loja) params.set('loja', loja);
+  const res = await chamar(`/api/clientes/buscar?${params}`, { headers: authHeaders() });
+  const dados = await tratarResposta<ClientesBuscaResposta>(res);
+  return {
+    itens: Array.isArray(dados.itens) ? dados.itens : [],
+    total: Number(dados.total) || 0,
+    limitado: Boolean(dados.limitado),
+  };
 }
 
 export async function salvarTagsUmCliente(
@@ -814,6 +920,70 @@ export async function exportarRelatorio(
     throw new Error(corpo.detail || `Erro ${res.status}`);
   }
   return res.blob();
+}
+
+// ---------------------------------------------------------------------------
+// Estoque × velocidade de venda
+// ---------------------------------------------------------------------------
+
+export type StatusCoberturaEstoque =
+  | 'normal'
+  | 'rupture'
+  | 'out_of_stock'
+  | 'negative'
+  | 'stalled'
+  | 'excess'
+  | 'no_sales';
+
+export type ItemCoberturaEstoque = {
+  sku: string;
+  codigo_interno: string;
+  nome: string;
+  fabricante: string;
+  estoque: number;
+  venda_media: number;
+  cobertura: number | null;
+  valor_estoque: number;
+  variacao_pct: number | null;
+  status: StatusCoberturaEstoque;
+};
+
+export type CoberturaEstoqueResposta = {
+  disponivel: boolean;
+  mensagem: string | null;
+  empresa: string;
+  loja: string | null;
+  lojas: string[];
+  periodo_inicio: string | null;
+  periodo_fim: string | null;
+  meses: number;
+  itens: ItemCoberturaEstoque[];
+  itens_exibidos: number;
+  limitado: boolean;
+  resumo: {
+    produtos: number;
+    valor_estoque: number;
+    ruptura: number;
+    excesso: number;
+    sem_giro: number;
+  };
+};
+
+export async function obterCoberturaEstoque(
+  empresa: string,
+  parametros: { loja?: string | null; meses?: number; limite?: number } = {},
+  signal?: AbortSignal,
+): Promise<CoberturaEstoqueResposta> {
+  const query = new URLSearchParams();
+  if (parametros.loja) query.set('loja', parametros.loja);
+  if (parametros.meses) query.set('meses', String(parametros.meses));
+  if (parametros.limite) query.set('limite', String(parametros.limite));
+  const qs = query.toString() ? `?${query}` : '';
+  const res = await chamar(
+    `/api/estoque/cobertura/${encodeURIComponent(empresa)}${qs}`,
+    { headers: authHeaders(), signal },
+  );
+  return tratarResposta(res);
 }
 
 // ---------------------------------------------------------------------------

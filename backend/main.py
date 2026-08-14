@@ -38,6 +38,7 @@ import dados_no_disco
 import db
 import inicio_automatico
 import versao
+from alertas_clientes import avaliar_alertas_clientes, normalizar_regras_alerta
 from auth import criar_token, exigir_login
 from dashboard_summary import (
     caminho_summary_dashboard,
@@ -81,6 +82,7 @@ from normalizar_base import (  # noqa: E402
     resolver_arquivos_dados,
 )
 from normalizar_liquidez import normalizar_estoque, normalizar_vendas  # noqa: E402
+from estoque_cobertura import montar_cobertura_estoque  # noqa: E402
 
 CAMINHO_BASE_PADRAO = os.path.join(RAIZ_PROJETO, "base_de_dados.xlsx")
 
@@ -212,7 +214,9 @@ _CAMPOS_CONFIG_FLAT = frozenset({
     "topNPoderCompra", "clientesExcluidos", "produtosExcluidos",
     "chavesSelecionadas", "granularidade",
 })
-_CAMPOS_TAGS_FLAT = frozenset({"tags", "catalogo", "grupos", "clientes_balcao"})
+_CAMPOS_TAGS_FLAT = frozenset({
+    "tags", "catalogo", "grupos", "clientes_balcao", "regras_alerta",
+})
 
 TAGS_CATALOGO_PADRAO: list[dict] = [
     {"id": "alerta", "rotulo": "Alerta", "ativa": True, "cor": "#ec1818"},
@@ -622,16 +626,21 @@ def _montar_resposta_tags_clientes(
     tags: dict[str, list[str]],
     catalogo: list[dict] | None = None,
     grupos: list[dict] | None = None,
+    regras_alerta: list[dict] | None = None,
     loja: Optional[str] = None,
 ) -> dict:
     catalogo_norm = catalogo if catalogo is not None else _normalizar_catalogo_tags(bruto.get("catalogo"))
     balcao = _sincronizar_lista_balcao(tags)
     grupos_norm = grupos if grupos is not None else _normalizar_grupos_manuais(bruto.get("grupos"))
+    regras_norm = regras_alerta if regras_alerta is not None else normalizar_regras_alerta(
+        bruto.get("regras_alerta"), _ids_do_catalogo(catalogo_norm)
+    )
     return {
         "tags": tags,
         "clientes_balcao": balcao,
         "catalogo": catalogo_norm,
         "grupos": grupos_norm,
+        "regras_alerta": regras_norm,
         "loja": _chave_escopo_loja(loja) or None,
     }
 
@@ -674,17 +683,22 @@ def _payload_tags_completo(
     catalogo: list[dict],
     tags: dict[str, list[str]],
     grupos: list[dict] | None = None,
+    regras_alerta: list[dict] | None = None,
     bruto_atual: dict | None = None,
 ) -> dict:
     grupos_norm = (
         grupos if grupos is not None
         else _normalizar_grupos_manuais((bruto_atual or {}).get("grupos"))
     )
+    regras_norm = regras_alerta if regras_alerta is not None else normalizar_regras_alerta(
+        (bruto_atual or {}).get("regras_alerta"), _ids_do_catalogo(catalogo)
+    )
     return {
         "catalogo": catalogo,
         "tags": tags,
         "clientes_balcao": _sincronizar_lista_balcao(tags),
         "grupos": grupos_norm,
+        "regras_alerta": regras_norm,
     }
 
 
@@ -703,11 +717,14 @@ def _gravar_arquivo_tags_clientes(
     catalogo = _normalizar_catalogo_tags(payload.get("catalogo"))
     tags = _normalizar_mapa_tags(payload.get("tags"), _ids_do_catalogo(catalogo))
     grupos = _normalizar_grupos_manuais(payload.get("grupos"))
-    slice_norm = _payload_tags_completo(catalogo, tags, grupos=grupos)
+    regras = normalizar_regras_alerta(payload.get("regras_alerta"), _ids_do_catalogo(catalogo))
+    slice_norm = _payload_tags_completo(catalogo, tags, grupos=grupos, regras_alerta=regras)
     scopes[chave] = slice_norm
     caminho = _gravar_scopes_tags(empresa, scopes)
     return {
-        **_montar_resposta_tags_clientes(empresa, slice_norm, tags, catalogo, grupos, loja=loja),
+        **_montar_resposta_tags_clientes(
+            empresa, slice_norm, tags, catalogo, grupos, regras, loja=loja,
+        ),
         "caminho": caminho,
     }
 
@@ -718,7 +735,12 @@ def _ler_tags_clientes(empresa: str, loja: Optional[str] = None) -> dict:
     ids_catalogo = _ids_do_catalogo(catalogo)
     tags = _normalizar_mapa_tags(bruto.get("tags") if bruto else {}, ids_catalogo)
     grupos = _normalizar_grupos_manuais(bruto.get("grupos") if bruto else [])
-    return _montar_resposta_tags_clientes(empresa, bruto, tags, catalogo, grupos, loja=loja)
+    regras = normalizar_regras_alerta(
+        bruto.get("regras_alerta") if bruto else [], ids_catalogo,
+    )
+    return _montar_resposta_tags_clientes(
+        empresa, bruto, tags, catalogo, grupos, regras, loja=loja,
+    )
 
 
 def _gravar_tags_clientes(
@@ -757,7 +779,22 @@ def _gravar_grupos_manuais(empresa: str, grupos_bruto, loja: Optional[str] = Non
     grupos = _normalizar_grupos_manuais(grupos_bruto)
     return _gravar_arquivo_tags_clientes(
         empresa,
-        _payload_tags_completo(catalogo, tags, grupos=grupos),
+        _payload_tags_completo(catalogo, tags, grupos=grupos, bruto_atual=bruto),
+        loja=loja,
+    )
+
+
+def _gravar_regras_alerta(empresa: str, regras_brutas, loja: Optional[str] = None) -> dict:
+    bruto = _slice_tags_do_escopo(empresa, loja)
+    catalogo = _normalizar_catalogo_tags(bruto.get("catalogo"))
+    ids_catalogo = _ids_do_catalogo(catalogo)
+    tags = _normalizar_mapa_tags(bruto.get("tags") if bruto else {}, ids_catalogo)
+    regras = normalizar_regras_alerta(regras_brutas, ids_catalogo)
+    return _gravar_arquivo_tags_clientes(
+        empresa,
+        _payload_tags_completo(
+            catalogo, tags, regras_alerta=regras, bruto_atual=bruto,
+        ),
         loja=loja,
     )
 
@@ -797,6 +834,12 @@ _cache_base: dict = {"mtime": None, "df": None, "linhas_vazias": 0}
 
 # Cache do summary do dashboard por empresa. LRU via OrderedDict.
 _cache_summary_dashboard: OrderedDict[str, dict] = OrderedDict()
+
+# Resultado compacto da tela Estoque. Chave inclui assinatura dos dois arquivos,
+# então uma base nova invalida o cache sem gravar nada na pasta fonte.
+_CACHE_ESTOQUE_MAX = 8
+_cache_estoque_cobertura: OrderedDict[tuple, dict] = OrderedDict()
+_cache_estoque_cobertura_lock = threading.Lock()
 
 # Uma mesma empresa pode ser solicitada várias vezes em paralelo (F5, StrictMode,
 # vários clientes na LAN). Sem single-flight, cada request relê o XLSX e gera o
@@ -1929,6 +1972,7 @@ def aplicar_atualizacao(request: Request, usuario: str = Depends(exigir_login)):
         "--zip", pacote,
         "--destino", instalacao,
         "--versao", status.versao_disponivel or "",
+        "--versao-anterior", versao.VERSAO,
     ]
 
     logger.info("Aplicando atualização para %s: %s", status.versao_disponivel, comando)
@@ -2021,6 +2065,106 @@ def definir_caminho_empresas(corpo: CaminhoPasta, usuario: str = Depends(exigir_
 @app.get("/api/empresas")
 def listar_empresas(usuario: str = Depends(exigir_login)):
     return _listar_empresas_fonte()
+
+
+def _assinatura_arquivo(caminho: Path) -> tuple[int, int]:
+    """Assinatura barata para invalidar cache quando OneDrive troca arquivo."""
+    stat = caminho.stat()
+    return stat.st_mtime_ns, stat.st_size
+
+
+@app.get("/api/estoque/cobertura/{empresa}")
+def obter_cobertura_estoque(
+    empresa: str,
+    loja: Optional[str] = None,
+    meses: int = 6,
+    limite: int = 800,
+    usuario: str = Depends(exigir_login),
+):
+    """Mapa de estoque atual × velocidade média de venda por produto.
+
+    Lê os mesmos arquivos opcionais da Liquidez, sempre em modo somente leitura.
+    O frontend recebe pontos já calculados e nunca conhece caminhos locais.
+    """
+    if meses < 1 or meses > 24:
+        raise HTTPException(status_code=400, detail="meses deve ficar entre 1 e 24.")
+    if limite < 1 or limite > 2000:
+        raise HTTPException(status_code=400, detail="limite deve ficar entre 1 e 2000.")
+
+    empresa = _validar_nome_empresa(empresa)
+    pasta_fonte, _pasta_trabalho = _pastas_empresa(empresa)
+    try:
+        _atacado, caminho_estoque, caminho_vendas = resolver_arquivos_dados(Path(pasta_fonte))
+    except ErroNormalizacao as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if caminho_estoque is None or caminho_vendas is None:
+        # A tela pode ser liberada antes de a empresa receber as colunas/arquivos
+        # de estoque. Ausência de dados é estado de negócio, não falha técnica.
+        return {
+            "disponivel": False,
+            "mensagem": "Dados de estoque e vendas ainda não disponíveis para esta empresa.",
+            "empresa": empresa,
+            "loja": None,
+            "lojas": [],
+            "periodo_inicio": None,
+            "periodo_fim": None,
+            "meses": meses,
+            "itens": [],
+            "itens_exibidos": 0,
+            "limitado": False,
+            "resumo": {
+                "produtos": 0,
+                "valor_estoque": 0,
+                "ruptura": 0,
+                "excesso": 0,
+                "sem_giro": 0,
+            },
+        }
+
+    loja_norm = _normalizar_loja(loja)
+    try:
+        assinatura = (_assinatura_arquivo(caminho_estoque), _assinatura_arquivo(caminho_vendas))
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Não foi possível ler arquivos de estoque: {exc}") from exc
+    chave_cache = (empresa, loja_norm or "", meses, limite, assinatura, date.today().year)
+    with _cache_estoque_cobertura_lock:
+        cacheado = _cache_estoque_cobertura.get(chave_cache)
+        if cacheado is not None:
+            _cache_estoque_cobertura.move_to_end(chave_cache)
+            return cacheado
+
+    try:
+        estoque = normalizar_estoque(caminho_estoque)
+        vendas = normalizar_vendas(caminho_vendas)
+    except (ErroNormalizacao, OSError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    lojas = sorted(
+        nome for nome in estoque.get("Loja", pd.Series(dtype=str)).fillna("").astype(str).str.strip().unique()
+        if nome
+    )
+    estoque = _filtrar_loja_coluna(estoque, loja_norm, "Loja", caminho_estoque.name)
+    vendas = _filtrar_loja_coluna(vendas, loja_norm, "Nome_Loja", caminho_vendas.name)
+    for coluna in ("Qtd_estoque", "Preço_médio_de_venda", "Preço_médio_cmv", "Último_custo"):
+        estoque[coluna] = parse_numero_flexivel(estoque[coluna])
+    vendas["QTD"] = parse_numero_flexivel(vendas["QTD"])
+
+    resultado = montar_cobertura_estoque(estoque, vendas, meses=meses, limite=limite)
+    resultado.update({
+        "disponivel": True,
+        "mensagem": None,
+        "empresa": empresa,
+        "loja": loja_norm,
+        "lojas": lojas,
+        "itens_exibidos": len(resultado["itens"]),
+        "limitado": resultado["resumo"]["produtos"] > len(resultado["itens"]),
+    })
+    with _cache_estoque_cobertura_lock:
+        _cache_estoque_cobertura[chave_cache] = resultado
+        _cache_estoque_cobertura.move_to_end(chave_cache)
+        while len(_cache_estoque_cobertura) > _CACHE_ESTOQUE_MAX:
+            _cache_estoque_cobertura.popitem(last=False)
+    return resultado
 
 
 class ConfiguracaoEmpresa(BaseModel):
@@ -2121,6 +2265,45 @@ def salvar_grupos_manuais(
     )
 
 
+class RegrasAlertasClientesBody(BaseModel):
+    regras: list
+
+
+@app.put("/api/empresas/{nome}/clientes-alertas/regras")
+def salvar_regras_alertas_clientes(
+    nome: str,
+    corpo: RegrasAlertasClientesBody,
+    loja: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
+    """Persiste regras por tag somente na pasta de trabalho da empresa."""
+    return _gravar_regras_alerta(
+        nome,
+        corpo.regras if isinstance(corpo.regras, list) else [],
+        loja=loja,
+    )
+
+
+@app.get("/api/empresas/{nome}/clientes-alertas")
+def obter_alertas_clientes(
+    nome: str,
+    loja: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
+    """Avalia ritmo do mês para clientes das tags com regra ativa."""
+    nome = _validar_nome_empresa(nome)
+    estado_tags = _ler_tags_clientes(nome, loja=loja)
+    df, _linhas_vazias = _carregar_base(nome, loja=loja)
+    resultado = avaliar_alertas_clientes(
+        df,
+        estado_tags.get("tags") or {},
+        estado_tags.get("regras_alerta") or [],
+    )
+    resultado["regras"] = estado_tags.get("regras_alerta") or []
+    resultado["loja"] = _chave_escopo_loja(loja) or None
+    return resultado
+
+
 @app.get("/api/clientes/buscar")
 def buscar_clientes(
     q: str = "",
@@ -2143,10 +2326,15 @@ def buscar_clientes(
         nomes = agregado["Cliente"].astype(str)
         mascara = nomes.str.lower().str.contains(re.escape(termo), na=False)
         agregado = agregado[mascara]
-    limite = max(1, min(int(limite or 40), 100))
+    total = len(agregado)
+    # Tela dedicada precisa carregar catálogo inteiro para filtro local e edição
+    # de tags. Mantém teto explícito para impedir respostas sem limite.
+    limite = max(1, min(int(limite or 40), 5000))
     agregado = agregado.head(limite)
     receita = pd.to_numeric(agregado["Receita"], errors="coerce").fillna(0.0)
     return {
+        "total": total,
+        "limitado": total > limite,
         "itens": [
             {"cliente": str(nome), "receita": float(rec)}
             for nome, rec in zip(agregado["Cliente"].tolist(), receita.tolist())

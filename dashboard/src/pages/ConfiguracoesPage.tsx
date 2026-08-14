@@ -798,7 +798,7 @@ export default function ConfiguracoesPage() {
               ) : null}
             </div>
             <p className="config-page-card-desc">
-              Catálogo de tags da prévia de clientes{empresa ? ` — ${empresa}` : ''}.
+              Catálogo de tags da base de clientes{empresa ? ` — ${empresa}` : ''}.
             </p>
 
             {!empresa ? (

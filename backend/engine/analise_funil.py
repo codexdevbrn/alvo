@@ -83,6 +83,12 @@ MAPA_COLUNAS_BASE_EMPRESA = {
     "QTD": "QTD",
 }
 
+# Colunas opcionais aceitas para o ritmo diário de clientes. A primeira que
+# existir vira o campo canônico; bases mensais continuam funcionando normalmente.
+COLUNAS_DATA_DIARIA_EMPRESA = (
+    "DATA_VENDA", "Data_Venda", "DATA_PEDIDO", "Data_Pedido", "DATA", "Data",
+)
+
 GRANULARIDADES = ["Mensal", "Trimestral", "Semestral", "Anual"]
 
 DESCRICAO_NAO_HARMONIZADA = "Não harmonizados"
@@ -331,7 +337,24 @@ def carregar_excel_base_empresa(caminho_arquivo):
             "Dados Mais Atacado.xlsx sem colunas: " + ", ".join(colunas_faltando)
         )
 
+    coluna_data_diaria = next((coluna for coluna in COLUNAS_DATA_DIARIA_EMPRESA if coluna in df.columns), None)
     df = df.rename(columns=MAPA_COLUNAS_BASE_EMPRESA)
+    if coluna_data_diaria:
+        valores_data = df[coluna_data_diaria]
+        if pd.api.types.is_datetime64_any_dtype(valores_data):
+            data_diaria = pd.to_datetime(valores_data, errors="coerce")
+        else:
+            # ISO deve ser separado do padrão brasileiro para não inverter mês/dia.
+            textos_data = valores_data.astype("string").str.strip()
+            mascara_iso = textos_data.str.match(r"^\d{4}-\d{2}-\d{2}(?:[ T].*)?$", na=False)
+            data_diaria = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
+            data_diaria.loc[mascara_iso] = pd.to_datetime(
+                textos_data.loc[mascara_iso], errors="coerce", yearfirst=True,
+            )
+            data_diaria.loc[~mascara_iso] = pd.to_datetime(
+                textos_data.loc[~mascara_iso], errors="coerce", dayfirst=True,
+            )
+        df["Data_Venda_Diaria"] = data_diaria
     df["Receita Acumulada 11 Meses"] = _normalizar_numero_excel(
         df["Receita Acumulada 11 Meses"]
     )

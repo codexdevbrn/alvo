@@ -105,6 +105,18 @@ RENAME_VENDAS = {
 }
 
 
+def ler_tabela_liquidez(caminho: Path) -> pd.DataFrame:
+    """Lê CSV legado ou planilha Excel sem alterar o arquivo de origem.
+
+    Os exports mais recentes de estoque e vendas chegam em XLSX. Manter a
+    escolha pelo sufixo permite reaproveitar o mesmo contrato de colunas sem
+    converter manualmente a fonte para CSV.
+    """
+    if caminho.suffix.casefold() in {".xlsx", ".xlsm", ".xls"}:
+        return pd.read_excel(caminho, dtype=str)
+    return ler_csv_robusto(caminho, sep=";", quotechar='"', dtype=str)
+
+
 def formatar_numero_br(valor: float, casas: int = 4) -> str:
     """Número em formato BR (vírgula decimal), sem separador de milhar."""
     if pd.isna(valor):
@@ -114,12 +126,14 @@ def formatar_numero_br(valor: float, casas: int = 4) -> str:
 
 
 def normalizar_estoque(caminho_estoque: Path) -> pd.DataFrame:
-    """Lê Dados_Estoque_<empresa>.csv e monta a base de estoque da Liquidez."""
-    df = ler_csv_robusto(caminho_estoque, sep=";", quotechar='"', dtype=str)
+    """Lê Dados_Estoque_<empresa> e monta a base de estoque da Liquidez."""
+    df = ler_tabela_liquidez(caminho_estoque)
 
     validar_colunas(df, COLUNAS_ESTOQUE_ESPERADAS, caminho_estoque.name)
 
     df = df.rename(columns=RENAME_ESTOQUE)
+    df["CODIGO_INTERNO_PRODUTO"] = serie_texto_limpa(df["CODIGO_INTERNO_PRODUTO"])
+    df = df.dropna(subset=["CODIGO_INTERNO_PRODUTO"])
     df = df.drop_duplicates(subset=["Loja", "CODIGO_INTERNO_PRODUTO"], keep="last")
 
     out = pd.DataFrame({
@@ -141,11 +155,11 @@ def normalizar_estoque(caminho_estoque: Path) -> pd.DataFrame:
 
 
 def normalizar_vendas(caminho_vendas: Path) -> pd.DataFrame:
-    """Lê Dados_Vendas_<empresa>.csv e agrega QTD por loja/produto/ano/mês para Liquidez."""
+    """Lê Dados_Vendas_<empresa> e agrega QTD por loja/produto/ano/mês."""
     ano_atual = date.today().year
     anos_permitidos = (ano_atual - 1, ano_atual)
 
-    df = ler_csv_robusto(caminho_vendas, sep=";", quotechar='"', dtype=str)
+    df = ler_tabela_liquidez(caminho_vendas)
 
     validar_colunas(df, COLUNAS_VENDAS_ESPERADAS, caminho_vendas.name)
 
@@ -154,6 +168,7 @@ def normalizar_vendas(caminho_vendas: Path) -> pd.DataFrame:
     for col in ("Nome_Loja", "NOME_FABRICANTE", "descricao",
                 "CODIGO_INTERNO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO"):
         df[col] = serie_texto_limpa(df[col])
+    df = df.dropna(subset=["CODIGO_INTERNO_PRODUTO"])
     df["CODIGO_REFERENCIA_PRODUTO"] = df["CODIGO_REFERENCIA_PRODUTO"].fillna("")
 
     df["Ano"] = pd.to_numeric(serie_texto_limpa(df["Ano"]), errors="coerce")

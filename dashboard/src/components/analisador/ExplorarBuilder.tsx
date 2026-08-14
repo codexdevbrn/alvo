@@ -178,7 +178,20 @@ const LEGENDA_PROPS = {
   wrapperStyle: { paddingBottom: 8 },
 };
 
-/** Shape customizado: whiskers + caixa IQR + mediana. */
+/**
+ * Shape customizado: whiskers + caixa IQR + mediana, na convenção de Tukey.
+ *
+ * Os bigodes vão até `bigodeAlto`/`bigodeBaixo` (1,5×IQR além do quartil), não até
+ * o mínimo/máximo brutos — é o próprio `<Bar dataKey="bigodeAlto">` que referencia
+ * essa mesma escala, então o desenho aqui já nasce dentro do que o Recharts
+ * calculou para y/height. Ir até o extremo bruto faz um único cliente ou período
+ * fora da curva virar o topo da escala do gráfico inteiro, espremendo a caixa —
+ * que é o que de fato importa, onde está a maioria dos dados — a poucos % da
+ * altura.
+ *
+ * Quando o extremo real ultrapassa o bigode, um triângulo marca "tem mais aqui,
+ * fora de escala"; o valor exato vai só no tooltip.
+ */
 function BoxPlotShape(props: {
   x?: number;
   width?: number;
@@ -190,24 +203,36 @@ function BoxPlotShape(props: {
     median?: number;
     q3?: number;
     max?: number;
+    bigodeAlto?: number;
+    bigodeBaixo?: number;
+    temOutlierAlto?: boolean;
+    temOutlierBaixo?: boolean;
   };
 }) {
   const { x = 0, width = 0, y = 0, height = 0, payload } = props;
-  if (!payload || !payload.max || payload.max <= 0) return null;
-  const maxV = Number(payload.max) || 1;
-  const toY = (v: number) => y + height * (1 - Number(v) / maxV);
+  const bigodeAlto = Number(payload?.bigodeAlto ?? 0);
+  if (!payload || !bigodeAlto || bigodeAlto <= 0) return null;
+  const toY = (v: number) => y + height * (1 - Number(v) / bigodeAlto);
   const cx = x + width / 2;
   const boxW = Math.max(width * 0.55, 10);
-  const yMax = toY(Number(payload.max));
-  const yMin = toY(Number(payload.min));
+  const bigodeBaixo = Number(payload.bigodeBaixo ?? 0);
+  const yBigodeAlto = toY(bigodeAlto);
+  const yBigodeBaixo = toY(bigodeBaixo);
   const yQ3 = toY(Number(payload.q3));
   const yQ1 = toY(Number(payload.q1));
   const yMed = toY(Number(payload.median));
+  const marcador = (cyOutlier: number, aponta: 'cima' | 'baixo') => {
+    const s = 5;
+    const pontas = aponta === 'cima'
+      ? `${cx},${cyOutlier - s} ${cx - s},${cyOutlier + s} ${cx + s},${cyOutlier + s}`
+      : `${cx},${cyOutlier + s} ${cx - s},${cyOutlier - s} ${cx + s},${cyOutlier - s}`;
+    return <polygon points={pontas} fill="#e8a05f" stroke="#0f172a" strokeWidth={1} />;
+  };
   return (
     <g>
-      <line x1={cx} x2={cx} y1={yMax} y2={yMin} stroke="#94a3b8" strokeWidth={1.5} />
-      <line x1={cx - boxW / 2} x2={cx + boxW / 2} y1={yMax} y2={yMax} stroke="#94a3b8" strokeWidth={1.5} />
-      <line x1={cx - boxW / 2} x2={cx + boxW / 2} y1={yMin} y2={yMin} stroke="#94a3b8" strokeWidth={1.5} />
+      <line x1={cx} x2={cx} y1={yBigodeAlto} y2={yBigodeBaixo} stroke="#94a3b8" strokeWidth={1.5} />
+      <line x1={cx - boxW / 2} x2={cx + boxW / 2} y1={yBigodeAlto} y2={yBigodeAlto} stroke="#94a3b8" strokeWidth={1.5} />
+      <line x1={cx - boxW / 2} x2={cx + boxW / 2} y1={yBigodeBaixo} y2={yBigodeBaixo} stroke="#94a3b8" strokeWidth={1.5} />
       <rect
         x={cx - boxW / 2}
         y={Math.min(yQ3, yQ1)}
@@ -218,6 +243,8 @@ function BoxPlotShape(props: {
         stroke="#e8cc86"
       />
       <line x1={cx - boxW / 2} x2={cx + boxW / 2} y1={yMed} y2={yMed} stroke="#fff" strokeWidth={2} />
+      {payload.temOutlierAlto && marcador(yBigodeAlto - 6, 'cima')}
+      {payload.temOutlierBaixo && marcador(yBigodeBaixo + 6, 'baixo')}
     </g>
   );
 }
@@ -554,15 +581,38 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
       const dim = resultado.dimensoes[0];
       const iNome = cols.indexOf(dim);
       const idx = (c: string) => cols.indexOf(c);
-      return resultado.linhas.map((linha) => ({
-        name: String(linha[iNome] ?? ''),
-        min: Number(linha[idx('min')] ?? 0),
-        q1: Number(linha[idx('q1')] ?? 0),
-        median: Number(linha[idx('median')] ?? 0),
-        q3: Number(linha[idx('q3')] ?? 0),
-        max: Number(linha[idx('max')] ?? 0),
-        n: Number(linha[idx('n')] ?? 0),
-      }));
+      return resultado.linhas.map((linha) => {
+        const min = Number(linha[idx('min')] ?? 0);
+        const q1 = Number(linha[idx('q1')] ?? 0);
+        const median = Number(linha[idx('median')] ?? 0);
+        const q3 = Number(linha[idx('q3')] ?? 0);
+        const max = Number(linha[idx('max')] ?? 0);
+        // Convenção de Tukey: bigode vai até 1,5×IQR além do quartil, não até o
+        // extremo bruto. Sem isso um único cliente/período fora da curva vira o
+        // topo da escala do gráfico inteiro, e a caixa (o que de fato importa —
+        // onde está a maioria) fica espremida a poucos % da altura, visualmente
+        // indistinguível de uma linha.
+        const iqr = q3 - q1;
+        const cercaAlta = q3 + 1.5 * iqr;
+        const cercaBaixa = q1 - 1.5 * iqr;
+        const bigodeAlto = Math.min(max, cercaAlta);
+        const bigodeBaixo = Math.max(min, cercaBaixa);
+        return {
+          name: String(linha[iNome] ?? ''),
+          min,
+          q1,
+          median,
+          q3,
+          max,
+          bigodeAlto,
+          bigodeBaixo,
+          // Margem de ponto flutuante: sem ela, um max exatamente igual à cerca
+          // (IQR=0, poucos registros) marcaria outlier por erro de arredondamento.
+          temOutlierAlto: max > cercaAlta + 0.01,
+          temOutlierBaixo: min < cercaBaixa - 0.01,
+          n: Number(linha[idx('n')] ?? 0),
+        };
+      });
     }
 
     const dimCols = resultado.dimensoes;
@@ -811,6 +861,12 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
     borderRadius: 8,
   } as const;
 
+  // Sem isto, o Recharts pinta o texto de cada item na MESMA cor da série/fatia —
+  // e várias cores de CORES_SERIE (ex. o azul-acinzentado da paleta) têm contraste
+  // baixo demais sobre o fundo escuro do tooltip, ficando quase ilegíveis. O
+  // quadradinho de cor já identifica a série; o texto fica sempre nesta cor fixa.
+  const tooltipItemStyle = { color: '#e2e8f0' } as const;
+
   const renderGrafico = () => {
     if (chartData.length === 0) {
       return <p className="analisador-hint">Sem dados para o gráfico.</p>;
@@ -852,6 +908,7 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
               />
               <Tooltip
                 contentStyle={tooltipStyle}
+                itemStyle={tooltipItemStyle}
                 formatter={(v) => [formatNumber(Number(v)), 'Frequência']}
                 labelFormatter={(_, payload) => {
                   const p = payload?.[0]?.payload as { faixa?: string; name?: string } | undefined;
@@ -911,6 +968,7 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
               <ZAxis range={[40, 40]} />
               <Tooltip
                 contentStyle={tooltipStyle}
+                itemStyle={tooltipItemStyle}
                 cursor={{ strokeDasharray: '3 3' }}
                 formatter={(value, name) => {
                   const chave = String(name) === 'x' ? eixos.x : String(name) === 'y' ? eixos.y : String(name);
@@ -951,14 +1009,25 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
                 }}
               />
               <Tooltip
-                contentStyle={tooltipStyle}
-                formatter={(value, name) => {
-                  const n = Number(value ?? 0);
-                  const chave = String(name);
-                  if (['min', 'q1', 'median', 'q3', 'max'].includes(chave)) {
-                    return [formatCurrency(n), rotuloSerie(chave)];
-                  }
-                  return [formatNumber(n), rotuloSerie(chave)];
+                content={({ active, payload: pts }) => {
+                  if (!active || !pts || !pts.length) return null;
+                  const p = pts[0].payload as {
+                    name: string; min: number; q1: number; median: number; q3: number; max: number;
+                    n: number; temOutlierAlto?: boolean; temOutlierBaixo?: boolean;
+                  };
+                  const moeda = ehMetricaMoeda(metricas[0] ?? 'Receita');
+                  const fmt = (v: number) => (moeda ? formatCurrency(v) : formatNumber(v));
+                  return (
+                    <div style={{ ...tooltipStyle, padding: '8px 10px', fontSize: 12, color: '#e2e8f0' }}>
+                      <div style={{ fontWeight: 600, marginBottom: 4 }}>{p.name}</div>
+                      <div>Máximo: {fmt(p.max)}{p.temOutlierAlto ? ' (outlier)' : ''}</div>
+                      <div>3º quartil: {fmt(p.q3)}</div>
+                      <div>Mediana: {fmt(p.median)}</div>
+                      <div>1º quartil: {fmt(p.q1)}</div>
+                      <div>Mínimo: {fmt(p.min)}{p.temOutlierBaixo ? ' (outlier)' : ''}</div>
+                      <div style={{ color: 'rgba(255,255,255,0.5)', marginTop: 4 }}>n = {p.n}</div>
+                    </div>
+                  );
                 }}
               />
               <Legend
@@ -967,8 +1036,12 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
                     <li className="analisador-explorar-legend-item">
                       <span className="analisador-explorar-legend-swatch" style={{ background: '#dabb6c' }} />
                       <span className="analisador-explorar-legend-label">
-                        Distribuição ({rotuloSerie(metricas[0] ?? 'Receita')}) — min / Q1 / mediana / Q3 / máx
+                        Distribuição ({rotuloSerie(metricas[0] ?? 'Receita')}) — caixa = Q1–Q3, bigodes = 1,5×IQR
                       </span>
+                    </li>
+                    <li className="analisador-explorar-legend-item">
+                      <span className="analisador-explorar-legend-swatch" style={{ background: '#e8a05f' }} />
+                      <span className="analisador-explorar-legend-label">Outlier além do bigode (valor exato no tooltip)</span>
                     </li>
                   </ul>
                 )}
@@ -976,7 +1049,7 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
                 align="right"
                 wrapperStyle={{ paddingBottom: 8 }}
               />
-              <Bar dataKey="max" name="Distribuição" shape={<BoxPlotShape />} isAnimationActive={false} />
+              <Bar dataKey="bigodeAlto" name="Distribuição" shape={<BoxPlotShape />} isAnimationActive={false} />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -1010,11 +1083,15 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
               </Pie>
               <Tooltip
                 contentStyle={tooltipStyle}
-                formatter={(value) => {
+                itemStyle={tooltipItemStyle}
+                // O 2º argumento do formatter é o nome da FATIA (nameKey), não da
+                // métrica — usar rotuloSerie(metricaPizza) aqui, como antes,
+                // fazia todo hover mostrar sempre "Clientes : X" (ou o nome da
+                // métrica escolhida) em vez de qual categoria estava sob o mouse.
+                formatter={(value, name) => {
                   const n = Number(value ?? 0);
-                  return metricaPizza === 'Receita'
-                    ? [formatCurrency(n), rotuloSerie(metricaPizza)]
-                    : [formatNumber(n), rotuloSerie(metricaPizza)];
+                  const formatado = metricaPizza === 'Receita' ? formatCurrency(n) : formatNumber(n);
+                  return [formatado, String(name)];
                 }}
               />
               <Legend
@@ -1122,7 +1199,7 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
             {eixoDuplo
               ? [eixoY(true, 'left'), eixoY(false, 'right')]
               : eixoY(visao.series[0]?.moeda ?? true, 'left')}
-            <Tooltip contentStyle={tooltipStyle} formatter={tooltipFormatter} />
+            <Tooltip contentStyle={tooltipStyle} itemStyle={tooltipItemStyle} formatter={tooltipFormatter} />
             <Legend {...LEGENDA_PROPS} />
             {series}
           </ChartComp>

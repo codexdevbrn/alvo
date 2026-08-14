@@ -5,6 +5,8 @@ import AnalisadorPage from './pages/AnalisadorPage';
 import ConfiguracoesPage from './pages/ConfiguracoesPage';
 import MonitorPage from './pages/MonitorPage';
 import MercadologicoPage from './pages/MercadologicoPage';
+import ClientesPage from './pages/ClientesPage';
+import EstoquePage from './pages/EstoquePage';
 
 // Login desativado: o Analisador é aberto, como o Dashboard. A tela de login
 // segue existindo em /login (o backend continua emitindo token para quem quiser
@@ -18,6 +20,8 @@ export default function App() {
         <Route path="/config" element={<ConfiguracoesPage />} />
         <Route path="/monitor" element={<MonitorPage />} />
         <Route path="/analisador" element={<AnalisadorPage />} />
+        <Route path="/clientes" element={<ClientesPage />} />
+        <Route path="/estoque" element={<EstoquePage />} />
         <Route path="/mercadologico" element={<MercadologicoPage />} />
       </Routes>
     </BrowserRouter>

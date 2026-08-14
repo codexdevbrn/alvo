@@ -36,19 +36,17 @@ import { ResultTable } from '../components/analisador/ResultTable';
 import { TendenciaProdutosView } from '../components/analisador/TendenciaProdutosView';
 import { ExportarModal } from '../components/analisador/ExportarModal';
 import { ExplorarBuilder } from '../components/analisador/ExplorarBuilder';
-import { ClientesGruposPanel } from '../components/analisador/ClientesGruposPanel';
 import { AnalisadorCombobox } from '../components/analisador/AnalisadorCombobox';
 import { slugId } from '../utils/slug';
 import { rotuloGrupoCurto } from '../utils/formatters';
 
 type Etapa = 'carregando-base' | 'config' | 'resultados';
-type AbaWorkspace = 'relatorios' | 'graficos' | 'tabelas' | 'clientes';
+type AbaWorkspace = 'relatorios' | 'graficos' | 'tabelas';
 
 const ABAS_WORKSPACE: { id: AbaWorkspace; rotulo: string }[] = [
   { id: 'relatorios', rotulo: 'Relatórios' },
   { id: 'graficos', rotulo: 'Gráficos' },
   { id: 'tabelas', rotulo: 'Tabelas' },
-  { id: 'clientes', rotulo: 'Clientes' },
 ];
 
 type OverridePrevia = {
@@ -168,8 +166,6 @@ export default function AnalisadorPage() {
   const [carregandoProdutos, setCarregandoProdutos] = useState(false);
 
   const [abaWorkspace, setAbaWorkspace] = useState<AbaWorkspace>('relatorios');
-  const [salvandoGrupos, setSalvandoGrupos] = useState(false);
-  const [clientesBalcao, setClientesBalcao] = useState<string[]>([]);
   /** Serializa saves de grupos (painel + modal) para não sobrescrever no disco. */
   const gruposSaveChainRef = useRef(Promise.resolve());
   const gruposManuaisRef = useRef(gruposManuais);
@@ -584,7 +580,6 @@ export default function AnalisadorPage() {
       setTagsPorCliente({});
       setTagsCatalogo(TAGS_CATALOGO_PADRAO);
       setGruposManuais([]);
-      setClientesBalcao([]);
       return;
     }
     try {
@@ -592,7 +587,6 @@ export default function AnalisadorPage() {
       setTagsPorCliente(dados.tags ?? {});
       setTagsCatalogo(dados.catalogo ?? TAGS_CATALOGO_PADRAO);
       setGruposManuais(dados.grupos ?? []);
-      setClientesBalcao(dados.clientes_balcao ?? []);
     } catch (e) {
       // Não zera gruposManuais: a prévia pode ter aplicado grupos do disco;
       // limpar aqui deixaria o painel Clientes inconsistente com a prévia.
@@ -681,17 +675,6 @@ export default function AnalisadorPage() {
       await persistirGruposManuais(proximos);
     } catch (e) {
       setErro(e instanceof Error ? e.message : 'Falha ao criar grupo manual.');
-    }
-  };
-
-  const handleSalvarGruposManuais = async () => {
-    if (!empresaBase) throw new Error('Selecione uma empresa.');
-    setSalvandoGrupos(true);
-    setErro(null);
-    try {
-      await persistirGruposManuais(gruposManuaisRef.current);
-    } finally {
-      setSalvandoGrupos(false);
     }
   };
 
@@ -1424,20 +1407,6 @@ export default function AnalisadorPage() {
           )}
           {abaWorkspace === 'tabelas' && (
             <ExplorarBuilder empresa={empresaBase} loja={lojaApi} modo="tabela" />
-          )}
-          {abaWorkspace === 'clientes' && (
-            <ClientesGruposPanel
-              empresa={empresaBase}
-              loja={lojaApi}
-              itensClientes={itensClientes}
-              tagsPorCliente={tagsPorCliente}
-              tagsCatalogo={tagsCatalogo}
-              clientesBalcao={clientesBalcao}
-              grupos={gruposManuais}
-              onChangeGrupos={setGruposManuais}
-              onSalvarGrupos={handleSalvarGruposManuais}
-              salvando={salvandoGrupos}
-            />
           )}
         </div>
       )}

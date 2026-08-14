@@ -15,6 +15,8 @@ import {
   Wallet,
   PanelLeftClose,
   PanelLeftOpen,
+  UsersRound,
+  PackageSearch,
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getToken, clearToken, obterStatusAtualizacao, type StatusAtualizacao } from '../api/client';
@@ -102,6 +104,8 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   const logado = Boolean(getToken());
   const emAnalisador = location.pathname.startsWith('/analisador');
   const emMonitor = location.pathname.startsWith('/monitor');
+  const emClientes = location.pathname.startsWith('/clientes');
+  const emEstoque = location.pathname.startsWith('/estoque');
   const emConfig = location.pathname.startsWith('/config');
   const emMercadologico = location.pathname.startsWith('/mercadologico');
   const emDashboard = location.pathname === '/';
@@ -238,6 +242,20 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
             collapsed={colapsado}
             ativo={emMonitor}
             onClick={() => navigate('/monitor')}
+          />
+          <NavItem
+            icon={<UsersRound size={17} />}
+            label="Clientes"
+            collapsed={colapsado}
+            ativo={emClientes}
+            onClick={() => navigate('/clientes')}
+          />
+          <NavItem
+            icon={<PackageSearch size={17} />}
+            label="Estoque"
+            collapsed={colapsado}
+            ativo={emEstoque}
+            onClick={() => navigate('/estoque')}
           />
           <NavItem
             icon={<Store size={17} />}

@@ -8,7 +8,8 @@ uma dependência do app que está justamente sendo substituída.
 
 Uso (quem chama é POST /api/atualizacoes/aplicar):
 
-    atualizador.exe --pid <pid> --zip <pacote.zip> --destino <pasta> [--versao 1.0.1]
+    atualizador.exe --pid <pid> --zip <pacote.zip> --destino <pasta>
+        --versao 1.0.1 --versao-anterior 1.0.0
 
 Sequência, com rollback em qualquer tropeço depois da troca:
 
@@ -171,6 +172,19 @@ def religar(destino: str, log: Registro, versao_esperada: str = "") -> bool:
     return False
 
 
+def religar_versao_anterior(destino: str, log: Registro, versao_anterior: str) -> bool:
+    """Religa rollback sem aceitar outra instância do Prisma como sucesso.
+
+    A máquina pode ter builds de teste em outras portas. Sem a versão esperada,
+    qualquer um deles faria o atualizador declarar rollback concluído enquanto
+    o executável realmente restaurado já tivesse encerrado ou sido bloqueado.
+    """
+    if not versao_anterior:
+        log("Versão anterior desconhecida; rollback não pode ser confirmado com segurança.")
+        return False
+    return religar(destino, log, versao_esperada=versao_anterior)
+
+
 def _remover(caminho: str, log: Registro) -> None:
     if not os.path.exists(caminho):
         return
@@ -195,7 +209,14 @@ def _preservar(origem: str, destino: str, log: Registro) -> None:
         log(f"Preservado: {item}")
 
 
-def aplicar(pid: int, zip_pacote: str, destino: str, versao: str, log: Registro) -> int:
+def aplicar(
+    pid: int,
+    zip_pacote: str,
+    destino: str,
+    versao: str,
+    versao_anterior: str,
+    log: Registro,
+) -> int:
     destino = os.path.abspath(destino)
     novo = destino + "_novo"
     backup = destino + "_backup"
@@ -219,13 +240,13 @@ def aplicar(pid: int, zip_pacote: str, destino: str, versao: str, log: Registro)
         # devolve o usuário à versão antiga funcionando.
         log(f"Pacote inválido ({exc}). Nada foi alterado; religando a versão atual.")
         _remover(novo, log)
-        religar(destino, log)
+        religar_versao_anterior(destino, log, versao_anterior)
         return 4
 
     if not os.path.isfile(os.path.join(novo, NOME_EXECUTAVEL)):
         log(f"O pacote não contém {NOME_EXECUTAVEL}. Nada foi alterado.")
         _remover(novo, log)
-        religar(destino, log)
+        religar_versao_anterior(destino, log, versao_anterior)
         return 4
 
     try:
@@ -233,7 +254,7 @@ def aplicar(pid: int, zip_pacote: str, destino: str, versao: str, log: Registro)
     except OSError as exc:
         log(f"Falha ao preservar dados ({exc}). Nada foi trocado; religando a versão atual.")
         _remover(novo, log)
-        religar(destino, log)
+        religar_versao_anterior(destino, log, versao_anterior)
         return 5
 
     _remover(backup, log)
@@ -243,7 +264,7 @@ def aplicar(pid: int, zip_pacote: str, destino: str, versao: str, log: Registro)
     except OSError as exc:
         log(f"Não foi possível mover a instalação atual ({exc}). Nada foi trocado.")
         _remover(novo, log)
-        religar(destino, log)
+        religar_versao_anterior(destino, log, versao_anterior)
         return 6
     try:
         os.rename(novo, destino)
@@ -251,7 +272,7 @@ def aplicar(pid: int, zip_pacote: str, destino: str, versao: str, log: Registro)
         log(f"Falha ao pôr a versão nova no lugar ({exc}). Desfazendo.")
         os.rename(backup, destino)
         _remover(novo, log)
-        religar(destino, log)
+        religar_versao_anterior(destino, log, versao_anterior)
         return 6
 
     if religar(destino, log, versao_esperada=versao):
@@ -272,9 +293,14 @@ def aplicar(pid: int, zip_pacote: str, destino: str, versao: str, log: Registro)
             f"'{backup}' de volta para '{destino}'."
         )
         return 7
-    religar(destino, log)
-    log("Rollback concluído: a versão anterior está no ar.")
-    return 7
+    if religar_versao_anterior(destino, log, versao_anterior):
+        log(f"Rollback concluído: versão {versao_anterior} está no ar.")
+        return 7
+    log(
+        "ROLLBACK RESTAUROU OS ARQUIVOS, MAS O PRISMA NÃO SUBIU. "
+        "Verifique antivírus e reinstale a última versão válida."
+    )
+    return 8
 
 
 def _reconectar_console() -> None:
@@ -308,13 +334,21 @@ def main() -> int:
     analisador.add_argument("--zip", dest="zip_pacote", required=True)
     analisador.add_argument("--destino", required=True)
     analisador.add_argument("--versao", default="")
+    analisador.add_argument("--versao-anterior", required=True)
     args = analisador.parse_args()
 
     log = Registro(_caminho_log(args.destino))
     log("=" * 70)
     log(f"Atualizador iniciado. destino={args.destino} versao={args.versao or '?'}")
     try:
-        codigo = aplicar(args.pid, args.zip_pacote, args.destino, args.versao, log)
+        codigo = aplicar(
+            args.pid,
+            args.zip_pacote,
+            args.destino,
+            args.versao,
+            args.versao_anterior,
+            log,
+        )
     except Exception as exc:  # noqa: BLE001 - último recurso: registrar e sair
         log(f"Erro inesperado: {exc!r}")
         codigo = 1
