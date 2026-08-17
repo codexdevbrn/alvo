@@ -9,9 +9,7 @@ import {
   type StatusCoberturaEstoque,
 } from '../api/client';
 import { formatCurrency, formatPercent } from '../utils/formatters';
-import { EVENTO_EMPRESA } from '../utils/empresaSelecionada';
-
-const LS_EMPRESA = 'alvo_empresa';
+import { useEscopoAtual } from '../hooks/useEscopoAtual';
 
 const ROTULOS_STATUS: Record<StatusCoberturaEstoque, string> = {
   normal: 'Saudável',
@@ -22,14 +20,6 @@ const ROTULOS_STATUS: Record<StatusCoberturaEstoque, string> = {
   excess: 'Excesso',
   no_sales: 'Sem giro',
 };
-
-function lerEmpresa(): string {
-  try {
-    return localStorage.getItem(LS_EMPRESA) || '';
-  } catch {
-    return '';
-  }
-}
 
 function normalizarBusca(valor: string): string {
   return valor.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
@@ -47,8 +37,8 @@ function classeStatus(status: StatusCoberturaEstoque): string {
 
 /** Tela dedicada ao capital parado, excesso de cobertura e risco de ruptura. */
 export default function EstoquePage() {
-  const [empresa, setEmpresa] = useState(lerEmpresa);
-  const [loja, setLoja] = useState('');
+  // Empresa e loja vêm da barra lateral e valem para todas as telas.
+  const { empresa, loja } = useEscopoAtual();
   const [meses, setMeses] = useState(6);
   const [dados, setDados] = useState<CoberturaEstoqueResposta | null>(null);
   const [carregando, setCarregando] = useState(false);
@@ -56,20 +46,6 @@ export default function EstoquePage() {
   const [busca, setBusca] = useState('');
   const [fabricante, setFabricante] = useState('');
   const [status, setStatus] = useState('');
-
-  useEffect(() => {
-    const sincronizar = (evento: Event) => {
-      const detalhe = evento instanceof CustomEvent ? evento.detail : null;
-      setEmpresa(typeof detalhe === 'string' ? detalhe : lerEmpresa());
-      setLoja('');
-    };
-    window.addEventListener(EVENTO_EMPRESA, sincronizar);
-    window.addEventListener('storage', sincronizar);
-    return () => {
-      window.removeEventListener(EVENTO_EMPRESA, sincronizar);
-      window.removeEventListener('storage', sincronizar);
-    };
-  }, []);
 
   useEffect(() => {
     if (!empresa) {
@@ -80,7 +56,7 @@ export default function EstoquePage() {
     const controller = new AbortController();
     setCarregando(true);
     setErro(null);
-    void obterCoberturaEstoque(empresa, { loja: loja || null, meses, limite: 1200 }, controller.signal)
+    void obterCoberturaEstoque(empresa, { loja, meses, limite: 1200 }, controller.signal)
       .then(setDados)
       .catch((falha) => {
         if (falha instanceof DOMException && falha.name === 'AbortError') return;
@@ -126,15 +102,7 @@ export default function EstoquePage() {
           </div>
           {empresa && (
             <div className="estoque-header-filtros">
-              {dados && dados.lojas.length > 1 && (
-                <label className="analisador-campo">
-                  <span>Loja</span>
-                  <select className="custom-select analisador-select" value={loja} onChange={(e) => setLoja(e.target.value)}>
-                    <option value="">Todas as lojas</option>
-                    {dados.lojas.map((nome) => <option key={nome} value={nome}>{nome}</option>)}
-                  </select>
-                </label>
-              )}
+              {/* A loja é escolhida na barra lateral e vale para todas as telas. */}
               <label className="analisador-campo">
                 <span>Venda média</span>
                 <select className="custom-select analisador-select" value={meses} onChange={(e) => setMeses(Number(e.target.value))}>

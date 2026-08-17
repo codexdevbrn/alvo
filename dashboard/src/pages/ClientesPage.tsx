@@ -4,7 +4,7 @@ import { AppShell } from '../components/AppShell';
 import { ClientesAlertaCard } from '../components/analisador/ClientesAlertaCard';
 import { ClientesRitmoAlertas } from '../components/clientes/ClientesRitmoAlertas';
 import {
-  obterBase,
+
   obterBaseClientes,
   obterTagsClientes,
   salvarTagsUmCliente,
@@ -14,17 +14,7 @@ import {
   type TagCliente,
 } from '../api/client';
 import { formatCurrency } from '../utils/formatters';
-import { EVENTO_EMPRESA } from '../utils/empresaSelecionada';
-
-const LS_EMPRESA = 'alvo_empresa';
-
-function lerEmpresa(): string {
-  try {
-    return localStorage.getItem(LS_EMPRESA) || '';
-  } catch {
-    return '';
-  }
-}
+import { useEscopoAtual } from '../hooks/useEscopoAtual';
 
 function normalizarBusca(valor: string): string {
   return valor.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
@@ -32,9 +22,8 @@ function normalizarBusca(valor: string): string {
 
 /** Tela operacional: acompanha clientes e edita tags sem carregar regras de relatórios/produtos. */
 export default function ClientesPage() {
-  const [empresa, setEmpresa] = useState(lerEmpresa);
-  const [loja, setLoja] = useState('');
-  const [lojas, setLojas] = useState<string[]>([]);
+  // Empresa e loja vêm da barra lateral e valem para todas as telas.
+  const { empresa, loja } = useEscopoAtual();
   const [clientes, setClientes] = useState<ItemClienteBusca[]>([]);
   const [totalClientes, setTotalClientes] = useState(0);
   const [baseLimitada, setBaseLimitada] = useState(false);
@@ -48,23 +37,8 @@ export default function ClientesPage() {
   const [erro, setErro] = useState<string | null>(null);
 
   useEffect(() => {
-    const sincronizar = (evento: Event) => {
-      const detalhe = evento instanceof CustomEvent ? evento.detail : null;
-      setEmpresa(typeof detalhe === 'string' ? detalhe : lerEmpresa());
-      setLoja('');
-    };
-    window.addEventListener(EVENTO_EMPRESA, sincronizar);
-    window.addEventListener('storage', sincronizar);
-    return () => {
-      window.removeEventListener(EVENTO_EMPRESA, sincronizar);
-      window.removeEventListener('storage', sincronizar);
-    };
-  }, []);
-
-  useEffect(() => {
     if (!empresa) {
       setClientes([]);
-      setLojas([]);
       setTagsPorCliente({});
       return;
     }
@@ -72,13 +46,11 @@ export default function ClientesPage() {
     setCarregando(true);
     setErro(null);
     Promise.all([
-      obterBase(empresa, loja || null),
-      obterBaseClientes(empresa, loja || null),
-      obterTagsClientes(empresa, loja || null),
+      obterBaseClientes(empresa, loja),
+      obterTagsClientes(empresa, loja),
     ])
-      .then(([base, respostaClientes, respostaTags]) => {
+      .then(([respostaClientes, respostaTags]) => {
         if (cancelado) return;
-        setLojas(base.lojas ?? []);
         setClientes(respostaClientes.itens);
         setTotalClientes(respostaClientes.total);
         setBaseLimitada(respostaClientes.limitado);
@@ -132,7 +104,7 @@ export default function ClientesPage() {
     setSalvandoCliente(chave);
     setErro(null);
     try {
-      const resposta = await salvarTagsUmCliente(empresa, chave, proximas, loja || null);
+      const resposta = await salvarTagsUmCliente(empresa, chave, proximas, loja);
       setTagsPorCliente(resposta.tags ?? {});
       setClientesBalcao(resposta.clientes_balcao ?? []);
     } catch (e) {
@@ -153,15 +125,7 @@ export default function ClientesPage() {
             <h1>Clientes{empresa && <span className="analisador-header-empresa"> · {empresa}</span>}</h1>
             <p>Acompanhamento de atenção, inadimplência e demais tags comerciais.</p>
           </div>
-          {lojas.length > 1 && (
-            <label className="analisador-campo clientes-loja">
-              <span>Loja</span>
-              <select className="custom-select analisador-select" value={loja} onChange={(e) => setLoja(e.target.value)}>
-                <option value="">Todas as lojas</option>
-                {lojas.map((nome) => <option key={nome} value={nome}>{nome}</option>)}
-              </select>
-            </label>
-          )}
+          {/* A loja é escolhida na barra lateral e vale para todas as telas. */}
         </header>
 
         {!empresa && (
@@ -186,9 +150,9 @@ export default function ClientesPage() {
               ))}
             </section>
 
-            <ClientesRitmoAlertas empresa={empresa} loja={loja || null} catalogo={catalogo} />
+            <ClientesRitmoAlertas empresa={empresa} loja={loja} catalogo={catalogo} />
 
-            <ClientesAlertaCard empresa={empresa} loja={loja || null} itensClientes={clientesCompletos} tagsPorCliente={tagsPorCliente} tagsCatalogo={catalogo} clientesBalcao={clientesBalcao} />
+            <ClientesAlertaCard empresa={empresa} loja={loja} itensClientes={clientesCompletos} tagsPorCliente={tagsPorCliente} tagsCatalogo={catalogo} clientesBalcao={clientesBalcao} />
 
             <section className="glass-card glass-card-flat clientes-base-card">
               <div className="clientes-base-topo">

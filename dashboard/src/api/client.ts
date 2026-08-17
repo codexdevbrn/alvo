@@ -702,6 +702,17 @@ export async function listarEmpresasDashboard(): Promise<string[]> {
   return tratarResposta(res);
 }
 
+/**
+ * Lojas da empresa, para o seletor de escopo da sidebar. Vem do resumo leve, não
+ * da base — o seletor aparece até no Dashboard público. Empresa sem summary
+ * gerado responde lista vazia.
+ */
+export async function listarLojasEmpresa(empresa: string): Promise<string[]> {
+  const res = await chamar(`/api/dashboard/empresas/${encodeURIComponent(empresa)}/lojas`);
+  const dados: { lojas?: string[] } = await tratarResposta(res);
+  return dados.lojas ?? [];
+}
+
 export interface VersaoApp {
   versao: string;
   app: string;

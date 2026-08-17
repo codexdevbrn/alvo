@@ -36,7 +36,9 @@ NOME_RESUMO_MONITOR = "resumo_monitor.json"
 
 #: Muda quando o formato do resumo muda — cache de versão antiga é descartado em
 #: vez de ser lido torto.
-VERSAO_RESUMO = 1
+#: Bumpar invalida todo `resumo_monitor.json` já gravado, que é regerado do
+#: summary na primeira leitura. 2: passou a carregar a lista de lojas.
+VERSAO_RESUMO = 2
 
 #: Métricas oferecidas pela tela. A chave é o que vem do filtro; o valor é o campo
 #: correspondente na série do resumo. `receita_dia` é DERIVADA (receita ÷ dias úteis
@@ -142,9 +144,15 @@ def _resumo_de_summary(summary: dict) -> dict:
     serie.sort(key=lambda item: item["periodo"] or 0)
 
     kpis = summary.get("kpis") or {}
+    # `maps.s` é a lista de lojas ordenada por receita. Vem junto porque o
+    # seletor de loja da sidebar aparece em toda tela, inclusive no Dashboard
+    # público: tirar a lista da base carregaria o XLSX inteiro só para preencher
+    # um combobox, e é justamente isso que o summary pré-gerado evita.
+    lojas = [str(nome) for nome in (summary.get("maps", {}).get("s") or [])]
     return {
         "versao": VERSAO_RESUMO,
         "updated_at": summary.get("updated_at"),
+        "lojas": lojas,
         "serie": serie,
         "totais": {
             "rev": round(float(kpis.get("rev") or 0.0), 2),

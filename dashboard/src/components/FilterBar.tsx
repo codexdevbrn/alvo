@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import {
-    Users, Package, Store, LayoutDashboard, AlertTriangle, X, Filter, SlidersHorizontal, RefreshCw, CalendarClock, Check
+    Users, Package, LayoutDashboard, AlertTriangle, X, Filter, SlidersHorizontal, RefreshCw, CalendarClock, Check
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PeriodSelector } from './PeriodSelector';
@@ -16,7 +16,6 @@ type IdFilters = {
     client: number[];
     mfr: number[];
     desc: number[];
-    store: number[];
     severity: number[];
     period: number[];
     usarMesesFechados: boolean;
@@ -28,7 +27,6 @@ type IdFilterSetters = {
     setClient: (v: number[]) => void;
     setMfr: (v: number[]) => void;
     setDesc: (v: number[]) => void;
-    setStore: (v: number[]) => void;
     setSeverity: (v: number[]) => void;
     setPeriod: (v: number[]) => void;
     setUsarMesesFechados: (v: boolean) => void;
@@ -43,7 +41,6 @@ interface FilterContentProps {
         clientOpts: Set<number>;
         mfrOpts: Set<number>;
         descOpts: Set<number>;
-        storeOpts: Set<number>;
     } | null;
     setters: IdFilterSetters;
     onClear: () => void;
@@ -68,7 +65,6 @@ interface FilterBarProps {
         clientOpts: Set<number>;
         mfrOpts: Set<number>;
         descOpts: Set<number>;
-        storeOpts: Set<number>;
     } | null;
     setters: IdFilterSetters;
     onClear: () => void;
@@ -263,9 +259,9 @@ function VisaoToggle({
 }
 
 function FilterContent({ data, filters, filterOptions, setters, onClear }: FilterContentProps) {
-    const { client, mfr, desc, store, severity, period, usarMesesFechados, visaoDetalhada, granularidade } = filters;
+    const { client, mfr, desc, severity, period, usarMesesFechados, visaoDetalhada, granularidade } = filters;
     const {
-        setClient, setMfr, setDesc, setStore, setSeverity, setPeriod,
+        setClient, setMfr, setDesc, setSeverity, setPeriod,
         setUsarMesesFechados, setVisaoDetalhada, setGranularidade,
     } = setters;
 
@@ -277,7 +273,7 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
     ];
 
     const unidade = rotuloUnidade(granularidade);
-    const hasFilters = client.length > 0 || mfr.length > 0 || desc.length > 0 || store.length > 0 || severity.length > 0
+    const hasFilters = client.length > 0 || mfr.length > 0 || desc.length > 0 || severity.length > 0
       || period.length > 0 || !usarMesesFechados || visaoDetalhada || granularidade !== 'Mensal';
 
     return (
@@ -305,16 +301,6 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
                 onClear={() => setClient([])}
                 placeholder="Todos os Clientes"
                 limitePadrao={60}
-            />
-
-            <CustomDropdown
-                label="Loja"
-                icon={Store}
-                value={store}
-                options={data.maps.s.map((name, id) => ({ id, name })).filter(o => store.includes(o.id) || (filterOptions?.storeOpts.has(o.id)))}
-                onChange={setStore}
-                onClear={() => setStore([])}
-                placeholder="Todas as Lojas"
             />
 
             <CustomDropdown
@@ -430,8 +416,8 @@ export function FilterBar({ data, filters, filterOptions, setters, onClear }: Fi
         return () => window.removeEventListener('resize', handleResize);
     }, []);
 
-    const { client, mfr, desc, store, severity, period, usarMesesFechados, visaoDetalhada, granularidade } = filters;
-    const hasActiveFilters = client.length > 0 || mfr.length > 0 || desc.length > 0 || store.length > 0 || severity.length > 0
+    const { client, mfr, desc, severity, period, usarMesesFechados, visaoDetalhada, granularidade } = filters;
+    const hasActiveFilters = client.length > 0 || mfr.length > 0 || desc.length > 0 || severity.length > 0
       || period.length > 0 || !usarMesesFechados || visaoDetalhada || granularidade !== 'Mensal';
 
     // Mobile View

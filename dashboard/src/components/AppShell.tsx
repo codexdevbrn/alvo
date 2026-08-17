@@ -22,6 +22,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { getToken, clearToken, obterStatusAtualizacao, type StatusAtualizacao } from '../api/client';
 import { BannerAtualizacao } from './BannerAtualizacao';
 import { SidebarEmpresaSelect } from './SidebarEmpresaSelect';
+import { SidebarLojaSelect } from './SidebarLojaSelect';
 
 const URL_CARTEIRA = 'http://monitor-2d/';
 const LS_SIDEBAR = 'prisma_sidebar_collapsed';
@@ -219,6 +220,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
         </div>
 
         <SidebarEmpresaSelect />
+        <SidebarLojaSelect />
 
         <nav className="app-sidebar-nav">
           <span className="app-sidebar-nav-label">Menu</span>

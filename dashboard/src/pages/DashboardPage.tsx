@@ -14,6 +14,7 @@ import { gravarSummaryCache, lerSummaryCache } from '../utils/cacheSummary';
 import { DashboardHeader } from '../components/DashboardHeader';
 import { AppShell } from '../components/AppShell';
 import { EVENTO_EMPRESA } from '../utils/empresaSelecionada';
+import { EVENTO_LOJA, lerLoja } from '../utils/lojaSelecionada';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { obterAguardandoBaseDados, obterSummaryEmpresa } from '../api/client';
 import { formatCurrency, formatNumber } from '../utils/formatters';
@@ -168,6 +169,24 @@ export default function DashboardPage() {
   const [historyType, setHistoryType] = useState<null | 'revenue' | 'mfr' | 'desc'>(null);
   const [isComputing, startComputeTransition] = useTransition();
 
+  // Loja do seletor da barra lateral. Fica aqui, e não no useEscopoAtual, porque
+  // esta tela já mantém a empresa em estado próprio (troca de base tem animação e
+  // cache de summary); ler as duas de fontes diferentes deixaria uma render com a
+  // loja da empresa anterior.
+  const [lojaEscopo, setLojaEscopo] = useState(() => lerLoja(empresa));
+  useEffect(() => {
+    const sincronizar = () => setLojaEscopo(lerLoja(localStorage.getItem('alvo_empresa') || ''));
+    sincronizar();
+    window.addEventListener(EVENTO_LOJA, sincronizar);
+    window.addEventListener(EVENTO_EMPRESA, sincronizar);
+    window.addEventListener('storage', sincronizar);
+    return () => {
+      window.removeEventListener(EVENTO_LOJA, sincronizar);
+      window.removeEventListener(EVENTO_EMPRESA, sincronizar);
+      window.removeEventListener('storage', sincronizar);
+    };
+  }, []);
+
   const [empresaLoading, setEmpresaLoading] = useState(false);
   const [empresaError, setEmpresaError] = useState<string | null>(null);
   const [aguardandoBaseDados, setAguardandoBaseDados] = useState(false);
@@ -177,7 +196,6 @@ export default function DashboardPage() {
   const [client, setClient] = useState<number[]>(() => lerIdsFiltro('alvo_client'));
   const [mfr, setMfr] = useState<number[]>(() => lerIdsFiltro('alvo_mfr'));
   const [desc, setDesc] = useState<number[]>(() => lerIdsFiltro('alvo_desc'));
-  const [store, setStore] = useState<number[]>(() => lerIdsFiltro('alvo_store'));
   const [severity, setSeverity] = useState<number[]>(() => lerIdsFiltro('alvo_severity'));
   const [period, setPeriod] = useState<number[]>(() => JSON.parse(localStorage.getItem('alvo_period') || '[]'));
   const [modalPeriod, setModalPeriod] = useState<number[]>(() => JSON.parse(localStorage.getItem('alvo_period_modal') || '[]'));
@@ -204,6 +222,15 @@ export default function DashboardPage() {
     const v = localStorage.getItem('alvo_visao_detalhada');
     return v === 'true';
   });
+
+  // A loja não é mais um filtro desta tela: vem do seletor da barra lateral e
+  // vale para todo o Prisma. Aqui ela só é traduzida para o índice que as linhas
+  // do summary usam (`maps.s`), que é o formato que o cálculo já esperava.
+  const store = useMemo<number[]>(() => {
+    if (!lojaEscopo || !data) return [];
+    const indice = data.maps.s.indexOf(lojaEscopo);
+    return indice >= 0 ? [indice] : [];
+  }, [lojaEscopo, data]);
 
   // Debounce: só recalcula depois que o usuário para de clicar (~300ms)
   const debouncedClient = useDebouncedValue(client, 300);
@@ -267,14 +294,13 @@ export default function DashboardPage() {
     localStorage.setItem('alvo_client', JSON.stringify(client));
     localStorage.setItem('alvo_mfr', JSON.stringify(mfr));
     localStorage.setItem('alvo_desc', JSON.stringify(desc));
-    localStorage.setItem('alvo_store', JSON.stringify(store));
     localStorage.setItem('alvo_severity', JSON.stringify(severity));
     localStorage.setItem('alvo_period', JSON.stringify(period));
     localStorage.setItem('alvo_period_modal', JSON.stringify(modalPeriod));
     localStorage.setItem('alvo_meses_fechados', String(usarMesesFechados));
     localStorage.setItem('alvo_granularidade', granularidade);
     localStorage.setItem('alvo_visao_detalhada', String(visaoDetalhada));
-  }, [client, mfr, desc, store, severity, period, modalPeriod, usarMesesFechados, granularidade, visaoDetalhada]);
+  }, [client, mfr, desc, severity, period, modalPeriod, usarMesesFechados, granularidade, visaoDetalhada]);
 
   // Carrega os dados: summary.json estático (padrão) ou o summary processado
   // pelo backend para a empresa selecionada (lê Base.csv existente; não regenera
@@ -381,7 +407,6 @@ export default function DashboardPage() {
       setClient([]);
       setMfr([]);
       setDesc([]);
-      setStore([]);
       setPeriod([]);
       setSeverity([]);
     };
@@ -410,7 +435,7 @@ export default function DashboardPage() {
   // ==========================================
 
   const clearFilters = () => {
-    setClient([]); setMfr([]); setDesc([]); setStore([]); setPeriod([]); setSeverity([]);
+    setClient([]); setMfr([]); setDesc([]); setPeriod([]); setSeverity([]);
     setUsarMesesFechados(true);
     setGranularidade('Mensal');
     setVisaoDetalhada(false);
@@ -641,7 +666,7 @@ export default function DashboardPage() {
       : COR_ANO_RECENTE;
 
     // 6. Filter Options (population context - Independent per dimension)
-    const clientOpts = new Set<number>(), mfrOpts = new Set<number>(), descOpts = new Set<number>(), storeOpts = new Set<number>();
+    const clientOpts = new Set<number>(), mfrOpts = new Set<number>(), descOpts = new Set<number>();
 
     // Opções independentes em uma única varredura. Cada dimensão ignora o
     // próprio filtro, preservando comportamento anterior sem 4× arrays grandes.
@@ -657,9 +682,6 @@ export default function DashboardPage() {
       }
       if ((!clientSet || clientSet.has(r[2])) && (!mfrSet || mfrSet.has(r[3])) && (!storeSet || storeSet.has(r[1]))) {
         descOpts.add(r[4]);
-      }
-      if ((!clientSet || clientSet.has(r[2])) && (!mfrSet || mfrSet.has(r[3])) && (!descSet || descSet.has(r[4]))) {
-        storeOpts.add(r[1]);
       }
     });
 
@@ -850,7 +872,7 @@ export default function DashboardPage() {
           };
         }
       },
-      filterOptions: { clientOpts, mfrOpts, descOpts, storeOpts },
+      filterOptions: { clientOpts, mfrOpts, descOpts },
       noDataMessage: populationRows.length === 0 ? "Nenhum dado encontrado para os filtros selecionados." : null
     };
   }, [data, baseRows, computeFilters, historyType, computeUsarMesesFechados, computeGranularidade, visaoDetalhada, loading, introDone]);
@@ -936,10 +958,10 @@ export default function DashboardPage() {
 
       <FilterBar
         data={data!}
-        filters={{ client, mfr, desc, store, severity, period, usarMesesFechados, visaoDetalhada, granularidade }}
+        filters={{ client, mfr, desc, severity, period, usarMesesFechados, visaoDetalhada, granularidade }}
         filterOptions={processed.filterOptions}
         setters={{
-          setClient, setMfr, setDesc, setStore, setSeverity, setUsarMesesFechados, setVisaoDetalhada,
+          setClient, setMfr, setDesc, setSeverity, setUsarMesesFechados, setVisaoDetalhada,
           setGranularidade: handleGranularidadeChange,
           setPeriod: (newPeriod: number[]) => {
             if (!data) {

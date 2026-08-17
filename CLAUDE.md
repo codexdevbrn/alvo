@@ -135,6 +135,16 @@ Três coisas a não mexer sem entender:
 - `pages/` — `DashboardPage`, `LoginPage`, `AnalisadorPage` — um componente de página por rota.
 - `components/` — componentes do Dashboard na raiz (`MetricsGrid`, `HistoryChart`, `BreakdownSection`, `FilterBar`, `PeriodSelector`, `EmpresaSelector`, `RevenueDetailModal`, etc.); componentes específicos do Analisador ficam em `components/analisador/` (`ConfigModal`, `ExportarModal`, `ResultTable`, `PreviaClientesTable`, `PreviaProdutosTable`, `NumberStepper`).
 - `EmpresaSelector` / `ConfigModal` — dois campos de caminho (fonte RO + trabalho RW), compartilhados conceitualmente entre Dashboard e Analisador.
+
+### Escopo global: empresa + loja
+
+A barra lateral é a única dona do escopo. `SidebarEmpresaSelect` grava `alvo_empresa`; `SidebarLojaSelect` grava `prisma_loja_<empresa>` (`utils/lojaSelecionada.ts`) e só aparece quando a empresa tem mais de uma loja. `hooks/useEscopoAtual` entrega `{empresa, loja}` já sincronizado — as telas não leem mais o localStorage por conta própria, que era como cada uma acabava com uma regra diferente para zerar a loja.
+
+Três consequências a ter em mente:
+
+- **Uma loja por vez** (`''` = todas). O backend continua entendendo o escopo multi-loja (`@lojas:[...]`), e `config.json`/`clientes_tags.json` já gravados assim seguem válidos no disco, mas nenhuma tela produz mais esse escopo.
+- **Nenhuma tela tem seletor de loja próprio.** Saíram o filtro "Loja" da `FilterBar`, o do Analisador, o do Estoque e o de Clientes. No Dashboard a loja não é filtro: vira índice em `maps.s` e entra no mesmo cálculo de antes — o summary já traz a loja em cada linha, então não há ida ao servidor.
+- **A lista de lojas sai de `GET /api/dashboard/empresas/{empresa}/lojas`**, que lê o `resumo_monitor.json` (poucos KB), não a base. O seletor aparece no Dashboard público: tirar a lista da base carregaria o XLSX inteiro para preencher um combobox, anulando o ganho do summary pré-gerado. Empresa sem summary responde lista vazia e o seletor some, em vez de a tela quebrar.
 - `data/summary.json` vs `public/data/summary.json` — o dashboard estático lê o JSON gerado por `process_data.py`; `public/data/` é servido estaticamente pelo Vite/build, `src/data/` é uma cópia usada em import direto no código — ao regenerar dados, checar se as duas precisam ser atualizadas. Não se aplica ao modo por empresa, que busca do backend em runtime.
 - `types/dashboard.ts` — tipos compartilhados do shape de `summary.json` (mesmo formato tanto no estático quanto no gerado em runtime por empresa).
 - Filtros do Dashboard usam debounce (`useDebouncedValue`, ~300ms) + `useTransition` para recalcular sem travar a UI ao clicar rápido em filtros.
@@ -154,7 +164,17 @@ Três coisas a não mexer sem entender:
 
 ### Pastas fonte e trabalho
 - **Fonte** (RO): subpastas por cliente com `BI/` contendo exports de movimento e produto. Listagem de empresas = subpastas da fonte que têm `BI/`.
-- **Trabalho** (RW): subpastas por cliente com `Base.csv` (schema canônico de `engine.analise_funil.carregar_csv`), `config.json` (Analisador) e opcionalmente `harm.xlsx`. O app pode criar a pasta do cliente aqui na primeira seleção.
+- **Trabalho** (RW): subpastas por cliente com `Base.csv` (schema canônico de `engine.analise_funil.carregar_csv`), `config.json` (Analisador) e opcionalmente `harm.xlsx` e `clientes_harm.json`. O app pode criar a pasta do cliente aqui na primeira seleção.
+
+### Harmonização de nomes de cliente (`clientes_harm.json`)
+
+Algumas fontes gravam o mesmo cliente uma vez por origem, distinguindo pelo sufixo no fim do nome — `JHONE TEIXEIRA COSTA (CM)` e `JHONE TEIXEIRA COSTA (SA)` são a mesma pessoa. O sufixo **não** é a loja: as variantes convivem dentro da mesma loja, então filtrar por loja não resolvia. `backend/harmonizar_clientes.py` reescreve a coluna `Cliente` em `_carregar_base_empresa_sem_trava`, antes do cache — logo vale para Dashboard, Analisador, Explorar e exports, ao contrário dos grupos manuais (`grupos_manuais`), que só existem no Analisador.
+
+A regra é o arquivo opcional `clientes_harm.json` na pasta de trabalho da empresa (`unificar_por_sufixo`, `sufixos`, `mapa`). Sem o arquivo, nada muda; arquivo inválido vira aviso no log e a base segue crua. Três decisões que limitam o estrago:
+
+- só unifica com o nome **idêntico** antes do sufixo e as variantes convivendo **na mesma loja** — nomes só parecidos ou separados por loja vão no `mapa` manual, porque somar receita de quem não é a mesma pessoa é pior que deixar duplicado;
+- nome com sufixo único fica como está, o que mantém válidas as tags e exclusões já gravadas por nome (ex.: `CONSUMIDOR ITABORAI (SA)`);
+- o mtime do `clientes_harm.json` entra na chave do cache da base e no frescor do `summary_dashboard.json` — sem isso, editar a regra não teria efeito até a fonte mudar.
 
 ## Deploy
 
