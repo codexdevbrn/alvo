@@ -58,17 +58,23 @@ def caminho_summary_dashboard_gz(pasta_trabalho: str | Path) -> Path:
 def summary_dashboard_atualizado(
     pasta_trabalho: str | Path,
     caminho_base_csv: str | Path,
+    *,
+    mtime_minimo: float = 0.0,
 ) -> bool:
-    """True se o JSON (ou .gz) em disco existe e não é mais antigo que o Base.csv."""
+    """True se o JSON (ou .gz) em disco existe e não é mais antigo que a fonte.
+
+    `mtime_minimo` acrescenta outras entradas que também invalidam o summary
+    quando mudam sem a fonte mudar — hoje, a regra de harmonização de clientes.
+    """
     caminho_csv = Path(caminho_base_csv)
     if not caminho_csv.is_file():
         return False
-    mtime_csv = os.path.getmtime(caminho_csv)
+    mtime_fonte = max(os.path.getmtime(caminho_csv), mtime_minimo)
     for caminho in (
         caminho_summary_dashboard_gz(pasta_trabalho),
         caminho_summary_dashboard(pasta_trabalho),
     ):
-        if caminho.is_file() and os.path.getmtime(caminho) >= mtime_csv:
+        if caminho.is_file() and os.path.getmtime(caminho) >= mtime_fonte:
             return True
     return False
 

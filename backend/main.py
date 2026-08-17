@@ -37,6 +37,7 @@ import caminhos_padrao
 import dados_no_disco
 import db
 import inicio_automatico
+import harmonizar_clientes
 import versao
 from alertas_clientes import avaliar_alertas_clientes, normalizar_regras_alerta
 from auth import criar_token, exigir_login
@@ -924,13 +925,18 @@ def _garantir_summary_dashboard_arquivo_sem_trava(
     """Garante summary_dashboard.json(.gz) fresco vs a fonte; regenera se preciso.
 
     Frescor é comparado contra o mtime de Dados Mais Atacado.xlsx na fonte (não
-    há mais Base.csv intermediário). Prefere o .gz (pré-comprimido) para evitar
-    gzip on-the-fly no hot path.
+    há mais Base.csv intermediário) e o do clientes_harm.json, que muda nomes de
+    cliente sem a fonte mudar. Prefere o .gz (pré-comprimido) para evitar gzip
+    on-the-fly no hot path.
     """
     caminho_gz = caminho_summary_dashboard_gz(pasta_trabalho)
     caminho_json = caminho_summary_dashboard(pasta_trabalho)
 
-    if summary_dashboard_atualizado(pasta_trabalho, caminho_atacado):
+    if summary_dashboard_atualizado(
+        pasta_trabalho,
+        caminho_atacado,
+        mtime_minimo=harmonizar_clientes.mtime_regra(pasta_trabalho),
+    ):
         if caminho_gz.is_file():
             return caminho_gz
         if caminho_json.is_file():
@@ -1096,15 +1102,19 @@ def _carregar_base_empresa(empresa: str) -> tuple[pd.DataFrame, int]:
 def _carregar_base_empresa_sem_trava(empresa: str) -> tuple[pd.DataFrame, int]:
     """Lê Dados Mais Atacado.xlsx direto da fonte (sem arquivo intermediário).
 
-    Cache LRU em RAM chaveado no mtime do XLSX na fonte.
+    Cache LRU em RAM chaveado no mtime do XLSX na fonte e no da regra de
+    harmonização de clientes (que reescreve nomes antes de o DF entrar no cache).
     """
-    pasta_fonte, _pasta_trabalho = _pastas_empresa(empresa)
+    pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
     try:
         caminho_atacado, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
     except ErroNormalizacao as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
-    mtime = os.path.getmtime(caminho_atacado)
+    mtime = (
+        os.path.getmtime(caminho_atacado),
+        harmonizar_clientes.mtime_regra(pasta_trabalho),
+    )
     em_cache = _cache_base_empresa.get(empresa)
     if em_cache and em_cache["mtime"] == mtime:
         _lru_touch(_cache_base_empresa, empresa)
@@ -1122,6 +1132,12 @@ def _carregar_base_empresa_sem_trava(empresa: str) -> tuple[pd.DataFrame, int]:
         raise HTTPException(status_code=400, detail=f"Falha inesperada ao carregar a base: {exc}")
 
     df = _normalizar_coluna_loja_inplace(df)
+    # Nomes de cliente que só diferem pelo sufixo de origem viram um cliente só
+    # (regra opcional por empresa, em clientes_harm.json na pasta de trabalho).
+    # Aqui, antes do cache: vale para Dashboard, Analisador, Explorar e exports.
+    df = harmonizar_clientes.aplicar_em_cliente(
+        df, harmonizar_clientes.carregar_regra(pasta_trabalho),
+    )
     # Master DF no cache. Callers mutáveis recebem cópia por padrão; as rotas
     # explicitamente somente-leitura podem compartilhar este objeto.
     _lru_set(
@@ -2470,6 +2486,26 @@ def definir_aguardando_base_dados_dashboard(corpo: AguardandoBaseDadosBody):
 @app.get("/api/dashboard/empresas")
 def listar_empresas_dashboard():
     return _listar_empresas_fonte()
+
+
+@app.get("/api/dashboard/empresas/{empresa}/lojas")
+def listar_lojas_empresa(empresa: str):
+    """Lojas da empresa, para o seletor de escopo da barra lateral.
+
+    Sai do `resumo_monitor.json` (poucos KB) e não da base: o seletor aparece em
+    toda tela, inclusive no Dashboard público, e carregar o XLSX inteiro para
+    preencher um combobox anularia o ganho do summary pré-gerado. Empresa sem
+    summary ainda gerado responde lista vazia — a sidebar simplesmente não mostra
+    o seletor, em vez de a tela quebrar.
+    """
+    empresa = _validar_nome_empresa(empresa)
+    pasta_trabalho = os.path.join(_exigir_caminho_trabalho(), empresa)
+    try:
+        resumo = obter_resumo_monitor(pasta_trabalho)
+    except Exception:
+        logger.error("Falha ao listar lojas de %s:\n%s", empresa, traceback.format_exc())
+        return {"lojas": []}
+    return {"lojas": list((resumo or {}).get("lojas") or [])}
 
 
 # ---------------------------------------------------------------------------

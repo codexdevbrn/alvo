@@ -48,6 +48,7 @@ if str(_BACKEND) not in sys.path:
     sys.path.insert(0, str(_BACKEND))
 
 import caminhos_padrao  # noqa: E402
+import harmonizar_clientes  # noqa: E402
 from dashboard_summary import gerar_e_gravar_summary_dashboard  # noqa: E402
 from engine import analise_funil as af  # noqa: E402
 
@@ -89,10 +90,22 @@ def listar_empresas(pasta_fonte: Path) -> list[str]:
     return nomes
 
 
+def _harmonizar_clientes(trab_emp: Path, df):
+    """Mesma regra de nomes de cliente que o app aplica ao carregar a base.
+
+    Sem isso o lote gravaria um summary com os nomes crus por cima do que o app
+    produziria — o Dashboard mostraria o cliente duplicado até alguém forçar a
+    regeneração.
+    """
+    return harmonizar_clientes.aplicar_em_cliente(
+        df, harmonizar_clientes.carregar_regra(trab_emp),
+    )
+
+
 def _gerar_summary_do_csv(trab_emp: Path, caminho_base: Path) -> Path:
     """Summary a partir do Base.csv recém-gravado (modo --com-base-csv)."""
     df, _linhas_vazias = af.carregar_csv(str(caminho_base))
-    return gerar_e_gravar_summary_dashboard(trab_emp, df)
+    return gerar_e_gravar_summary_dashboard(trab_emp, _harmonizar_clientes(trab_emp, df))
 
 
 def _gerar_summary_do_xlsx(fonte_emp: Path, trab_emp: Path) -> Path:
@@ -105,7 +118,7 @@ def _gerar_summary_do_xlsx(fonte_emp: Path, trab_emp: Path) -> Path:
     caminho_atacado, _estoque, _vendas = resolver_arquivos_dados(fonte_emp)
     df_bruto = af.carregar_excel_base_empresa(caminho_atacado)
     df, _linhas_vazias = af.validar_e_limpar(df_bruto, receita_em_texto_br=False)
-    return gerar_e_gravar_summary_dashboard(trab_emp, df)
+    return gerar_e_gravar_summary_dashboard(trab_emp, _harmonizar_clientes(trab_emp, df))
 
 
 def normalizar_lote(
