@@ -69,9 +69,20 @@ O Prisma também é distribuído como executável Windows, para máquinas onde i
 #    backend/versao.py:  VERSAO = "1.0.1"
 # 2. gerar tudo
 .\build.ps1
-# 3. copiar dist_release\Prisma-1.0.1.zip e version.json para a pasta de
-#    atualizações no OneDrive (preencher "notas" no version.json antes)
+# 3. publicar no canal (mostra o plano; -Executar aplica)
+.\publicar.ps1
+.\publicar.ps1 -Executar
 ```
+
+`publicar.ps1` existe porque a cópia manual não removia nada: o canal chegou a
+guardar 25 zips de ~81 MB mais os instaladores de ~89 MB, uma release inteira por
+versão. O canal só precisa do `version.json` e do zip que ele nomeia — quem está
+em 1.0.9 atualiza direto para a mais nova, sem salto intermediário. `-Manter`
+(padrão 1) deixa as anteriores como escada de volta. Duas coisas encodadas ali:
+o zip é copiado **antes** do `version.json`, senão existe uma janela em que toda
+máquina da rede vê versão nova apontando para zip ausente; e o instalador vive na
+pasta **acima** do canal, que é onde o `_subpasta_com_manifesto` de
+`atualizacoes.py` espera encontrá-lo.
 
 `build.ps1` roda nesta ordem, e a ordem importa: `npm run build` → `pytest` → PyInstaller do app → PyInstaller do atualizador → zip + `version.json` (com sha256) → instalador Inno Setup. O frontend vem primeiro porque o `dist` entra embutido; empacotar com um `dist` velho passa despercebido, já que o app abre normal, só com a interface da versão anterior. Os testes reprovando abortam a release.
 

@@ -166,5 +166,5 @@ Etapa "Pronto"
 Write-Host ("Pacote: {0} ({1:N0} MB)" -f $zip, ($info.Length / 1MB))
 Write-Host "sha256: $hash"
 Write-Host ""
-Write-Host "Para publicar: copie Prisma-$versao.zip e version.json para a pasta" -ForegroundColor Yellow
-Write-Host "de atualizacoes no OneDrive. Preencha 'notas' no version.json antes." -ForegroundColor Yellow
+Write-Host "Para publicar:  .\publicar.ps1 -Executar" -ForegroundColor Yellow
+Write-Host "(sem -Executar mostra o que seria copiado e apagado no canal)" -ForegroundColor Yellow
