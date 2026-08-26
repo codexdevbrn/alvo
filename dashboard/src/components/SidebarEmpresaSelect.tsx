@@ -4,7 +4,16 @@ import { EVENTO_EMPRESA, selecionarEmpresaGlobal } from '../utils/empresaSelecio
 import { AnalisadorCombobox } from './analisador/AnalisadorCombobox';
 
 const LS_EMPRESA = 'alvo_empresa';
-const ROTULO_PADRAO = 'Dados padrão';
+
+/**
+ * Empresa usada quando nada foi escolhido nesta máquina. É uma pasta de verdade
+ * na fonte e no trabalho, como qualquer outra empresa — não o modo estático.
+ *
+ * O seletor não oferece mais a opção vazia ("Dados padrão", que lia o
+ * summary.json embutido): base de demonstração passa a ser uma empresa da
+ * lista. Quem já tinha a opção vazia salva cai aqui na primeira carga.
+ */
+const EMPRESA_MOCK = 'Dados Mockados';
 
 function lerEmpresa(): string {
   try {
@@ -21,7 +30,18 @@ export function SidebarEmpresaSelect() {
 
   useEffect(() => {
     const carregar = () => {
-      listarEmpresasDashboard().then(setEmpresas).catch(() => setEmpresas([]));
+      listarEmpresasDashboard()
+        .then((lista) => {
+          setEmpresas(lista);
+          if (lerEmpresa() || !lista.length) return;
+          // Sem escolha salva: a mockada, ou a primeira da lista se ela não
+          // estiver publicada nesta instalação. Deixar vazio não é opção — o
+          // seletor não tem mais como voltar a esse estado.
+          const inicial = lista.includes(EMPRESA_MOCK) ? EMPRESA_MOCK : lista[0];
+          setEmpresa(inicial);
+          selecionarEmpresaGlobal(inicial);
+        })
+        .catch(() => setEmpresas([]));
     };
     carregar();
     window.addEventListener('focus', carregar);
@@ -52,7 +72,7 @@ export function SidebarEmpresaSelect() {
         value={empresa}
         options={empresas}
         onChange={onChange}
-        emptyLabel={ROTULO_PADRAO}
+        emptyLabel={false}
         searchPlaceholder="Buscar…"
         aria-label="Selecionar empresa"
         direcao="abaixo"

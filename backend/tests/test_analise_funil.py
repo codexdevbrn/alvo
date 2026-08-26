@@ -208,24 +208,27 @@ def test_classificar_faixas():
     # A = 70%
     # B = 20%
     # C = 10%
-    # Acumulados: A(70%), B(90%), C(100%). A faixa usa o acumulado ANTES
-    # da entidade, garantindo que o maior cliente ocupe o primeiro grupo
-    # mesmo quando sozinho ultrapassa o primeiro corte.
+    # Acumulados: A(70%), B(90%), C(100%). A faixa vem do acumulado INCLUSIVO —
+    # o mesmo número que a prévia mostra na coluna "Acumulado".
     
     res = classificar_faixas(df, cortes=(30.0, 50.0, 60.0), nomes_grupos=["Grupo 1", "Grupo 2", "Grupo 3"])
     
+    # Nenhum dos três cabe nos cortes (o menor acumulado já é 70%), e faixa
+    # vazia vira seção em branco no relatório: cada grupo leva o próximo da
+    # fila, e "Demais" é que fica vazio.
     faixa_a = res.loc[res["Cliente"] == "A", "Faixa_ABC"].iloc[0]
     assert faixa_a == "Grupo 1"
     
     faixa_b = res.loc[res["Cliente"] == "B", "Faixa_ABC"].iloc[0]
-    assert faixa_b == "Demais" # Pq 90% > 60
+    assert faixa_b == "Grupo 2"
     
     faixa_c = res.loc[res["Cliente"] == "C", "Faixa_ABC"].iloc[0]
-    assert faixa_c == "Demais" # Pq 100% > 60
+    assert faixa_c == "Grupo 3"
     
-    # Se os cortes forem 70, 95, 100:
+    # Cortes que acompanham a curva: aí cada um cai onde o acumulado manda, sem
+    # precisar da garantia de faixa não-vazia.
     res2 = classificar_faixas(df, cortes=(70.0, 95.0, 100.0), nomes_grupos=["G1", "G2", "G3"])
     assert res2.loc[res2["Cliente"] == "A", "Faixa_ABC"].iloc[0] == "G1"
     assert res2.loc[res2["Cliente"] == "B", "Faixa_ABC"].iloc[0] == "G2"
-    # C começa em 90% acumulado, ainda dentro do corte de 95% de G2.
-    assert res2.loc[res2["Cliente"] == "C", "Faixa_ABC"].iloc[0] == "G2"
+    # C fecha em 100% acumulado: passa do corte de 95% de G2 e cai em G3.
+    assert res2.loc[res2["Cliente"] == "C", "Faixa_ABC"].iloc[0] == "G3"

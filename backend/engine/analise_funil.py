@@ -1300,27 +1300,45 @@ def curva_pareto(receita_por_entidade):
 
 
 def faixa_por_curva(curva, cortes, nomes=None):
-    """Faixa de cada entidade a partir da curva de Pareto. Vetorizado.
+    """Faixa de cada entidade a partir da curva de Pareto.
 
-    Régua: a entidade pertence à faixa em que ela ENTRA, ou seja, decidida pelo
-    acumulado ANTES dela (`acumulado - individual`). O maior cliente entra com
-    0% acumulado e portanto sempre cai na primeira faixa; quem começa depois do
-    último corte cai em "Demais".
+    Régua: a entidade cai na primeira faixa cujo corte o acumulado INCLUSIVO
+    dela não passa — o mesmo número que a prévia mostra na coluna "Acumulado".
+    Com corte em 80%, item com acumulado 80,23% fica em "Demais".
 
-    Comparar o acumulado INCLUSIVO com o corte (régua anterior) deixava a
-    primeira faixa vazia sempre que a maior entidade sozinha já passava do
-    primeiro corte — caso comum quando um cliente concentra o faturamento.
+    Nenhuma faixa fica vazia: se o acumulado já passou do corte de uma faixa
+    antes de ela receber alguém, ela leva a próxima entidade da fila. É o caso
+    do cliente que sozinho passa do primeiro corte, e é o que a régua anterior
+    resolvia decidindo pelo acumulado ANTES da entidade
+    (`acumulado - individual`). Aquela régua não deixava faixa vazia, mas
+    classificava por um número que a tela não mostrava — item com acumulado
+    80,23% aparecia no Grupo 1 com corte em 80%, e parecia defeito.
+
+    Não assume curva ordenada nem índice único: ordena por acumulado e escreve
+    por posição. Acumulado NaN (linha fora da segmentação, como Balcão) fica em
+    "Demais" sem entrar na fila.
     """
     rotulos = nomes_faixas(cortes, nomes)
-    acumulado_anterior = pd.Series(
-        curva["Percentual_Acumulado"] - curva["Percentual_Individual"]
-    )
-    faixa = pd.Series(rotulos[-1], index=acumulado_anterior.index, dtype=object)
-    # De trás para frente: o corte menor sobrescreve o maior, então cada
-    # entidade termina com a primeira faixa em que cabe.
-    for corte, rotulo in zip(reversed(list(cortes)), reversed(rotulos[:-1])):
-        faixa = faixa.mask(acumulado_anterior < corte, rotulo)
-    return faixa
+    acumulado = pd.Series(curva["Percentual_Acumulado"]).astype(float)
+    valores_todos = acumulado.to_numpy(dtype=float)
+    resultado = np.full(len(valores_todos), rotulos[-1], dtype=object)
+
+    validos = np.flatnonzero(~np.isnan(valores_todos))
+    # mergesort para empate de acumulado não reordenar de forma imprevisível
+    # entre execuções — duas entidades com a mesma receita existem.
+    ordem = validos[np.argsort(valores_todos[validos], kind="mergesort")]
+    valores = valores_todos[ordem]
+
+    inicio = 0
+    for corte, rotulo in zip(cortes, rotulos[:-1]):
+        if inicio >= len(valores):
+            break
+        # side="right": acumulado igual ao corte entra na faixa.
+        fim = int(np.searchsorted(valores, float(corte), side="right"))
+        fim = min(max(fim, inicio + 1), len(valores))
+        resultado[ordem[inicio:fim]] = rotulo
+        inicio = fim
+    return pd.Series(resultado, index=acumulado.index)
 
 
 def contar_por_faixa(curva, cortes):
@@ -1334,10 +1352,10 @@ def contar_por_faixa(curva, cortes):
     return [int(contagem.get(rotulo, 0)) for rotulo in rotulos]
 
 
-def _entradas_da_curva(curva):
-    """Acumulado ANTES de cada entidade — a régua de `faixa_por_curva`, em ordem
-    crescente (a curva já vem ordenada por receita decrescente)."""
-    return (curva["Percentual_Acumulado"] - curva["Percentual_Individual"]).to_numpy()
+def _acumulados_da_curva(curva):
+    """Acumulado inclusivo em ordem crescente — a régua de `faixa_por_curva`."""
+    valores = pd.Series(curva["Percentual_Acumulado"]).astype(float).dropna().to_numpy()
+    return np.sort(valores)
 
 
 def _ajustar_corte_para_max(curva, limite_inferior, max_por_grupo, passo):
@@ -1350,30 +1368,35 @@ def _ajustar_corte_para_max(curva, limite_inferior, max_por_grupo, passo):
     iniciais, e podia terminar VAZIO quando um cliente sozinho pulava a faixa
     inteira (o caso de quem concentra metade do faturamento).
 
-    A entidade entra na faixa quando `limite_inferior <= entrada < corte`, e as
-    entradas estão ordenadas — então o corte máximo é a entrada da primeira
-    entidade que sobraria, sem busca passo a passo.
+    A entidade entra na faixa quando `limite_inferior < acumulado <= corte`, e
+    os acumulados estão ordenados — então o corte sai direto do acumulado da
+    última entidade que cabe, sem busca passo a passo.
 
     O resultado é ancorado na grade de `passo` (0,5%): é o que faz a contagem
     às vezes parar abaixo do máximo, em vez de o corte virar um número
     arbitrário com quatro casas atrás da vírgula.
     """
-    entradas = _entradas_da_curva(curva)
-    inicio = int(np.searchsorted(entradas, limite_inferior, side="left"))
-    if inicio >= len(entradas):
+    acumulados = _acumulados_da_curva(curva)
+    inicio = int(np.searchsorted(acumulados, limite_inferior, side="right"))
+    if inicio >= len(acumulados):
         # Acabaram as entidades: só mantém a ordem crescente dos cortes.
         return round(min(limite_inferior + passo, 100.0), 1)
 
-    fim = inicio + max(1, int(max_por_grupo))
-    if fim < len(entradas):
-        # Maior valor da grade que ainda deixa a entidade seguinte de fora.
-        corte = math.floor(entradas[fim] / passo) * passo
+    fim = inicio + max(1, int(max_por_grupo))  # primeira entidade que sobra
+    if fim < len(acumulados):
+        corte = math.ceil(acumulados[fim - 1] / passo) * passo
+        if corte >= acumulados[fim]:
+            # A grade alcançaria a entidade seguinte, e a faixa passaria do
+            # máximo: recua para o maior valor da grade que a deixa de fora.
+            corte = math.ceil(acumulados[fim] / passo) * passo - passo
     else:
         corte = 100.0
 
     # Faixa vazia é pior que faixa cheia demais: um grupo sem ninguém aparece
-    # no relatório como seção em branco. Garante pelo menos a primeira entidade.
-    minimo = math.floor(entradas[inicio] / passo) * passo + passo
+    # no relatório como seção em branco. Garante pelo menos a primeira entidade,
+    # mesmo que para isso a faixa passe do máximo — acontece quando as
+    # entidades da faixa caberiam todas dentro de um mesmo passo da grade.
+    minimo = math.ceil(acumulados[inicio] / passo) * passo
     corte = min(max(corte, minimo), 100.0)
     return round(corte, 1)
 

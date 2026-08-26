@@ -87,6 +87,19 @@ function TooltipSparkline({
 }
 
 function Sparkline({ pontos, moeda }: { pontos: PontoSparkline[]; moeda: boolean }) {
+  // Série vazia com estado "ok": acontece quando o resumo da empresa existe mas
+  // não tem período nenhum na janela. Sem este caso o AreaChart era montado com
+  // zero dados e o card ficava com um retângulo em branco no lugar do gráfico —
+  // que lê como defeito de desenho, não como ausência de dado.
+  if (pontos.length === 0) {
+    return (
+      <div className="monitor-sparkline monitor-sparkline-unico">
+        <strong>—</strong>
+        <span>sem período no intervalo</span>
+      </div>
+    );
+  }
+
   // Um ponto só existe na base (empresa com um único mês de movimento): área com
   // um ponto não desenha nada, então mostra o número, que é a informação.
   if (pontos.length === 1) {

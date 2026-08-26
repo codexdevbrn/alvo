@@ -164,6 +164,7 @@ Três consequências a ter em mente:
 - `main.py` — app FastAPI, define todas as rotas: login, catálogo, base (Excel padrão ou `Base.csv` por empresa), prévias, caminhos fonte/trabalho, config.json por empresa, dashboard por empresa, análise, export. CORS liberado só para `http://localhost:5173`.
 - `auth.py` — geração/validação de token (`criar_token`, `exigir_login` como dependency do FastAPI). As rotas `/api/dashboard/*` **não** exigem login — o dashboard é público (app de uso interno).
 - `db.py` — camada SQLite: usuários (login do Analisador) e `config_app` (chave/valor genérico: `caminho_fonte_dados`, `caminho_trabalho`, com fallback das chaves legadas). Banco em `backend/dados_locais/app.db`.
+- `monitor_empresas.py` — resumo de poucos KB por empresa (`resumo_monitor.json`), derivado do summary e usado pela tela de Monitoramento e pelo seletor de lojas. O cache é invalidado pelo mtime do summary, e é o **lote noturno** (`normalizar_todas_empresas`) que o regera junto do summary. Sem isso a invalidação diária caía no primeiro usuário a abrir a tela: reconstruir os 46 resumos custa ~18 s de CPU com os arquivos já locais, mais o download de ~65 MB de summary numa máquina em que o OneDrive ainda não baixou — contra 0,4 s lendo os resumos prontos. Se a tela voltar a demorar, o suspeito é o lote não ter rodado.
 - `_ensure_base_csv` / `_assert_escrita_fora_da_fonte` — ao selecionar empresa, só usa o `Base.csv` já existente no trabalho (não regenera se o BI for mais novo); regeneração só com `forcar=True` / botão Regenerar base / lote noturno. A data do último movimento no topo do dashboard continua lida do BI (`_data_ultimo_movimento_bi`). Aborta se o destino estiver sob a fonte ou se fonte == trabalho.
 - `dashboard_summary.py` — gera o summary do Dashboard (mesmo shape de `summary.json`) a partir de um DataFrame já limpo pelo motor (`carregar_csv`), vetorizado com pandas (evita `iterrows`, lento nas ~650 mil linhas típicas de uma base).
 - `engine/` — motor de análise reaproveitado do app desktop original:
@@ -188,6 +189,27 @@ Até a versão anterior os dois checkboxes **materializavam nomes** dentro de `p
 Ao carregar um `config.json` antigo, o frontend subtrai de `produtos_excluidos` os nomes que a resposta traz em `produtos_fora_por_regra`, deixando ali só o manual. Efeito colateral aceito: produto excluído à mão que também está abaixo do corte perde a marcação manual — enquanto a regra estiver ligada dá no mesmo.
 
 **O teto de itens em produto é ação, não efeito colateral.** O problema da versão antiga não era existir um máximo — era ele rebaixar o corte dentro da prévia, deixando a tela mostrar 90% enquanto classificava com outro número, e item de R$ 298 mil caindo em "Demais". Hoje `/api/produtos/sugerir-corte` (botão "Sugerir corte automaticamente", espelhando o de clientes) devolve o percentual e a tela o grava no campo: o número lido é o número que classifica. A prévia nunca mexe no corte sozinha.
+
+### Régua de corte (`faixa_por_curva`) — fonte única
+
+A entidade cai na **primeira faixa cujo corte o acumulado inclusivo dela não
+passa**. É o mesmo número que a prévia mostra na coluna "Acumulado": com corte em
+80%, item que fecha em 80,23% fica em "Demais". Toda classificação do projeto
+passa por aqui — prévia de clientes, prévia de produtos, relatório por período,
+contadores e sugeridor de cortes —, e é isso que garante que a tela e o PDF
+concordem.
+
+Até a 1.2.0 a régua era o acumulado **antes** da entidade (`acumulado -
+individual`). Ela nasceu para resolver a primeira faixa vazia quando um cliente
+sozinho passa do primeiro corte, mas classificava por um número que a tela não
+mostrava — o item de 80,23% aparecia no Grupo 1 com corte em 80%, e lia como
+defeito. Hoje o grupo vazio é resolvido de outro jeito: **nenhuma faixa fica
+vazia** — a que já teve seu corte ultrapassado leva a próxima entidade da fila.
+
+Consequência a ter em mente: com cortes manuais longe da curva, as faixas se
+enchem uma a uma e "Demais" é que pode ficar vazio (três clientes de 70/20/10%
+com cortes 30/50/60 saem um em cada grupo). Com os cortes que o sugeridor
+calcula isso não acontece, porque eles saem da própria curva.
 
 ### Sugestão automática de cortes (`sugerir_cortes_grupos`)
 

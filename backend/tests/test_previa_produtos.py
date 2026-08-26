@@ -39,7 +39,9 @@ def test_previa_recalcula_curva_sem_produtos_excluidos(monkeypatch):
     )
 
     itens = _por_produto(resposta)
-    assert resposta["grupos"][0]["quantidade"] == 2
+    # Sem o Produto A o denominador é 30: B fecha em 66,7% acumulado e cabe no
+    # corte de 80%; C leva o acumulado a 100% e fica fora.
+    assert resposta["grupos"][0]["quantidade"] == 1
     assert itens["Produto B"]["percentual_receita"] == 20 / 30 * 100
     assert itens["Produto B"]["grupo"] == "Grupo 1"
     assert itens["Produto A"]["grupo"] == ""
@@ -83,7 +85,8 @@ def test_desconsiderar_demais_marca_sem_apagar_a_curva(monkeypatch):
     assert itens["Produto C"]["fora_por_regra"] == "demais"
     assert itens["Produto C"]["grupo"] == "Demais"
     assert itens["Produto C"]["percentual_receita"] == 10.0
-    assert resposta["produtos_fora_por_regra"] == ["Produto C"]
+    # A leva 70%; B fecha em 90% acumulado e já passa do corte de 80%.
+    assert resposta["produtos_fora_por_regra"] == ["Produto B", "Produto C"]
 
 
 def test_nao_harmonizado_sai_do_denominador_da_curva(monkeypatch):
@@ -126,7 +129,9 @@ def test_analise_aplica_as_regras_de_produto(monkeypatch):
         desconsiderar_nao_harmonizados=True,
     )
 
-    assert sorted(filtrado["descricao"]) == ["Produto A", "Produto B"]
+    # Fora o balde não harmonizado, A vale 70% e B fecha em 90% acumulado: só A
+    # cabe no corte de 80%.
+    assert sorted(filtrado["descricao"]) == ["Produto A"]
 
 
 def test_analise_sem_regras_nao_toca_na_base(monkeypatch):

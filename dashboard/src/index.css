@@ -1677,6 +1677,14 @@ h3 {
   border-left: 3px solid var(--stat-accent, var(--accent));
 }
 
+/* O acento da esquerda carrega a semântica do número (verde subiu, vermelho
+   caiu). O :hover de .glass-card/.interactive-card usa a forma curta
+   border-color, que repinta a borda INTEIRA e apagava essa cor justo quando o
+   ponteiro está no card. Só a esquerda é devolvida; o resto do hover fica. */
+.stat-card-container:hover {
+  border-left-color: var(--stat-accent, var(--accent));
+}
+
 .stat-card-content {
   flex: 1;
   min-width: 0;

@@ -50,6 +50,7 @@ if str(_BACKEND) not in sys.path:
 import caminhos_padrao  # noqa: E402
 import harmonizar_clientes  # noqa: E402
 from dashboard_summary import gerar_e_gravar_summary_dashboard  # noqa: E402
+from monitor_empresas import obter_resumo_monitor  # noqa: E402
 from engine import analise_funil as af  # noqa: E402
 
 # Os padrões vêm de caminhos_padrao, a mesma resolução que o app usa: a raiz local
@@ -182,10 +183,26 @@ def normalizar_lote(
             else:
                 caminho_summary = _gerar_summary_do_xlsx(fonte_emp, trab_emp)
                 destino = str(caminho_summary)
+            # O resumo do Monitoramento é DERIVADO do summary, e o cache dele é
+            # invalidado pelo mtime do summary que acabou de ser reescrito. Sem
+            # regerar aqui, todo dia o primeiro usuário a abrir a tela pagava a
+            # reconstrução dos 46 resumos — 18s de CPU com os arquivos já locais,
+            # mais o download dos ~65 MB de summary numa máquina onde o OneDrive
+            # ainda não baixou. Com o resumo pronto, a tela abre em 0,4s.
+            resumo_monitor = "resumo ok"
+            try:
+                if obter_resumo_monitor(trab_emp, forcar=True) is None:
+                    resumo_monitor = "sem resumo (summary não encontrado)"
+            except Exception as exc:  # noqa: BLE001
+                # O summary é o produto do lote; falhar no derivado não pode
+                # marcar a empresa como erro nem abortar as seguintes.
+                resumo_monitor = f"resumo falhou: {exc}"
+                print(f"AVISO {marcador}: {resumo_monitor}", file=sys.stderr)
+
             elapsed = time.time() - t0
             msg = (
                 f"OK  {marcador} em {elapsed:.1f}s -> {destino} "
-                f"(summary: {caminho_summary.name})"
+                f"(summary: {caminho_summary.name}, {resumo_monitor})"
             )
             print(msg)
             log_linhas.append(msg)
