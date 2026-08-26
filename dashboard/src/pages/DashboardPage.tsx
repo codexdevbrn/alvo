@@ -14,7 +14,7 @@ import { gravarSummaryCache, lerSummaryCache } from '../utils/cacheSummary';
 import { DashboardHeader } from '../components/DashboardHeader';
 import { AppShell } from '../components/AppShell';
 import { EVENTO_EMPRESA } from '../utils/empresaSelecionada';
-import { EVENTO_LOJA, lerLoja } from '../utils/lojaSelecionada';
+import { EVENTO_LOJA, lerLojas } from '../utils/lojaSelecionada';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { obterAguardandoBaseDados, obterSummaryEmpresa } from '../api/client';
 import { formatCurrency, formatNumber } from '../utils/formatters';
@@ -173,9 +173,9 @@ export default function DashboardPage() {
   // esta tela já mantém a empresa em estado próprio (troca de base tem animação e
   // cache de summary); ler as duas de fontes diferentes deixaria uma render com a
   // loja da empresa anterior.
-  const [lojaEscopo, setLojaEscopo] = useState(() => lerLoja(empresa));
+  const [lojasEscopo, setLojasEscopo] = useState<string[]>(() => lerLojas(empresa));
   useEffect(() => {
-    const sincronizar = () => setLojaEscopo(lerLoja(localStorage.getItem('alvo_empresa') || ''));
+    const sincronizar = () => setLojasEscopo(lerLojas(localStorage.getItem('alvo_empresa') || ''));
     sincronizar();
     window.addEventListener(EVENTO_LOJA, sincronizar);
     window.addEventListener(EVENTO_EMPRESA, sincronizar);
@@ -227,10 +227,11 @@ export default function DashboardPage() {
   // vale para todo o Prisma. Aqui ela só é traduzida para o índice que as linhas
   // do summary usam (`maps.s`), que é o formato que o cálculo já esperava.
   const store = useMemo<number[]>(() => {
-    if (!lojaEscopo || !data) return [];
-    const indice = data.maps.s.indexOf(lojaEscopo);
-    return indice >= 0 ? [indice] : [];
-  }, [lojaEscopo, data]);
+    if (lojasEscopo.length === 0 || !data) return [];
+    return lojasEscopo
+      .map((nome) => data.maps.s.indexOf(nome))
+      .filter((indice) => indice >= 0);
+  }, [lojasEscopo, data]);
 
   // Debounce: só recalcula depois que o usuário para de clicar (~300ms)
   const debouncedClient = useDebouncedValue(client, 300);

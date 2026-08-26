@@ -11,6 +11,7 @@ import {
   obterCatalogo,
   obterPreviaGrupos,
   obterPreviaProdutos,
+  sugerirCorteProdutos,
   obterTagsClientes,
   salvarConfiguracaoEmpresa,
   salvarGruposManuais,
@@ -37,7 +38,13 @@ import { TendenciaProdutosView } from '../components/analisador/TendenciaProduto
 import { ExportarModal } from '../components/analisador/ExportarModal';
 import { ExplorarBuilder } from '../components/analisador/ExplorarBuilder';
 import { AnalisadorCombobox } from '../components/analisador/AnalisadorCombobox';
-import { EVENTO_LOJA, lerLoja, limparLoja } from '../utils/lojaSelecionada';
+import {
+  EVENTO_LOJA,
+  codificarEscopoLojas,
+  lerLojas,
+  limparLojas,
+  rotuloEscopoLojas,
+} from '../utils/lojaSelecionada';
 import { slugId } from '../utils/slug';
 import { rotuloGrupoCurto } from '../utils/formatters';
 
@@ -57,6 +64,10 @@ type OverridePrevia = {
   produtosExcluidos: string[];
   corte: number;
   maxPorGrupo: number;
+  // Viajam explícitas porque o setState correspondente ainda não refletiu
+  // quando a prévia é disparada logo depois de aplicar a config.
+  desconsiderarDemais: boolean;
+  desconsiderarNaoHarm: boolean;
 };
 
 const CORTES_CLIENTES_PADRAO: [number, number, number] = [30, 50, 60];
@@ -127,8 +138,6 @@ export default function AnalisadorPage() {
   const [carregandoGrupos, setCarregandoGrupos] = useState(false);
   const [produtosGrupos, setProdutosGrupos] = useState<Grupo[] | null>(null);
   const [itensProdutos, setItensProdutos] = useState<ItemProdutoPrevia[]>([]);
-  const [produtosDemaisCompletos, setProdutosDemaisCompletos] = useState<string[]>([]);
-  const [produtosNaoHarmCompletos, setProdutosNaoHarmCompletos] = useState<string[]>([]);
   const [carregandoProdutos, setCarregandoProdutos] = useState(false);
 
   const [abaWorkspace, setAbaWorkspace] = useState<AbaWorkspace>('relatorios');
@@ -146,9 +155,9 @@ export default function AnalisadorPage() {
   const [empresaSelecionada, setEmpresaSelecionada] = useState(
     () => localStorage.getItem('alvo_empresa') || '',
   );
-  /** '' = todas as lojas. Quem escolhe é o seletor da barra lateral. */
-  const [lojaEscopo, setLojaEscopo] = useState(
-    () => lerLoja(localStorage.getItem('alvo_empresa') || ''),
+  /** Lista vazia = todas as lojas. Quem escolhe é o seletor da barra lateral. */
+  const [lojasEscopo, setLojasEscopo] = useState<string[]>(
+    () => lerLojas(localStorage.getItem('alvo_empresa') || ''),
   );
 
   const [caminhoTrabalho, setCaminhoTrabalho] = useState<string | null>(null);
@@ -161,9 +170,9 @@ export default function AnalisadorPage() {
   const nomeEmpresaEfetivo = empresaSelecionada || nomeEmpresaManual.trim();
   const empresaBase = empresaSelecionada || null;
   /** null/omitido nas APIs = todas as lojas. */
-  const lojaApi = lojaEscopo || null;
+  const lojaApi = codificarEscopoLojas(lojasEscopo);
   const lojasDisponiveis = previa?.lojas ?? [];
-  const rotuloEscopoLoja = lojaEscopo || 'Todas as lojas';
+  const rotuloEscopoLoja = rotuloEscopoLojas(lojasEscopo);
 
   useEffect(() => {
     obterCatalogo()
@@ -209,13 +218,15 @@ export default function AnalisadorPage() {
     const clientes = dados.clientesExcluidos ?? [];
     const produtos = dados.produtosExcluidos ?? [];
     const balcao = Boolean(dados.desconsiderarBalcao);
+    const semDemais = Boolean(dados.desconsiderarDemaisProdutos);
+    const semNaoHarm = Boolean(dados.desconsiderarNaoHarmonizados);
 
     setCortesClientes(cortes);
     setCorteProdutos(corte);
     setPeriodosQueda(dados.periodosQueda ?? 2);
     setDesconsiderarBalcao(balcao);
-    setDesconsiderarDemaisProdutos(Boolean(dados.desconsiderarDemaisProdutos));
-    setDesconsiderarNaoHarmonizados(Boolean(dados.desconsiderarNaoHarmonizados));
+    setDesconsiderarDemaisProdutos(semDemais);
+    setDesconsiderarNaoHarmonizados(semNaoHarm);
     setExcluirPeriodoAtual(dados.excluirPeriodoAtual ?? true);
     setErosaoSomenteProdutosEmAlerta(dados.erosaoSomenteProdutosEmAlerta ?? false);
     setTopNProdutos(dados.topNProdutos ?? '');
@@ -237,6 +248,8 @@ export default function AnalisadorPage() {
       produtosExcluidos: produtos,
       corte,
       maxPorGrupo: maxG,
+      desconsiderarDemais: semDemais,
+      desconsiderarNaoHarm: semNaoHarm,
     };
   };
 
@@ -265,6 +278,8 @@ export default function AnalisadorPage() {
       produtosExcluidos: [],
       corte: CORTE_PRODUTOS_PADRAO,
       maxPorGrupo: MAX_POR_GRUPO_PADRAO,
+      desconsiderarDemais: false,
+      desconsiderarNaoHarm: false,
     };
   };
 
@@ -285,8 +300,8 @@ export default function AnalisadorPage() {
         (nome) => resultado.lojas && !resultado.lojas.includes(nome),
       );
       if (lojasInvalidas.length > 0) {
-        setLojaEscopo('');
-        if (empresa) limparLoja(empresa);
+        setLojasEscopo([]);
+        if (empresa) limparLojas(empresa);
       }
       if (resultado.granularidades.length > 0) {
         if (opcoes?.ajustarCortes === false) {
@@ -314,7 +329,7 @@ export default function AnalisadorPage() {
     setConfigPendente(null);
     const lojaEfetiva = loja !== undefined ? loja : lojaApi;
     if (!nome) {
-      setLojaEscopo('');
+      setLojasEscopo([]);
       const override = resetarParaPadrao();
       if (seq !== cargaSeqRef.current) return;
       await carregarBaseAtual(null, { ajustarCortes: true, override, loja: null });
@@ -404,6 +419,8 @@ export default function AnalisadorPage() {
     desconsiderar_balcao: desconsiderarBalcao,
     excluir_periodo_atual: excluirPeriodoAtual,
     erosao_somente_produtos_em_alerta: erosaoSomenteProdutosEmAlerta,
+    desconsiderar_demais_produtos: desconsiderarDemaisProdutos,
+    desconsiderar_nao_harmonizados: desconsiderarNaoHarmonizados,
     top_n_produtos: topNProdutos === '' ? null : topNProdutos,
     reducao_minima_erosao: reducaoMinimaErosao,
     queda_minima_alerta_rs: quedaMinimaAlertaRs === '' ? 0 : quedaMinimaAlertaRs,
@@ -463,30 +480,39 @@ export default function AnalisadorPage() {
     corte?: number;
     empresa?: string | null;
     loja?: string | null;
-    maxPorGrupo?: number;
-    ajustarCortes?: boolean;
+    desconsiderarDemais?: boolean;
+    desconsiderarNaoHarm?: boolean;
+    sugerirCorte?: boolean;
   }) => {
     setErro(null);
     setCarregandoProdutos(true);
     try {
-      const resultado = await obterPreviaProdutos({
-        produtos_excluidos: parametros?.produtosExcluidos ?? Array.from(produtosExcluidos),
+      const excluidosEnviados = parametros?.produtosExcluidos ?? Array.from(produtosExcluidos);
+      const comuns = {
+        produtos_excluidos: excluidosEnviados,
         corte_produtos: parametros?.corte ?? corteProdutos,
-        max_itens_por_grupo: parametros?.maxPorGrupo ?? maxPorGrupo,
-        ajustar_cortes: parametros?.ajustarCortes ?? true,
+        desconsiderar_demais_produtos: parametros?.desconsiderarDemais ?? desconsiderarDemaisProdutos,
+        desconsiderar_nao_harmonizados: parametros?.desconsiderarNaoHarm ?? desconsiderarNaoHarmonizados,
         empresa: parametros?.empresa !== undefined ? parametros.empresa : empresaBase,
         loja: parametros?.loja !== undefined ? parametros.loja : lojaApi,
-      });
+      };
+      const resultado = parametros?.sugerirCorte
+        ? await sugerirCorteProdutos({ ...comuns, max_itens_por_grupo: maxPorGrupo })
+        : await obterPreviaProdutos(comuns);
       if (typeof resultado.corte_produtos === 'number') {
         setCorteProdutos(resultado.corte_produtos);
       }
       setProdutosGrupos(resultado.grupos);
-      setProdutosDemaisCompletos(
-        Array.isArray(resultado.produtos_demais) ? resultado.produtos_demais : [],
-      );
-      setProdutosNaoHarmCompletos(
-        Array.isArray(resultado.produtos_nao_harmonizados) ? resultado.produtos_nao_harmonizados : [],
-      );
+      // Migração: até a versão anterior os dois checkboxes despejavam os nomes
+      // dentro de produtos_excluidos, e o config.json guardava essa foto. Aqui
+      // a lista volta a ser só o que foi desmarcado à mão.
+      if (Array.isArray(resultado.produtos_fora_por_regra) && resultado.produtos_fora_por_regra.length > 0) {
+        const porRegra = new Set(resultado.produtos_fora_por_regra);
+        const manuais = excluidosEnviados.filter((produto) => !porRegra.has(produto));
+        if (manuais.length !== excluidosEnviados.length) {
+          setProdutosExcluidos(new Set(manuais));
+        }
+      }
       if (!Array.isArray(resultado.itens)) {
         setItensProdutos([]);
         setErro('Backend desatualizado: a prévia não retornou a lista de produtos. Reinicie o uvicorn (porta do proxy em vite.config.ts).');
@@ -500,40 +526,20 @@ export default function AnalisadorPage() {
     }
   };
 
-  const handleAtualizarPreviaProdutos = () => atualizarPreviaProdutos({ ajustarCortes: false });
+  const handleAtualizarPreviaProdutos = () => atualizarPreviaProdutos();
 
-  // Ao ligar, exclui de vez (via produtos_excluidos) TODOS os produtos
-  // classificados como "Demais" (lista completa do backend, não só a prévia).
-  // Ao desligar, devolve exatamente esses mesmos produtos.
+  const handleSugerirCorteProdutos = () => atualizarPreviaProdutos({ sugerirCorte: true });
+
+  // Regra, não exclusão gravada: o backend deriva quem fica de fora na hora do
+  // cálculo, então mudar o corte depois já corrige a lista sozinho.
   const handleToggleDesconsiderarDemais = async (checked: boolean) => {
     setDesconsiderarDemaisProdutos(checked);
-    const produtosDemais = produtosDemaisCompletos;
-    const novoSet = new Set(produtosExcluidos);
-    produtosDemais.forEach((produto) => {
-      if (checked) novoSet.add(produto);
-      else novoSet.delete(produto);
-    });
-    setProdutosExcluidos(novoSet);
-    await atualizarPreviaProdutos({
-      produtosExcluidos: Array.from(novoSet),
-      ajustarCortes: false,
-    });
+    await atualizarPreviaProdutos({ desconsiderarDemais: checked });
   };
 
-  // Ao ligar, exclui todos os "não harmonizados" (lista completa). Ao desligar, devolve.
   const handleToggleDesconsiderarNaoHarmonizados = async (checked: boolean) => {
     setDesconsiderarNaoHarmonizados(checked);
-    const produtosNaoHarmonizados = produtosNaoHarmCompletos;
-    const novoSet = new Set(produtosExcluidos);
-    produtosNaoHarmonizados.forEach((produto) => {
-      if (checked) novoSet.add(produto);
-      else novoSet.delete(produto);
-    });
-    setProdutosExcluidos(novoSet);
-    await atualizarPreviaProdutos({
-      produtosExcluidos: Array.from(novoSet),
-      ajustarCortes: false,
-    });
+    await atualizarPreviaProdutos({ desconsiderarNaoHarm: checked });
   };
 
   const carregarTagsClientes = async (empresa: string | null, loja?: string | null) => {
@@ -682,10 +688,10 @@ export default function AnalisadorPage() {
         await atualizarPreviaProdutos({
           empresa: emp,
           loja,
-          ajustarCortes,
           produtosExcluidos: o?.produtosExcluidos,
           corte: o?.corte,
-          maxPorGrupo: o?.maxPorGrupo,
+          desconsiderarDemais: o?.desconsiderarDemais,
+          desconsiderarNaoHarm: o?.desconsiderarNaoHarm,
         });
       })(),
     ]);
@@ -747,10 +753,11 @@ export default function AnalisadorPage() {
       const detalhe = evento instanceof CustomEvent ? evento.detail : null;
       const empresaEvento = detalhe && typeof detalhe === 'object' ? String(detalhe.empresa ?? '') : '';
       if (!empresaSelecionada || empresaEvento !== empresaSelecionada) return;
-      const nova = lerLoja(empresaSelecionada);
-      if (nova === lojaEscopo) return;
-      setLojaEscopo(nova);
-      void trocarEscopoLoja(nova || null);
+      const novas = lerLojas(empresaSelecionada);
+      const escopoNovo = codificarEscopoLojas(novas);
+      if (escopoNovo === lojaApi) return;
+      setLojasEscopo(novas);
+      void trocarEscopoLoja(escopoNovo);
     };
     window.addEventListener(EVENTO_LOJA, aoTrocarLoja);
     return () => window.removeEventListener(EVENTO_LOJA, aoTrocarLoja);
@@ -758,15 +765,15 @@ export default function AnalisadorPage() {
 
   const handleSelecionarEmpresa = (nome: string) => {
     setEmpresaSelecionada(nome);
-    const lojaSalva = nome ? lerLoja(nome) : '';
-    setLojaEscopo(lojaSalva);
+    const lojasSalvas = nome ? lerLojas(nome) : [];
+    setLojasEscopo(lojasSalvas);
     if (nome) {
       setNomeEmpresaManual('');
       localStorage.setItem('alvo_empresa', nome);
     } else {
       localStorage.removeItem('alvo_empresa');
     }
-    void iniciarEmpresa(nome || null, lojaSalva || null);
+    void iniciarEmpresa(nome || null, codificarEscopoLojas(lojasSalvas));
   };
 
   const handleCarregarConfiguracaoEmpresa = async () => {
@@ -795,8 +802,8 @@ export default function AnalisadorPage() {
       await atualizarPreviaProdutos({
         produtosExcluidos: override.produtosExcluidos,
         corte: override.corte,
-        maxPorGrupo: override.maxPorGrupo,
-        ajustarCortes: false,
+        desconsiderarDemais: override.desconsiderarDemais,
+        desconsiderarNaoHarm: override.desconsiderarNaoHarm,
         empresa: empresaSelecionada,
         loja: lojaApi,
       });
@@ -959,12 +966,12 @@ export default function AnalisadorPage() {
       <header className="app-page-header">
         <div>
           <h1>
-            Analisador de Monitoria
+            Relatórios
             {nomeEmpresaEfetivo && (
               <span className="analisador-header-empresa">
                 <span className="analisador-header-empresa-sep" aria-hidden="true">·</span>
                 <span className="analisador-header-empresa-nome">{nomeEmpresaEfetivo}</span>
-                {lojaEscopo && (
+                {lojasEscopo.length > 0 && (
                   <span className="analisador-header-empresa-loja"> · {rotuloEscopoLoja}</span>
                 )}
               </span>
@@ -1076,8 +1083,8 @@ export default function AnalisadorPage() {
           <div className="glass-card glass-card-flat">
             <p className="analisador-hint" style={{ margin: 0 }}>
               {previa.linhas.toLocaleString('pt-BR')} linhas carregadas
-              {lojaEscopo && ` · ${rotuloEscopoLoja}`}
-              {!lojaEscopo && lojasDisponiveis.length === 1 && ` · loja ${lojasDisponiveis[0]}`}
+              {lojasEscopo.length > 0 && ` · ${rotuloEscopoLoja}`}
+              {lojasEscopo.length === 0 && lojasDisponiveis.length === 1 && ` · loja ${lojasDisponiveis[0]}`}
               {previa.linhas_ignoradas > 0 && ` (${previa.linhas_ignoradas} ignoradas por Ano/Mês vazio)`}
               {previa.qtd_nao_harmonizados > 0 && ` · ${previa.qtd_nao_harmonizados} lançamentos sem descrição de produto`}
             </p>
@@ -1261,6 +1268,15 @@ export default function AnalisadorPage() {
               <div className="analisador-acoes">
                 <button
                   type="button"
+                  onClick={handleSugerirCorteProdutos}
+                  disabled={carregandoProdutos}
+                  className="analisador-btn analisador-btn-sec"
+                  title={`Recalcula o corte para o alto giro caber em ${maxPorGrupo} produtos`}
+                >
+                  {carregandoProdutos ? 'Calculando...' : 'Sugerir corte automaticamente'}
+                </button>
+                <button
+                  type="button"
                   onClick={handleAtualizarPreviaProdutos}
                   disabled={carregandoProdutos}
                   className="analisador-btn analisador-btn-sec"
@@ -1282,7 +1298,10 @@ export default function AnalisadorPage() {
                 carregando={carregandoProdutos}
               />
               <p className="analisador-hint" style={{ width: '100%', marginTop: '0.5rem' }}>
-                Corte ajustado automaticamente para ≤{maxPorGrupo} no alto giro (Demais: até 300 na prévia; contagem total acima).
+                O corte % acima é o que manda — ele só muda quando você clica em "Sugerir
+                corte", que o recalcula para o alto giro caber em {maxPorGrupo} produtos
+                (o mesmo máximo por grupo dos clientes). Demais: até 300 na prévia;
+                contagem total abaixo.
               </p>
               {resumoGrupos(produtosGrupos, 'produtos', produtosExcluidosPorGrupo)}
             </div>

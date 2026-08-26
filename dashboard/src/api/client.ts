@@ -24,7 +24,7 @@ function authHeaders(): HeadersInit {
  *
  * O `fetch` nativo lança `TypeError: Failed to fetch` para qualquer falha de rede,
  * e esse texto vazava para a tela sem dizer nada ao usuário. Acontece de verdade em
- * dois casos: o Prisma foi encerrado (pela bandeja ou pelo Gerenciador de Tarefas)
+ * dois casos: o 2D Prisma foi encerrado (pela bandeja ou pelo Gerenciador de Tarefas)
  * e a aba continuou aberta; ou ele está reiniciando no meio de uma atualização.
  *
  * `AbortError` é repassado como está — cancelamento é fluxo normal de quem troca de
@@ -37,7 +37,7 @@ async function chamar(url: string, init?: RequestInit): Promise<Response> {
   } catch (erro) {
     if (erro instanceof DOMException && erro.name === 'AbortError') throw erro;
     throw new Error(
-      'O Prisma não respondeu. Ele pode ter sido encerrado ou estar reiniciando '
+      'O 2D Prisma não respondeu. Ele pode ter sido encerrado ou estar reiniciando '
       + 'após uma atualização — recarregue a página.',
     );
   }
@@ -150,6 +150,9 @@ export interface ParametrosAnalise {
   top_n_poder_compra: number | null;
   /** false = erosão/churn sobre a base inteira; true = só produtos em alerta. */
   erosao_somente_produtos_em_alerta: boolean;
+  /** Tira do relatório quem ficou abaixo do corte de produtos. */
+  desconsiderar_demais_produtos: boolean;
+  desconsiderar_nao_harmonizados: boolean;
   nome_empresa: string;
   nome_usuario: string;
   empresa?: string | null;
@@ -177,6 +180,8 @@ export interface ItemProdutoPrevia {
   grupo: string;
   percentual_receita: number | null;
   percentual_acumulado: number | null;
+  /** Fora dos relatórios por regra, não por desmarcação manual. */
+  fora_por_regra: 'demais' | 'nao_harmonizado' | null;
 }
 
 export interface ParametrosGrupos {
@@ -213,16 +218,40 @@ export async function obterPreviaProdutos(parametros: {
   corte_produtos: number;
   empresa?: string | null;
   loja?: string | null;
-  max_itens_por_grupo?: number;
-  ajustar_cortes?: boolean;
+  desconsiderar_demais_produtos?: boolean;
+  desconsiderar_nao_harmonizados?: boolean;
 }): Promise<{
   corte_produtos: number;
   grupos: Grupo[];
   itens: ItemProdutoPrevia[];
-  produtos_demais: string[];
-  produtos_nao_harmonizados: string[];
+  /** Nomes que as regras tiram — usado só para limpar exclusões legadas. */
+  produtos_fora_por_regra: string[];
 }> {
   const res = await chamar('/api/produtos/previa', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(parametros),
+  });
+  return tratarResposta(res);
+}
+
+/** Alias: mesma prévia, com o corte do alto giro recalculado para caber em
+ *  max_itens_por_grupo produtos. O corte devolvido vai para o campo da tela. */
+export async function sugerirCorteProdutos(parametros: {
+  produtos_excluidos: string[];
+  corte_produtos: number;
+  empresa?: string | null;
+  loja?: string | null;
+  desconsiderar_demais_produtos?: boolean;
+  desconsiderar_nao_harmonizados?: boolean;
+  max_itens_por_grupo: number;
+}): Promise<{
+  corte_produtos: number;
+  grupos: Grupo[];
+  itens: ItemProdutoPrevia[];
+  produtos_fora_por_regra: string[];
+}> {
+  const res = await chamar('/api/produtos/sugerir-corte', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify(parametros),
@@ -405,14 +434,16 @@ export type TagCatalogoItem = {
   id: string;
   rotulo: string;
   ativa: boolean;
+  /** Define se tag aparece nas opções de tag dentro do Analisador. */
+  entra_na_analise: boolean;
   cor: string;
 };
 
 export const TAGS_CATALOGO_PADRAO: TagCatalogoItem[] = [
-  { id: 'alerta', rotulo: 'Alerta', ativa: true, cor: '#ec1818' },
-  { id: 'inadimplente', rotulo: 'Inadimplente', ativa: true, cor: '#f43f5e' },
-  { id: 'cliente_balcao', rotulo: 'Cliente Balcão', ativa: true, cor: '#f59e0b' },
-  { id: 'encerrou_operacao', rotulo: 'Encerrou operação', ativa: true, cor: '#64748b' },
+  { id: 'alerta', rotulo: 'Alerta', ativa: true, entra_na_analise: true, cor: '#ec1818' },
+  { id: 'inadimplente', rotulo: 'Inadimplente', ativa: true, entra_na_analise: true, cor: '#f43f5e' },
+  { id: 'cliente_balcao', rotulo: 'Cliente Balcão', ativa: true, entra_na_analise: true, cor: '#f59e0b' },
+  { id: 'encerrou_operacao', rotulo: 'Encerrou operação', ativa: true, entra_na_analise: true, cor: '#64748b' },
 ];
 
 export type TagsClientesResposta = {
@@ -567,6 +598,29 @@ export type ClientesBuscaResposta = {
   total: number;
   limitado: boolean;
 };
+
+export type PainelClienteParametros = {
+  empresa: string;
+  cliente: string;
+  loja?: string | null;
+  posicao?: number;
+  total?: number;
+};
+
+/** Gera no backend o PDF 16:9 do cliente monitorado e devolve o arquivo pronto. */
+export async function gerarPainelCliente(
+  parametros: PainelClienteParametros,
+): Promise<Blob> {
+  const res = await chamar('/api/relatorios/cliente/painel', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(parametros),
+  });
+  if (!res.ok) {
+    await tratarResposta<never>(res);
+  }
+  return res.blob();
+}
 
 export async function buscarClientes(
   empresa: string | null | undefined,

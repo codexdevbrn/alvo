@@ -6,6 +6,7 @@ ou testes automatizados. Todas as funções recebem/retornam DataFrames do panda
 """
 
 import errno
+import math
 import os
 import time
 import unicodedata
@@ -1257,7 +1258,7 @@ def calcular_renuncia(df, granularidade="Mensal", campo="Cliente"):
 # Toda classificação em faixas do projeto passa por aqui: relatório por período
 # (classificar_faixas), prévias agregadas da tela (classificar_clientes_agregado
 # / classificar_produtos_agregado), os contadores (contar_clientes_por_grupo) e
-# os sugeridores de corte (sugerir_cortes_grupos / sugerir_corte_produtos).
+# e o sugeridor de corte de clientes (sugerir_cortes_grupos).
 #
 # Mantê-la em um só lugar é o que garante que a prévia da tela e o relatório
 # final classifiquem exatamente igual. Mudar a régua de corte = mexer só em
@@ -1333,20 +1334,48 @@ def contar_por_faixa(curva, cortes):
     return [int(contagem.get(rotulo, 0)) for rotulo in rotulos]
 
 
-def _reduzir_corte_ate_caber(curva, cortes, indice, limite_inferior,
-                             max_por_grupo, passo):
-    """Reduz cortes[indice] até a faixa correspondente ter <= max_por_grupo entidades.
+def _entradas_da_curva(curva):
+    """Acumulado ANTES de cada entidade — a régua de `faixa_por_curva`, em ordem
+    crescente (a curva já vem ordenada por receita decrescente)."""
+    return (curva["Percentual_Acumulado"] - curva["Percentual_Individual"]).to_numpy()
 
-    Para de reduzir ao encostar no corte anterior (não inverte a ordem dos cortes).
+
+def _ajustar_corte_para_max(curva, limite_inferior, max_por_grupo, passo):
+    """Corte da faixa que começa em `limite_inferior`, o mais alto que couber
+    dentro de `max_por_grupo` entidades.
+
+    Substitui a busca que só sabia DIMINUIR o corte inicial. Aquela versão
+    tratava o corte inicial como teto, então o "máximo por grupo" nunca
+    preenchia: grupo parava em 15 com o máximo em 20 porque bateu nos 30%
+    iniciais, e podia terminar VAZIO quando um cliente sozinho pulava a faixa
+    inteira (o caso de quem concentra metade do faturamento).
+
+    A entidade entra na faixa quando `limite_inferior <= entrada < corte`, e as
+    entradas estão ordenadas — então o corte máximo é a entrada da primeira
+    entidade que sobraria, sem busca passo a passo.
+
+    O resultado é ancorado na grade de `passo` (0,5%): é o que faz a contagem
+    às vezes parar abaixo do máximo, em vez de o corte virar um número
+    arbitrário com quatro casas atrás da vírgula.
     """
-    corte = cortes[indice]
-    while True:
-        quantidade = contar_por_faixa(curva, cortes[: indice + 1])[indice]
-        if quantidade <= max_por_grupo or corte <= limite_inferior + passo:
-            return corte
-        corte -= passo
-        cortes = list(cortes)
-        cortes[indice] = corte
+    entradas = _entradas_da_curva(curva)
+    inicio = int(np.searchsorted(entradas, limite_inferior, side="left"))
+    if inicio >= len(entradas):
+        # Acabaram as entidades: só mantém a ordem crescente dos cortes.
+        return round(min(limite_inferior + passo, 100.0), 1)
+
+    fim = inicio + max(1, int(max_por_grupo))
+    if fim < len(entradas):
+        # Maior valor da grade que ainda deixa a entidade seguinte de fora.
+        corte = math.floor(entradas[fim] / passo) * passo
+    else:
+        corte = 100.0
+
+    # Faixa vazia é pior que faixa cheia demais: um grupo sem ninguém aparece
+    # no relatório como seção em branco. Garante pelo menos a primeira entidade.
+    minimo = math.floor(entradas[inicio] / passo) * passo + passo
+    corte = min(max(corte, minimo), 100.0)
+    return round(corte, 1)
 
 
 # ---------------------------------------------------------------------------
@@ -1622,10 +1651,14 @@ def sugerir_cortes_grupos(df, clientes_excluidos=None, cortes_iniciais=(30.0, 50
                            max_por_grupo=10, passo=0.5, desconsiderar_balcao=False,
                            clientes_balcao_extra=None):
     """
-    Ajusta (reduz) os cortes percentuais cumulativos até que cada grupo não
-    ultrapasse max_por_grupo clientes, usando a receita agregada total (soma
-    de todos os períodos) como referência. Não altera a ordem/quantidade de
-    grupos, apenas os percentuais de corte.
+    Sugere os cortes percentuais cumulativos que enchem cada grupo até
+    max_por_grupo clientes sem passar disso, usando a receita agregada total
+    (soma de todos os períodos) como referência.
+
+    De `cortes_iniciais` só importa QUANTOS cortes existem: cada percentual é
+    recalculado a partir da curva. Antes eles eram teto — a busca só sabia
+    diminuir, então o máximo por grupo nunca preenchia e um cliente que
+    concentrasse a receita deixava o grupo seguinte vazio.
 
     Retorna (cortes_ajustados, contagens) onde contagens tem um item a mais
     que cortes_ajustados (o último é a contagem do grupo "Demais").
@@ -1649,36 +1682,33 @@ def sugerir_cortes_grupos(df, clientes_excluidos=None, cortes_iniciais=(30.0, 50
 
     limite_inferior = 0.0
     for i in range(len(cortes)):
-        cortes[i] = round(
-            _reduzir_corte_ate_caber(
-                curva, cortes, i, limite_inferior, max_por_grupo, passo,
-            ),
-            1,
+        cortes[i] = _ajustar_corte_para_max(
+            curva, limite_inferior, max_por_grupo, passo,
         )
         limite_inferior = cortes[i]
 
     return cortes, contar_por_faixa(curva, cortes)
 
 
+
 def sugerir_corte_produtos(df, corte_inicial=80.0, max_por_grupo=20, passo=0.5):
     """
-    Reduz o corte percentual cumulativo de produtos até o Grupo 1 (alto giro)
-    não ultrapassar max_por_grupo itens — mesmo espírito de sugerir_cortes_grupos.
+    Sugere o corte percentual do alto giro para caber em max_por_grupo produtos.
 
-    Retorna (corte_ajustado, [qtd_grupo1, qtd_demais]).
+    Diferente do homônimo removido na 1.0.24, este NÃO roda embutido na prévia:
+    é ação explícita de tela, e o percentual devolvido é gravado no campo. O
+    problema antigo não era o teto em si — era o teto mexer no corte por baixo
+    dos panos, deixando a tela mostrando 90% enquanto classificava com outro
+    número.
+
+    Retorna (corte_sugerido, [qtd_alto_giro, qtd_demais]).
     """
     receita_produto = df.groupby("descricao")["Receita"].sum()
-    corte = float(corte_inicial)
     if receita_produto.empty or receita_produto.sum() <= 0:
-        return round(corte, 1), [0, 0]
+        return round(float(corte_inicial), 1), [0, 0]
 
     curva = curva_pareto(receita_produto)
-    corte = round(
-        _reduzir_corte_ate_caber(
-            curva, [corte], 0, 0.0, max_por_grupo, passo,
-        ),
-        1,
-    )
+    corte = _ajustar_corte_para_max(curva, 0.0, max_por_grupo, passo)
     return corte, contar_por_faixa(curva, (corte,))
 
 

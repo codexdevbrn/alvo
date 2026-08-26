@@ -24,7 +24,7 @@ import { BannerAtualizacao } from './BannerAtualizacao';
 import { SidebarEmpresaSelect } from './SidebarEmpresaSelect';
 import { SidebarLojaSelect } from './SidebarLojaSelect';
 
-const URL_CARTEIRA = 'http://monitor-2d/';
+const URL_CARTEIRA = 'http://127.0.0.1:3001';
 const LS_SIDEBAR = 'prisma_sidebar_collapsed';
 const ANIM_MS = 340;
 const ANIM_EASE = 'cubic-bezier(0.33, 1, 0.68, 1)';
@@ -205,7 +205,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
             height={34}
           />
           <div className="app-sidebar-brand-text">
-            <span className="app-sidebar-brand-nome">Prisma</span>
+            <span className="app-sidebar-brand-nome">2D Prisma</span>
             <span className="app-sidebar-brand-sub">Sistema de análises</span>
           </div>
           <button
@@ -223,49 +223,55 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
         <SidebarLojaSelect />
 
         <nav className="app-sidebar-nav">
-          <span className="app-sidebar-nav-label">Menu</span>
-          <NavItem
-            icon={<LayoutGrid size={17} />}
-            label="Dashboard"
-            collapsed={colapsado}
-            ativo={emDashboard}
-            onClick={() => navigate('/')}
-          />
-          <NavItem
-            icon={<BarChart3 size={17} />}
-            label="Analisador de Monitoria"
-            collapsed={colapsado}
-            ativo={emAnalisador}
-            onClick={() => navigate('/analisador')}
-          />
-          <NavItem
-            icon={<Gauge size={17} />}
-            label="Monitoramento"
-            collapsed={colapsado}
-            ativo={emMonitor}
-            onClick={() => navigate('/monitor')}
-          />
-          <NavItem
-            icon={<UsersRound size={17} />}
-            label="Clientes"
-            collapsed={colapsado}
-            ativo={emClientes}
-            onClick={() => navigate('/clientes')}
-          />
-          <NavItem
-            icon={<PackageSearch size={17} />}
-            label="Estoque"
-            collapsed={colapsado}
-            ativo={emEstoque}
-            onClick={() => navigate('/estoque')}
-          />
-          <NavItem
-            icon={<Store size={17} />}
-            label="Dados mercadológicos"
-            collapsed={colapsado}
-            ativo={emMercadologico}
-            onClick={() => navigate('/mercadologico')}
-          />
+          <div className="app-sidebar-nav-grupo" aria-labelledby="sidebar-grupo-analises">
+            <span id="sidebar-grupo-analises" className="app-sidebar-nav-label">Análises</span>
+            <NavItem
+              icon={<LayoutGrid size={17} />}
+              label="Dashboard"
+              collapsed={colapsado}
+              ativo={emDashboard}
+              onClick={() => navigate('/')}
+            />
+            <NavItem
+              icon={<BarChart3 size={17} />}
+              label="Relatórios"
+              collapsed={colapsado}
+              ativo={emAnalisador}
+              onClick={() => navigate('/analisador')}
+            />
+            <NavItem
+              icon={<UsersRound size={17} />}
+              label="Clientes"
+              collapsed={colapsado}
+              ativo={emClientes}
+              onClick={() => navigate('/clientes')}
+            />
+            <NavItem
+              icon={<PackageSearch size={17} />}
+              label="Estoque"
+              collapsed={colapsado}
+              ativo={emEstoque}
+              onClick={() => navigate('/estoque')}
+            />
+          </div>
+
+          <div className="app-sidebar-nav-grupo" aria-labelledby="sidebar-grupo-mercadologico">
+            <span id="sidebar-grupo-mercadologico" className="app-sidebar-nav-label">Dados mercadológicos</span>
+            <NavItem
+              icon={<Gauge size={17} />}
+              label="Monitoramento"
+              collapsed={colapsado}
+              ativo={emMonitor}
+              onClick={() => navigate('/monitor')}
+            />
+            <NavItem
+              icon={<Store size={17} />}
+              label="Dados mercadológicos"
+              collapsed={colapsado}
+              ativo={emMercadologico}
+              onClick={() => navigate('/mercadologico')}
+            />
+          </div>
         </nav>
 
         <div className="app-sidebar-spacer" />

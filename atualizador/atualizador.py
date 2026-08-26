@@ -65,7 +65,14 @@ class Registro:
 
     def __call__(self, mensagem: str) -> None:
         linha = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {mensagem}"
-        print(linha)
+        # O executável de produção é windowed: não abre CMD e pode receber
+        # sys.stdout=None. O arquivo é o canal confiável; terminal é só apoio ao
+        # executar este script manualmente durante desenvolvimento.
+        try:
+            if sys.stdout is not None:
+                print(linha)
+        except (OSError, ValueError):
+            pass
         try:
             with open(self.caminho, "a", encoding="utf-8") as arquivo:
                 arquivo.write(linha + "\n")
@@ -185,11 +192,33 @@ def religar_versao_anterior(destino: str, log: Registro, versao_anterior: str) -
     return religar(destino, log, versao_esperada=versao_anterior)
 
 
-def _remover(caminho: str, log: Registro) -> None:
+def _remover(caminho: str, log: Registro, tentativas: int = 20) -> bool:
+    """Remove arquivo/pasta com espera para handles transitórios do Windows.
+
+    Defender, OneDrive e o loader de DLLs podem manter um arquivo aberto por
+    alguns segundos depois que o processo termina. A implementação antiga usava
+    ``ignore_errors=True`` e seguia mesmo com a pasta ainda existente; o rename
+    seguinte então falhava com WinError 183 e a atualização voltava à versão
+    anterior sem explicar a causa real.
+    """
     if not os.path.exists(caminho):
-        return
+        return True
     log(f"Removendo {caminho}.")
-    shutil.rmtree(caminho, ignore_errors=True)
+    ultimo_erro: OSError | None = None
+    for tentativa in range(max(1, tentativas)):
+        try:
+            if os.path.isdir(caminho) and not os.path.islink(caminho):
+                shutil.rmtree(caminho)
+            else:
+                os.remove(caminho)
+        except OSError as exc:
+            ultimo_erro = exc
+        if not os.path.exists(caminho):
+            return True
+        if tentativa + 1 < tentativas:
+            time.sleep(INTERVALO)
+    log(f"Não foi possível remover {caminho}: {ultimo_erro!r}")
+    return False
 
 
 def _preservar(origem: str, destino: str, log: Registro) -> None:
@@ -218,8 +247,12 @@ def aplicar(
     log: Registro,
 ) -> int:
     destino = os.path.abspath(destino)
-    novo = destino + "_novo"
-    backup = destino + "_backup"
+    # Caminhos únicos: um backup antigo preso por antivírus/OneDrive nunca pode
+    # bloquear a próxima atualização. O backup desta execução continua conhecido
+    # e disponível para rollback até a versão nova responder.
+    id_operacao = f"{os.getpid()}-{int(time.time() * 1000)}"
+    novo = f"{destino}_novo-{id_operacao}"
+    backup = f"{destino}_backup-{id_operacao}"
 
     if not os.path.isfile(zip_pacote):
         log(f"Pacote não encontrado: {zip_pacote}")
@@ -230,7 +263,6 @@ def aplicar(
     if not esperar_pid_morrer(pid, log):
         return 3
 
-    _remover(novo, log)
     log(f"Extraindo {zip_pacote} em {novo}.")
     try:
         with zipfile.ZipFile(zip_pacote) as pacote:
@@ -257,7 +289,6 @@ def aplicar(
         religar_versao_anterior(destino, log, versao_anterior)
         return 5
 
-    _remover(backup, log)
     log(f"Trocando: {destino} -> {backup}, {novo} -> {destino}")
     try:
         os.rename(destino, backup)
@@ -277,7 +308,11 @@ def aplicar(
 
     if religar(destino, log, versao_esperada=versao):
         log(f"Atualização para {versao or 'a nova versão'} concluída.")
-        _remover(backup, log)
+        if not _remover(backup, log):
+            # Versão nova já respondeu. Manter um backup órfão é melhor que
+            # declarar falha e derrubar uma instalação válida; como o nome é
+            # único, ele também não bloqueia o próximo update.
+            log(f"Aviso: backup antigo mantido em {backup}; pode ser removido depois.")
         return 0
 
     log("A versão nova não subiu. Voltando para a anterior.")
@@ -304,13 +339,11 @@ def aplicar(
 
 
 def _reconectar_console() -> None:
-    """Religa stdout/stderr ao console que este processo recebeu.
+    """Religa stdout/stderr quando o script é executado manualmente com console.
 
-    O Prisma lança o atualizador com as saídas em DEVNULL — obrigatório, porque
-    depois de fechar o próprio console ele não tem handles válidos para repassar.
-    Consequência: sem isto a janela do atualizador ficaria em branco enquanto ele
-    troca os arquivos, e é justamente a janela que o usuário olha para saber que a
-    atualização está andando.
+    O executável distribuído é windowed e trabalha sem CMD; nele esta função não
+    encontra ``CONOUT$`` e o registro continua apenas no arquivo. Manter o apoio
+    ao console facilita diagnóstico ao rodar ``python atualizador.py``.
     """
     if sys.platform != "win32":
         return

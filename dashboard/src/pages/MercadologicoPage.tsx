@@ -72,7 +72,7 @@ export default function MercadologicoPage() {
             <strong>Não foi possível carregar</strong>
             <span>
               O servidor do Pregão ({URL_MERCADOLOGICO}) não respondeu. Ele fica fora do
-              Prisma, então isto costuma ser rede ou o serviço estar parado.
+              2D Prisma, então isto costuma ser rede ou o serviço estar parado.
             </span>
             <button type="button" className="analisador-btn analisador-btn-sec" onClick={recarregar}>
               <RefreshCw size={14} />

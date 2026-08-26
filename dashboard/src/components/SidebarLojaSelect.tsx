@@ -1,10 +1,18 @@
 import { useEffect, useState } from 'react';
 import { listarLojasEmpresa } from '../api/client';
 import { EVENTO_EMPRESA } from '../utils/empresaSelecionada';
-import { EVENTO_LOJA, lerLoja, selecionarLojaGlobal } from '../utils/lojaSelecionada';
+import { EVENTO_LOJA, lerLojas, selecionarLojasGlobal } from '../utils/lojaSelecionada';
 import { AnalisadorCombobox } from './analisador/AnalisadorCombobox';
 
 const ROTULO_TODAS = 'Todas as lojas';
+
+function empresaAtual(): string {
+  try {
+    return localStorage.getItem('alvo_empresa') || '';
+  } catch {
+    return '';
+  }
+}
 
 /**
  * Seletor de loja da sidebar, logo abaixo do de empresa.
@@ -12,19 +20,13 @@ const ROTULO_TODAS = 'Todas as lojas';
  * Só aparece quando a empresa tem mais de uma loja: com uma loja só, o combobox
  * seria uma escolha sem alternativa ocupando espaço fixo na barra.
  *
- * A loja escolhida vale para todas as telas (`useEscopoAtual`). Se a loja
- * gravada sumiu da base — renomearam a loja na fonte —, o escopo volta para
- * "todas" em vez de continuar filtrando por um nome morto, que faria o backend
- * responder 400 em toda tela.
+ * Aceita qualquer combinação — nenhuma marcada = todas. O escopo vale para todas
+ * as telas (`useEscopoAtual`). Se o que estava gravado sumiu da base — renomearam
+ * a loja na fonte —, volta para "todas" em vez de continuar filtrando por um nome
+ * morto, que faria o backend responder 400 em toda tela.
  */
 export function SidebarLojaSelect() {
-  const [empresa, setEmpresa] = useState(() => {
-    try {
-      return localStorage.getItem('alvo_empresa') || '';
-    } catch {
-      return '';
-    }
-  });
+  const [empresa, setEmpresa] = useState(empresaAtual);
   // A lista guarda de qual empresa ela é: assim trocar de empresa não deixa as
   // lojas da anterior aparecendo por um render, e o efeito não precisa zerar
   // estado de forma síncrona (o que dispara render em cascata).
@@ -32,20 +34,14 @@ export function SidebarLojaSelect() {
     { empresa: '', lojas: [] },
   );
   const lojas = cacheLojas.empresa === empresa ? cacheLojas.lojas : [];
-  const [loja, setLoja] = useState('');
+  const [selecionadas, setSelecionadas] = useState<string[]>(() => lerLojas(empresaAtual()));
 
   useEffect(() => {
     const sincronizar = () => {
-      let nome = '';
-      try {
-        nome = localStorage.getItem('alvo_empresa') || '';
-      } catch {
-        nome = '';
-      }
+      const nome = empresaAtual();
       setEmpresa(nome);
-      setLoja(lerLoja(nome));
+      setSelecionadas(lerLojas(nome));
     };
-    sincronizar();
     window.addEventListener(EVENTO_EMPRESA, sincronizar);
     window.addEventListener(EVENTO_LOJA, sincronizar);
     window.addEventListener('storage', sincronizar);
@@ -63,8 +59,9 @@ export function SidebarLojaSelect() {
       .then((nomes) => {
         if (cancelado) return;
         setCacheLojas({ empresa, lojas: nomes });
-        const atual = lerLoja(empresa);
-        if (atual && !nomes.includes(atual)) selecionarLojaGlobal(empresa, '');
+        const atuais = lerLojas(empresa);
+        const validas = atuais.filter((nome) => nomes.includes(nome));
+        if (validas.length !== atuais.length) selecionarLojasGlobal(empresa, validas);
       })
       .catch(() => {
         if (!cancelado) setCacheLojas({ empresa, lojas: [] });
@@ -80,15 +77,16 @@ export function SidebarLojaSelect() {
     <div className="app-sidebar-empresa">
       <span className="app-sidebar-nav-label">Loja</span>
       <AnalisadorCombobox
-        value={loja}
+        multiple
+        values={selecionadas}
         options={lojas}
-        onChange={(nome) => {
-          setLoja(nome);
-          selecionarLojaGlobal(empresa, nome);
+        onMultipleChange={(nomes) => {
+          setSelecionadas(nomes);
+          selecionarLojasGlobal(empresa, nomes);
         }}
         emptyLabel={ROTULO_TODAS}
         searchPlaceholder={lojas.length > 8 ? 'Buscar…' : false}
-        aria-label="Selecionar loja"
+        aria-label="Selecionar lojas"
         direcao="abaixo"
         portal
       />

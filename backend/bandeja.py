@@ -20,7 +20,7 @@ from typing import Callable, Optional
 
 logger = logging.getLogger(__name__)
 
-TITULO = "Prisma"
+TITULO = "2D Prisma"
 
 
 def _carregar_icone():
@@ -99,7 +99,7 @@ def executar(
     # Menu como callable: o pystray o reconstrói quando o usuário abre, então o
     # rótulo reflete o estado do momento em vez do estado do boot.
     menu = pystray.Menu(lambda: (
-        pystray.MenuItem("Abrir Prisma", abrir, default=True),
+        pystray.MenuItem("Abrir 2D Prisma", abrir, default=True),
         pystray.MenuItem(rotulo_atualizacao(), verificar),
         pystray.Menu.SEPARATOR,
         pystray.MenuItem("Sair", sair),

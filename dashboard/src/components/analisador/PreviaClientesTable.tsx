@@ -105,7 +105,7 @@ export function PreviaClientesTable({
   const tagsDoMenu = menu ? (tagsPorCliente[nomeClienteChave(menu.cliente)] ?? []) : [];
 
   const opcoesTags = useMemo(
-    () => tagsCatalogo.filter((item) => item.ativa),
+    () => tagsCatalogo.filter((item) => item.ativa && item.entra_na_analise),
     [tagsCatalogo],
   );
 

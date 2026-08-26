@@ -14,7 +14,12 @@
   #error Defina PastaPacote (pasta gerada pelo PyInstaller)
 #endif
 
-#define NomeApp "Prisma"
+; NomeApp e o que o usuario ve; NomePasta e identificador de disco (pasta de
+; instalacao e grupo do menu Iniciar) e nao acompanha o nome de exibicao: mudar
+; a pasta transformaria a instalacao existente em orfa, e mudar o grupo deixaria
+; uma pasta duplicada no menu Iniciar a cada upgrade.
+#define NomeApp "2D Prisma"
+#define NomePasta "Prisma"
 #define Publicador "2D Consultores | Monitores"
 #define ExeApp "Prisma.exe"
 
@@ -31,8 +36,8 @@ VersionInfoVersion={#VersaoApp}
 
 ; %LOCALAPPDATA% e não Program Files: instalar em Program Files exigiria elevação
 ; a cada atualização automática, e o atualizador roda sem UAC.
-DefaultDirName={localappdata}\{#NomeApp}
-DefaultGroupName={#NomeApp}
+DefaultDirName={localappdata}\{#NomePasta}
+DefaultGroupName={#NomePasta}
 PrivilegesRequired=lowest
 DisableProgramGroupPage=yes
 DisableDirPage=no

@@ -53,6 +53,11 @@ from engine.recursos import pasta_base_execucao, pasta_web
 from engine.exportadores_pdf_word import exportar_relatorio_pdf
 from exportar_html import exportar_relatorio_html
 from monitor_empresas import METRICAS_MONITOR, montar_card, obter_resumo_monitor
+from relatorio_cliente import (
+    ErroPainelCliente,
+    gerar_painel_cliente_pdf,
+    montar_dados_painel_cliente,
+)
 from exportar_excel import (
     CATALOGO_RELATORIOS,
     COLUNAS_MOEDA_POR_ANALISE,
@@ -129,7 +134,7 @@ def _startup():
 def obter_versao():
     """Versão em execução. Sem login: o Dashboard é público e a versão é o
     primeiro dado que suporte pede quando alguém reporta um problema."""
-    return {"versao": versao.VERSAO, "app": versao.NOME_APP}
+    return {"versao": versao.VERSAO, "app": versao.IDENTIFICADOR_APP}
 
 
 # ---------------------------------------------------------------------------
@@ -220,10 +225,10 @@ _CAMPOS_TAGS_FLAT = frozenset({
 })
 
 TAGS_CATALOGO_PADRAO: list[dict] = [
-    {"id": "alerta", "rotulo": "Alerta", "ativa": True, "cor": "#ec1818"},
-    {"id": "inadimplente", "rotulo": "Inadimplente", "ativa": True, "cor": "#f43f5e"},
-    {"id": "cliente_balcao", "rotulo": "Cliente Balcão", "ativa": True, "cor": "#f59e0b"},
-    {"id": "encerrou_operacao", "rotulo": "Encerrou operação", "ativa": True, "cor": "#64748b"},
+    {"id": "alerta", "rotulo": "Alerta", "ativa": True, "entra_na_analise": True, "cor": "#ec1818"},
+    {"id": "inadimplente", "rotulo": "Inadimplente", "ativa": True, "entra_na_analise": True, "cor": "#f43f5e"},
+    {"id": "cliente_balcao", "rotulo": "Cliente Balcão", "ativa": True, "entra_na_analise": True, "cor": "#f59e0b"},
+    {"id": "encerrou_operacao", "rotulo": "Encerrou operação", "ativa": True, "entra_na_analise": True, "cor": "#64748b"},
 ]
 
 _REGEX_ID_TAG = re.compile(r"^[a-z][a-z0-9_]{0,47}$")
@@ -552,7 +557,13 @@ def _tag_alerta_padrao() -> dict:
     for item in TAGS_CATALOGO_PADRAO:
         if item.get("id") == "alerta":
             return dict(item)
-    return {"id": "alerta", "rotulo": "Alerta", "ativa": True, "cor": "#ec1818"}
+    return {
+        "id": "alerta",
+        "rotulo": "Alerta",
+        "ativa": True,
+        "entra_na_analise": True,
+        "cor": "#ec1818",
+    }
 
 
 def _catalogo_tem_tag_alerta(catalogo: list[dict]) -> bool:
@@ -601,6 +612,9 @@ def _normalizar_catalogo_tags(catalogo_bruto) -> list[dict]:
             "id": tag_id,
             "rotulo": rotulo,
             "ativa": bool(item.get("ativa", True)),
+            # Arquivos existentes não tinham esta chave. Mantê-los na análise
+            # evita esconder tags já cadastradas após atualização.
+            "entra_na_analise": bool(item.get("entra_na_analise", True)),
             "cor": cor,
         })
 
@@ -708,6 +722,20 @@ def _slice_tags_do_escopo(empresa: str, loja: Optional[str] = None) -> dict:
     return dict(scopes.get(_chave_escopo_loja(loja), {}))
 
 
+def _catalogo_tags_da_empresa(empresa: str, loja: Optional[str], bruto_escopo: dict) -> list[dict]:
+    """Retorna catálogo global da empresa, com fallback para legado por loja.
+
+    Tags são cadastradas em Configurações no escopo global. As marcações de
+    clientes continuam separadas por loja, mas precisam reconhecer catálogo
+    global para uma tag nova aparecer ao abrir qualquer cliente.
+    """
+    bruto_global = _slice_tags_do_escopo(empresa, None)
+    catalogo_global = bruto_global.get("catalogo") if isinstance(bruto_global, dict) else None
+    if isinstance(catalogo_global, list) and catalogo_global:
+        return _normalizar_catalogo_tags(catalogo_global)
+    return _normalizar_catalogo_tags(bruto_escopo.get("catalogo"))
+
+
 def _gravar_arquivo_tags_clientes(
     empresa: str,
     payload: dict,
@@ -732,7 +760,7 @@ def _gravar_arquivo_tags_clientes(
 
 def _ler_tags_clientes(empresa: str, loja: Optional[str] = None) -> dict:
     bruto = _slice_tags_do_escopo(empresa, loja)
-    catalogo = _normalizar_catalogo_tags(bruto.get("catalogo"))
+    catalogo = _catalogo_tags_da_empresa(empresa, loja, bruto)
     ids_catalogo = _ids_do_catalogo(catalogo)
     tags = _normalizar_mapa_tags(bruto.get("tags") if bruto else {}, ids_catalogo)
     grupos = _normalizar_grupos_manuais(bruto.get("grupos") if bruto else [])
@@ -750,7 +778,7 @@ def _gravar_tags_clientes(
     loja: Optional[str] = None,
 ) -> dict:
     bruto = _slice_tags_do_escopo(empresa, loja)
-    catalogo = _normalizar_catalogo_tags(bruto.get("catalogo"))
+    catalogo = _catalogo_tags_da_empresa(empresa, loja, bruto)
     ids_catalogo = _ids_do_catalogo(catalogo)
     tags_norm = _normalizar_mapa_tags(tags, ids_catalogo)
     return _gravar_arquivo_tags_clientes(
@@ -774,7 +802,7 @@ def _gravar_catalogo_tags(empresa: str, catalogo_bruto, loja: Optional[str] = No
 
 def _gravar_grupos_manuais(empresa: str, grupos_bruto, loja: Optional[str] = None) -> dict:
     bruto = _slice_tags_do_escopo(empresa, loja)
-    catalogo = _normalizar_catalogo_tags(bruto.get("catalogo"))
+    catalogo = _catalogo_tags_da_empresa(empresa, loja, bruto)
     ids_catalogo = _ids_do_catalogo(catalogo)
     tags = _normalizar_mapa_tags(bruto.get("tags") if bruto else {}, ids_catalogo)
     grupos = _normalizar_grupos_manuais(grupos_bruto)
@@ -787,7 +815,7 @@ def _gravar_grupos_manuais(empresa: str, grupos_bruto, loja: Optional[str] = Non
 
 def _gravar_regras_alerta(empresa: str, regras_brutas, loja: Optional[str] = None) -> dict:
     bruto = _slice_tags_do_escopo(empresa, loja)
-    catalogo = _normalizar_catalogo_tags(bruto.get("catalogo"))
+    catalogo = _catalogo_tags_da_empresa(empresa, loja, bruto)
     ids_catalogo = _ids_do_catalogo(catalogo)
     tags = _normalizar_mapa_tags(bruto.get("tags") if bruto else {}, ids_catalogo)
     regras = normalizar_regras_alerta(regras_brutas, ids_catalogo)
@@ -1324,6 +1352,19 @@ def _float_ou_none(valor) -> Optional[float]:
     return float(valor)
 
 
+def _texto_ou_none(valor) -> Optional[str]:
+    """NaN vindo do concat é truthy — daí a checagem antes do str()."""
+    if valor is None:
+        return None
+    try:
+        if pd.isna(valor):
+            return None
+    except (TypeError, ValueError):
+        pass
+    texto = str(valor).strip()
+    return texto or None
+
+
 def _eh_produto_nao_harmonizado(nome: str) -> bool:
     """Regra única, no motor — espelhada também pelo frontend."""
     return af.eh_produto_nao_harmonizado(nome)
@@ -1385,6 +1426,13 @@ def _itens_produtos_previa(classificado: pd.DataFrame) -> list[dict]:
     if classificado.empty:
         return []
     frame = classificado[["descricao", "Receita", "Faixa", "Freq_Simples", "Freq_Acumulado"]].copy()
+    # Motivo pelo qual o produto fica fora dos relatórios sem estar desmarcado
+    # à mão: "demais" (abaixo do corte) ou "nao_harmonizado". Vazio = dentro,
+    # ou fora por exclusão manual — que o frontend já conhece pela checkbox.
+    if "Fora_Por_Regra" in classificado.columns:
+        frame["Fora_Por_Regra"] = classificado["Fora_Por_Regra"]
+    else:
+        frame["Fora_Por_Regra"] = None
     frame = frame.sort_values("Receita", ascending=False)
     frame = _rede_seguranca_demais(frame)
     receita = pd.to_numeric(frame["Receita"], errors="coerce").fillna(0.0).tolist()
@@ -1395,13 +1443,15 @@ def _itens_produtos_previa(classificado: pd.DataFrame) -> list[dict]:
             "grupo": str(grupo),
             "percentual_receita": _float_ou_none(pct_rec),
             "percentual_acumulado": _float_ou_none(pct_acum),
+            "fora_por_regra": _texto_ou_none(regra),
         }
-        for produto, rec, grupo, pct_rec, pct_acum in zip(
+        for produto, rec, grupo, pct_rec, pct_acum, regra in zip(
             frame["descricao"].tolist(),
             receita,
             frame["Faixa"].tolist(),
             frame["Freq_Simples"].tolist(),
             frame["Freq_Acumulado"].tolist(),
+            frame["Fora_Por_Regra"].tolist(),
         )
     ]
 
@@ -1511,49 +1561,97 @@ class ParametrosProdutos(BaseModel):
     corte_produtos: float = 80.0
     empresa: Optional[str] = None
     loja: Optional[str] = None
-    max_itens_por_grupo: int = 20
-    ajustar_cortes: bool = True
+    desconsiderar_demais_produtos: bool = False
+    desconsiderar_nao_harmonizados: bool = False
+
+
+def _mascara_produtos_excluidos(df: pd.DataFrame, produtos_excluidos) -> pd.Series:
+    excluidos = {
+        str(produto).strip()
+        for produto in (produtos_excluidos or [])
+        if str(produto).strip()
+    }
+    if not excluidos:
+        return pd.Series(False, index=df.index)
+    return df["descricao"].astype(str).isin(excluidos)
+
+
+def _curva_produtos(
+    df: pd.DataFrame,
+    produtos_excluidos,
+    corte: float,
+    desconsiderar_nao_harmonizados: bool,
+) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
+    """Curva ABC dos produtos que sobram das exclusões que vêm ANTES dela.
+
+    Ordem importa: exclusão manual e "não harmonizado" saem do denominador
+    (o balde "NÃO HARMONIZADO" costuma ser o maior item da base e distorceria
+    toda a curva). Já "desconsiderar os demais" é consequência da curva, não
+    entrada dela — por isso não aparece aqui.
+
+    Devolve (classificado, mascara_manual, mascara_nao_harmonizados).
+    """
+    mascara_manual = _mascara_produtos_excluidos(df, produtos_excluidos)
+    if desconsiderar_nao_harmonizados:
+        mascara_nao_harm = af.mascara_produtos_nao_harmonizados(df["descricao"])
+    else:
+        mascara_nao_harm = pd.Series(False, index=df.index)
+    base_curva = df.loc[~mascara_manual & ~mascara_nao_harm]
+    return (
+        af.classificar_produtos_agregado(base_curva, corte),
+        mascara_manual,
+        mascara_nao_harm,
+    )
 
 
 @app.post("/api/produtos/previa")
 def previa_produtos(parametros: ParametrosProdutos, usuario: str = Depends(exigir_login)):
     # Classificação usa groupby e devolve outro frame; não altera a base cacheada.
     df, _ = _carregar_base(parametros.empresa, loja=parametros.loja, copiar=False)
-    excluidos = {
-        str(produto).strip()
-        for produto in (parametros.produtos_excluidos or [])
-        if str(produto).strip()
-    }
-    nomes_produtos = df["descricao"].astype(str)
-    mascara_excluidos = nomes_produtos.isin(excluidos)
-    base_incluida = df.loc[~mascara_excluidos]
-
-    # A análise final remove produtos excluídos antes de montar a curva. A
-    # prévia precisa usar exatamente a mesma base para grupo e percentuais.
-    if parametros.ajustar_cortes:
-        corte, _ = af.sugerir_corte_produtos(
-            base_incluida,
-            parametros.corte_produtos,
-            max_por_grupo=parametros.max_itens_por_grupo,
-        )
-    else:
-        corte = float(parametros.corte_produtos)
-    classificado = af.classificar_produtos_agregado(base_incluida, corte)
+    corte = float(parametros.corte_produtos)
+    classificado, mascara_manual, mascara_nao_harm = _curva_produtos(
+        df,
+        parametros.produtos_excluidos,
+        corte,
+        parametros.desconsiderar_nao_harmonizados,
+    )
     contagens = classificado["Faixa"].value_counts()
-    demais = classificado.loc[classificado["Faixa"] == "Demais", "descricao"].astype(str)
 
-    # Mantém excluídos visíveis para permitir reativação, mas sem atribuir uma
-    # faixa incorreta. Receita continua informativa; percentuais ficam vazios
-    # porque esses produtos não participam do denominador da curva.
-    if bool(mascara_excluidos.any()):
+    # "Desconsiderar os demais" é regra, não exclusão gravada: o produto
+    # continua na curva, com faixa e percentuais reais, só marcado como fora.
+    classificado = classificado.copy()
+    if parametros.desconsiderar_demais_produtos:
+        classificado["Fora_Por_Regra"] = pd.Series(
+            "demais", index=classificado.index,
+        ).where(classificado["Faixa"] == "Demais", other=None)
+    else:
+        classificado["Fora_Por_Regra"] = None
+    fora_por_regra = set(
+        classificado.loc[classificado["Fora_Por_Regra"].notna(), "descricao"].astype(str)
+    )
+
+    # Mantém fora da curva visível para permitir reativação, mas sem atribuir
+    # uma faixa incorreta. Receita continua informativa; percentuais ficam
+    # vazios porque esses produtos não participam do denominador.
+    if bool((mascara_manual | mascara_nao_harm).any()):
         fora = (
-            df.loc[mascara_excluidos]
+            df.loc[mascara_manual | mascara_nao_harm]
             .groupby("descricao", as_index=False)["Receita"]
             .sum()
         )
         fora["Faixa"] = ""
         fora["Freq_Simples"] = None
         fora["Freq_Acumulado"] = None
+        # Quem está desmarcado à mão fica sem regra: a checkbox já explica.
+        nomes_nao_harm = set(df.loc[mascara_nao_harm, "descricao"].astype(str))
+        nomes_manuais = set(df.loc[mascara_manual, "descricao"].astype(str))
+        fora["Fora_Por_Regra"] = [
+            "nao_harmonizado"
+            if nome in nomes_nao_harm and nome not in nomes_manuais
+            else None
+            for nome in fora["descricao"].astype(str)
+        ]
+        fora_por_regra |= nomes_nao_harm - nomes_manuais
         classificado_tabela = pd.concat([classificado, fora], ignore_index=True)
     else:
         classificado_tabela = classificado
@@ -1566,13 +1664,49 @@ def previa_produtos(parametros: ParametrosProdutos, usuario: str = Depends(exigi
             {"nome": "Demais", "ate_percentual": None, "quantidade": int(contagens.get("Demais", 0))},
         ],
         "itens": _itens_produtos_previa(classificado_tabela),
-        # Listas completas (sem teto da prévia) para toggles de exclusão em massa.
-        "produtos_demais": demais.tolist(),
-        "produtos_nao_harmonizados": [
-            nome for nome in classificado_tabela["descricao"].astype(str).tolist()
-            if _eh_produto_nao_harmonizado(nome)
-        ],
+        # Lista completa (sem o teto da prévia) do que as regras tiram. O
+        # frontend usa para limpar de `produtos_excluidos` os nomes que as
+        # versões antigas materializavam ali.
+        "produtos_fora_por_regra": sorted(fora_por_regra),
     }
+
+
+class ParametrosSugerirCorteProdutos(ParametrosProdutos):
+    max_itens_por_grupo: int = 20
+
+
+@app.post("/api/produtos/sugerir-corte")
+def sugerir_corte_produtos(
+    parametros: ParametrosSugerirCorteProdutos, usuario: str = Depends(exigir_login),
+):
+    """Sugere o corte do alto giro para caber em max_itens_por_grupo produtos.
+
+    Espelha /api/grupos/sugerir-cortes: é ação de tela, nunca embutida na
+    prévia — o percentual devolvido vai para o campo, então o número que o
+    usuário lê é o número que classifica.
+    """
+    df, _ = _carregar_base(parametros.empresa, loja=parametros.loja, copiar=False)
+    mascara_manual = _mascara_produtos_excluidos(df, parametros.produtos_excluidos)
+    if parametros.desconsiderar_nao_harmonizados:
+        mascara_nao_harm = af.mascara_produtos_nao_harmonizados(df["descricao"])
+    else:
+        mascara_nao_harm = pd.Series(False, index=df.index)
+    corte, _ = af.sugerir_corte_produtos(
+        df.loc[~mascara_manual & ~mascara_nao_harm],
+        parametros.corte_produtos,
+        max_por_grupo=parametros.max_itens_por_grupo,
+    )
+    return previa_produtos(
+        ParametrosProdutos(
+            produtos_excluidos=parametros.produtos_excluidos,
+            corte_produtos=corte,
+            empresa=parametros.empresa,
+            loja=parametros.loja,
+            desconsiderar_demais_produtos=parametros.desconsiderar_demais_produtos,
+            desconsiderar_nao_harmonizados=parametros.desconsiderar_nao_harmonizados,
+        ),
+        usuario,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1787,7 +1921,7 @@ def _exigir_origem_local(request: Request) -> None:
     if cliente not in ("127.0.0.1", "::1"):
         raise HTTPException(
             status_code=403,
-            detail="A atualização só pode ser aplicada na própria máquina do Prisma.",
+            detail="A atualização só pode ser aplicada na própria máquina do 2D Prisma.",
         )
     for cabecalho in CABECALHOS_DE_PROXY:
         if cabecalho in request.headers:
@@ -1795,7 +1929,7 @@ def _exigir_origem_local(request: Request) -> None:
                 status_code=403,
                 detail=(
                     "A atualização só pode ser aplicada na própria máquina do "
-                    "Prisma, sem passar por proxy."
+                    "2D Prisma, sem passar por proxy."
                 ),
             )
 
@@ -1958,7 +2092,7 @@ def aplicar_atualizacao(request: Request, usuario: str = Depends(exigir_login)):
     if not atualizador:
         raise HTTPException(
             status_code=500,
-            detail="atualizador.exe não foi encontrado ao lado do Prisma.",
+            detail="atualizador.exe não foi encontrado ao lado do 2D Prisma.",
         )
 
     pasta_temporaria = tempfile.mkdtemp(prefix="prisma-update-")
@@ -2005,12 +2139,11 @@ def aplicar_atualizacao(request: Request, usuario: str = Depends(exigir_login)):
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            # CREATE_NEW_CONSOLE: o atualizador precisa sobreviver à morte deste
-            # processo — que é justamente o que ele espera acontecer — e mostrar o
-            # andamento da troca. DETACHED_PROCESS também desacopla, mas deixa uma
-            # aplicação de console sem console, e aí o bootloader do PyInstaller
-            # morre antes de rodar (foi o que aconteceu com o religamento).
-            creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+            # Atualizador roda em background e registra tudo em
+            # Prisma-atualizacao.log. CREATE_NO_WINDOW evita deixar CMD aberto;
+            # não usar esta flag ao religar o Prisma, que possui bootloader de
+            # console e cria/fecha sua própria janela durante o boot.
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except OSError as exc:
         shutil.rmtree(pasta_temporaria, ignore_errors=True)
@@ -2022,7 +2155,7 @@ def aplicar_atualizacao(request: Request, usuario: str = Depends(exigir_login)):
                 "ok": True,
                 "versao": status.versao_disponivel,
                 "mensagem": (
-                    "Atualização iniciada. O Prisma vai fechar e reabrir sozinho "
+                    "Atualização iniciada. O 2D Prisma vai fechar e reabrir sozinho "
                     "em alguns instantes."
                 ),
             }
@@ -2670,6 +2803,16 @@ class ParametrosExplorar(BaseModel):
     comparar_ano_anterior: bool = False
 
 
+class PainelClienteBody(BaseModel):
+    """Cliente monitorado cujo painel PDF será calculado sob demanda."""
+
+    empresa: str
+    cliente: str
+    loja: Optional[str] = None
+    posicao: Optional[int] = None
+    total: Optional[int] = None
+
+
 #: Dimensões que já carregam o ano dentro do valor ("2026-03", "2026-T1", 2026).
 #: Comparar ano anterior com elas no eixo não faz sentido: cada valor pertence a
 #: um único ano, então as duas séries nunca cairiam na mesma categoria.
@@ -3152,6 +3295,92 @@ def explorar_agregar(parametros: ParametrosExplorar, usuario: str = Depends(exig
 
 
 # ---------------------------------------------------------------------------
+# Painel individual de cliente monitorado
+# ---------------------------------------------------------------------------
+
+def _slug_arquivo_cliente(nome: str) -> str:
+    """Nome curto e seguro para o Content-Disposition do PDF."""
+    texto = unicodedata.normalize("NFKD", nome).encode("ascii", "ignore").decode("ascii")
+    texto = re.sub(r"[^a-zA-Z0-9]+", "-", texto).strip("-").lower()
+    return (texto[:64] or "cliente")
+
+
+@app.post("/api/relatorios/cliente/painel")
+def exportar_painel_cliente(
+    corpo: PainelClienteBody,
+    usuario: str = Depends(exigir_login),
+):
+    """Gera na hora o painel PDF de um cliente marcado para monitoramento."""
+    inicio = time.perf_counter()
+    empresa = _validar_nome_empresa(corpo.empresa)
+    cliente = str(corpo.cliente or "").strip()
+    if not cliente:
+        raise HTTPException(status_code=400, detail="Informe o cliente.")
+    if len(cliente) > 300:
+        raise HTTPException(status_code=400, detail="Nome de cliente inválido.")
+
+    estado_tags = _ler_tags_clientes(empresa, loja=corpo.loja)
+    ids_monitoramento = {
+        str(item.get("id") or "").strip().lower()
+        for item in (estado_tags.get("catalogo") or [])
+        if item.get("ativa") and item.get("entra_na_analise")
+        and str(item.get("id") or "").strip().lower() != af.TAG_CLIENTE_BALCAO
+    }
+    tags_cliente = set((estado_tags.get("tags") or {}).get(cliente, []))
+    if not tags_cliente.intersection(ids_monitoramento):
+        raise HTTPException(
+            status_code=400,
+            detail="O painel só pode ser gerado para cliente com tag de monitoramento ativa.",
+        )
+
+    df, _ = _carregar_base(empresa, loja=corpo.loja, copiar=False)
+    try:
+        dados = montar_dados_painel_cliente(df, cliente)
+    except ErroPainelCliente as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(
+            "Falha ao calcular painel do cliente %s para %s:\n%s",
+            cliente, usuario, traceback.format_exc(),
+        )
+        raise HTTPException(status_code=400, detail=f"Falha ao calcular o painel: {exc}") from exc
+
+    arquivo_temp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+    caminho_saida = arquivo_temp.name
+    arquivo_temp.close()
+    try:
+        gerar_painel_cliente_pdf(
+            caminho_saida,
+            dados,
+            empresa=empresa,
+            loja=_normalizar_loja(corpo.loja),
+            posicao=corpo.posicao,
+            total=corpo.total,
+        )
+    except Exception as exc:
+        try:
+            os.remove(caminho_saida)
+        except OSError:
+            pass
+        logger.error(
+            "Falha ao renderizar painel do cliente %s para %s:\n%s",
+            cliente, usuario, traceback.format_exc(),
+        )
+        raise HTTPException(status_code=500, detail=f"Falha ao gerar o PDF: {exc}") from exc
+
+    logger.info(
+        "Painel do cliente %s gerado para %s em %.2fs.",
+        cliente, usuario, time.perf_counter() - inicio,
+    )
+    return FileResponse(
+        caminho_saida,
+        media_type="application/pdf",
+        filename=f"painel-cliente-{_slug_arquivo_cliente(cliente)}.pdf",
+        background=BackgroundTask(os.remove, caminho_saida),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Parâmetros compartilhados por /analisar e /exportar
 # ---------------------------------------------------------------------------
 
@@ -3174,6 +3403,9 @@ class ParametrosAnalise(BaseModel):
     # False = erosão/correlação/churn olham a base inteira (mantém a Receita
     # Sob Risco comparável entre períodos). True = só os produtos em alerta.
     erosao_somente_produtos_em_alerta: bool = False
+    # Regras de produto: derivadas no cálculo, não gravadas como lista de nomes.
+    desconsiderar_demais_produtos: bool = False
+    desconsiderar_nao_harmonizados: bool = False
     nome_empresa: str = ""
     nome_usuario: str = ""
     empresa: Optional[str] = None
@@ -3320,12 +3552,29 @@ def _carregar_df_filtrado(
     produtos_excluidos: list[str],
     empresa: Optional[str] = None,
     loja: Optional[str] = None,
+    corte_produtos: float = 80.0,
+    desconsiderar_demais_produtos: bool = False,
+    desconsiderar_nao_harmonizados: bool = False,
 ) -> pd.DataFrame:
     # Motor somente lê o DataFrame; compartilha master cacheado. Quando há
     # exclusão, o filtro já materializa DataFrame separado.
     df, _ = _carregar_base(empresa, loja=loja, copiar=False)
-    if produtos_excluidos:
-        df = df.loc[~df["descricao"].isin(produtos_excluidos)].copy()
+    if not desconsiderar_demais_produtos and not desconsiderar_nao_harmonizados:
+        # Caminho comum: nada de curva aqui — o motor já monta a dele.
+        mascara_manual = _mascara_produtos_excluidos(df, produtos_excluidos)
+        return df.loc[~mascara_manual].copy() if bool(mascara_manual.any()) else df
+    classificado, mascara_manual, mascara_nao_harm = _curva_produtos(
+        df, produtos_excluidos, float(corte_produtos), desconsiderar_nao_harmonizados,
+    )
+    fora = mascara_manual | mascara_nao_harm
+    if desconsiderar_demais_produtos:
+        demais = set(
+            classificado.loc[classificado["Faixa"] == "Demais", "descricao"].astype(str)
+        )
+        if demais:
+            fora = fora | df["descricao"].astype(str).isin(demais)
+    if bool(fora.any()):
+        df = df.loc[~fora].copy()
     return df
 
 
@@ -3426,11 +3675,14 @@ def _rodar_analises(parametros: ParametrosAnalise) -> dict:
     if chaves_motor:
         df_filtrado = _carregar_df_filtrado(
             parametros.produtos_excluidos, empresa, loja=parametros.loja,
+            corte_produtos=parametros.corte_produtos,
+            desconsiderar_demais_produtos=parametros.desconsiderar_demais_produtos,
+            desconsiderar_nao_harmonizados=parametros.desconsiderar_nao_harmonizados,
         )
         if df_filtrado.empty:
             raise HTTPException(
                 status_code=400,
-                detail="Nenhuma linha restante após excluir os produtos desmarcados.",
+                detail="Nenhuma linha restante após aplicar as exclusões de produto.",
             )
         resultados = af.gerar_analises_completas(
             df_filtrado,

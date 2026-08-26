@@ -38,13 +38,31 @@ export function PreviaProdutosTable({ itens, excluidos, onToggle, onToggleAll, c
   // qualquer produto), então a contagem "de Y produtos" nunca muda com
   // exclusões. O que de fato varia — e o que importa para o usuário saber o
   // que entrará nos relatórios — é quantos desses itens estão INCLUÍDOS.
-  const incluidosNoFiltro = useMemo(
-    () => itensFiltrados.filter((item) => !excluidos.has(item.produto)).length,
-    [itensFiltrados, excluidos],
-  );
+  //
+  // Duas maneiras diferentes de ficar de fora, e elas não se misturam:
+  // desmarcado à mão (checkbox) e fora por regra (abaixo do corte ou não
+  // harmonizado, decidido pelos checkboxes do painel). A checkbox de cada
+  // linha reflete só a primeira.
+  const contagem = useMemo(() => {
+    let manuais = 0;
+    let demais = 0;
+    let naoHarmonizados = 0;
+    for (const item of itensFiltrados) {
+      if (excluidos.has(item.produto)) manuais += 1;
+      else if (item.fora_por_regra === 'demais') demais += 1;
+      else if (item.fora_por_regra === 'nao_harmonizado') naoHarmonizados += 1;
+    }
+    return {
+      manuais,
+      demais,
+      naoHarmonizados,
+      dentro: itensFiltrados.length - manuais - demais - naoHarmonizados,
+    };
+  }, [itensFiltrados, excluidos]);
 
-  const todosConsideradosFiltro = itensFiltrados.length > 0 && incluidosNoFiltro === itensFiltrados.length;
-  const algumConsideradoFiltro = incluidosNoFiltro > 0;
+  const marcadosNoFiltro = itensFiltrados.length - contagem.manuais;
+  const todosConsideradosFiltro = itensFiltrados.length > 0 && contagem.manuais === 0;
+  const algumConsideradoFiltro = marcadosNoFiltro > 0;
 
   if (carregando) {
     return <p className="analisador-hint">Calculando prévia de produtos...</p>;
@@ -124,8 +142,14 @@ export function PreviaProdutosTable({ itens, excluidos, onToggle, onToggleAll, c
             )}
             {itensFiltrados.map((item) => {
               const considerado = !excluidos.has(item.produto);
+              const regra = considerado ? item.fora_por_regra : null;
               return (
-                <tr key={item.produto} className={considerado ? undefined : 'is-excluido'}>
+                <tr
+                  key={item.produto}
+                  className={
+                    !considerado ? 'is-excluido' : regra ? 'is-fora-regra' : undefined
+                  }
+                >
                   <td className="col-check">
                     <label className="analisador-check">
                       <input
@@ -135,7 +159,14 @@ export function PreviaProdutosTable({ itens, excluidos, onToggle, onToggleAll, c
                       />
                     </label>
                   </td>
-                  <td className="col-nome" title={item.produto}>{item.produto}</td>
+                  <td className="col-nome" title={item.produto}>
+                    {item.produto}
+                    {regra && (
+                      <span className="analisador-marca-regra">
+                        {regra === 'demais' ? 'abaixo do corte' : 'não harmonizado'}
+                      </span>
+                    )}
+                  </td>
                   <td className="col-num">{formatCurrency(item.receita)}</td>
                   <td className="col-pct">{formatarPct(item.percentual_receita)}</td>
                   <td className="col-pct-acum">{formatarPct(item.percentual_acumulado)}</td>
@@ -147,9 +178,11 @@ export function PreviaProdutosTable({ itens, excluidos, onToggle, onToggleAll, c
         </table>
       </div>
       <p className="analisador-hint">
-        {incluidosNoFiltro} de {itensFiltrados.length} produto(s) incluído(s) na análise
+        {contagem.dentro} de {itensFiltrados.length} produto(s) nos relatórios
+        {contagem.demais > 0 && ` · ${contagem.demais} abaixo do corte`}
+        {contagem.naoHarmonizados > 0 && ` · ${contagem.naoHarmonizados} não harmonizado(s)`}
+        {contagem.manuais > 0 && ` · ${contagem.manuais} desmarcado(s) à mão`}
         {itensFiltrados.length !== lista.length && ` · catálogo completo: ${lista.length} produto(s)`}
-        {excluidos.size > 0 && ` · ${excluidos.size} fora da análise no catálogo completo`}
       </p>
     </div>
   );

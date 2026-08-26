@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { EVENTO_EMPRESA } from '../utils/empresaSelecionada';
-import { EVENTO_LOJA, lerLoja } from '../utils/lojaSelecionada';
+import { EVENTO_LOJA, codificarEscopoLojas, lerLojas } from '../utils/lojaSelecionada';
 
 const LS_EMPRESA = 'alvo_empresa';
 
@@ -15,12 +15,14 @@ function lerEmpresa(): string {
 export interface EscopoAtual {
   /** '' = base padrão (nenhuma empresa selecionada). */
   empresa: string;
-  /** null = todas as lojas. É o formato que as APIs esperam. */
+  /** Lista vazia = todas as lojas. */
+  lojas: string[];
+  /** Escopo já codificado para as APIs; null = todas as lojas. */
   loja: string | null;
 }
 
 /**
- * Escopo em uso (empresa + loja) da barra lateral, sincronizado.
+ * Escopo em uso (empresa + lojas) da barra lateral, sincronizado.
  *
  * Cada tela lia o localStorage e assinava os eventos por conta própria, e cada
  * cópia divergia um pouco (uma zerava a loja ao trocar de empresa, outra não).
@@ -28,13 +30,13 @@ export interface EscopoAtual {
  */
 export function useEscopoAtual(): EscopoAtual {
   const [empresa, setEmpresa] = useState(lerEmpresa);
-  const [loja, setLoja] = useState(() => lerLoja(lerEmpresa()));
+  const [lojas, setLojas] = useState<string[]>(() => lerLojas(lerEmpresa()));
 
   useEffect(() => {
     const sincronizar = () => {
       const nome = lerEmpresa();
       setEmpresa(nome);
-      setLoja(lerLoja(nome));
+      setLojas(lerLojas(nome));
     };
     // 'storage' cobre outra aba; os CustomEvent cobrem esta.
     window.addEventListener(EVENTO_EMPRESA, sincronizar);
@@ -47,5 +49,5 @@ export function useEscopoAtual(): EscopoAtual {
     };
   }, []);
 
-  return { empresa, loja: loja || null };
+  return { empresa, lojas, loja: codificarEscopoLojas(lojas) };
 }

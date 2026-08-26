@@ -62,7 +62,9 @@ exe = EXE(
     strip=False,
     upx=False,  # UPX costuma disparar falso positivo de antivírus.
     runtime_tmpdir=None,
-    console=True,  # A janela mostra o andamento da troca para o usuário.
+    # Atualização acontece em background e escreve Prisma-atualizacao.log.
+    # Windowed impede CMD órfão quando há falha ou espera do antivírus.
+    console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

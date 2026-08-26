@@ -70,7 +70,12 @@ export function ClientesRitmoAlertas({ empresa, loja = null, catalogo }: Props) 
   const [feedback, setFeedback] = useState<string | null>(null);
 
   const tagsConfiguraveis = useMemo(
-    () => catalogo.filter((tag) => tag.ativa && tag.id !== 'cliente_balcao' && tag.id !== 'encerrou_operacao'),
+    () => catalogo.filter(
+      (tag) => tag.ativa
+        && tag.entra_na_analise
+        && tag.id !== 'cliente_balcao'
+        && tag.id !== 'encerrou_operacao',
+    ),
     [catalogo],
   );
   const catalogoMapa = useMemo(

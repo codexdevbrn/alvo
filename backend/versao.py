@@ -12,8 +12,17 @@ Não confundir com `engine.recursos.VERSAO_ATUAL`: aquela versiona o app desktop
 histórico de releases diferente — compartilhar o número confundiria o suporte.
 """
 
-VERSAO = "1.0.21"
-NOME_APP = "Prisma"
+VERSAO = "1.2.0"
+
+# Nome exibido ao usuário: título da janela, bandeja, instalador, interface.
+NOME_APP = "2D Prisma"
+
+# Identificador de rede, respondido por `GET /api/versao` e conferido por
+# `servidor._prisma_nesta_porta` para reconhecer outra instância na porta. É
+# valor de protocolo, não texto de tela: renomeá-lo faria uma versão nova deixar
+# de reconhecer uma antiga já rodando e subir uma segunda instância sobre o
+# mesmo app.db. Não mudar junto com NOME_APP.
+IDENTIFICADOR_APP = "Prisma"
 
 
 def versao_como_tupla(versao: str) -> tuple[int, ...]:

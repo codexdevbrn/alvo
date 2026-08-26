@@ -63,7 +63,9 @@ def _prisma_nesta_porta(porta: int) -> bool:
     url = f"http://{HOST}:{porta}/api/versao"
     try:
         with urllib.request.urlopen(url, timeout=2) as resposta:  # noqa: S310 (localhost)
-            return json.load(resposta).get("app") == "Prisma"
+            from versao import IDENTIFICADOR_APP
+
+            return json.load(resposta).get("app") == IDENTIFICADOR_APP
     except (urllib.error.URLError, OSError, ValueError):
         return False
 
@@ -265,7 +267,7 @@ def main() -> None:
     _abrir_navegador_quando_subir(porta)
 
     def encerrar():
-        print("Encerrando o Prisma...")
+        print("Encerrando o 2D Prisma...")
         servidor.should_exit = True
 
     def quando_a_bandeja_subir():

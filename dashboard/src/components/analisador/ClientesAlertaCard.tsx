@@ -8,9 +8,10 @@ import {
   XAxis,
   YAxis,
 } from 'recharts';
-import { AlertTriangle, Filter, Loader2, Tag } from 'lucide-react';
+import { AlertTriangle, FileDown, Filter, Loader2, Tag } from 'lucide-react';
 import {
   explorarAgregar,
+  gerarPainelCliente,
   type TagCatalogoItem,
   type TagCliente,
 } from '../../api/client';
@@ -65,9 +66,20 @@ function normalizarTexto(s: string): string {
     .trim();
 }
 
+/** Nome previsível e seguro para o download no navegador. */
+function slugArquivoCliente(nome: string): string {
+  return nome
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .toLowerCase()
+    .slice(0, 64) || 'cliente';
+}
+
 /** Resolve a tag "Alerta" pelo rótulo ou id (ex.: nova_tag / Alerta). */
 function resolverTagAlerta(catalogo: TagCatalogoItem[]): TagCatalogoItem | null {
-  const candidatas = catalogo.filter((t) => t.ativa !== false);
+  const candidatas = catalogo.filter((t) => t.ativa !== false && t.entra_na_analise);
   const exata = candidatas.find((t) => {
     const id = normalizarTexto(t.id);
     const rotulo = normalizarTexto(t.rotulo);
@@ -315,12 +327,13 @@ export function ClientesAlertaCard({
   const [seriePorCliente, setSeriePorCliente] = useState<SeriePorCliente>({});
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
+  const [gerandoPainel, setGerandoPainel] = useState<string | null>(null);
   // `null` mantém a tag Alerta como foco inicial; string vazia representa todas.
   const [tagSelecionada, setTagSelecionada] = useState<string | null>(null);
 
   const balcaoSet = useMemo(() => new Set(clientesBalcao), [clientesBalcao]);
   const tagsDisponiveis = useMemo(
-    () => tagsCatalogo.filter((tag) => tag.ativa && tag.id !== 'cliente_balcao'),
+    () => tagsCatalogo.filter((tag) => tag.ativa && tag.entra_na_analise && tag.id !== 'cliente_balcao'),
     [tagsCatalogo],
   );
   const tagAlerta = useMemo(() => resolverTagAlerta(tagsCatalogo), [tagsCatalogo]);
@@ -489,6 +502,27 @@ export function ClientesAlertaCard({
 
   const cor = tagEmFoco?.cor ?? 'var(--accent)';
 
+  const baixarPainel = async (cliente: string, posicao: number, total: number) => {
+    if (!empresa || gerandoPainel) return;
+    setGerandoPainel(cliente);
+    setErro(null);
+    try {
+      const blob = await gerarPainelCliente({ empresa, cliente, loja, posicao, total });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `painel-cliente-${slugArquivoCliente(cliente)}.pdf`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setErro(e instanceof Error ? e.message : `Falha ao gerar painel de ${cliente}.`);
+    } finally {
+      setGerandoPainel(null);
+    }
+  };
+
   if (!tagsDisponiveis.length) {
     return (
       <div className="glass-card glass-card-flat analisador-alerta-card">
@@ -584,7 +618,7 @@ export function ClientesAlertaCard({
           )}
 
           <div className="analisador-alerta-clientes custom-scrollbar">
-            {clientesAlertaOrdenados.map((item) => {
+            {clientesAlertaOrdenados.map((item, indice) => {
               const bloco = seriePorCliente[item.cliente];
               const serie = bloco?.serie ?? [];
               const receitaUltimo = bloco?.receitaUltimo ?? item.receita;
@@ -607,20 +641,38 @@ export function ClientesAlertaCard({
                         </span>
                       )}
                     </div>
-                    <div className="analisador-alerta-cliente-kpis">
-                      <div className="analisador-alerta-kpi">
-                        <span>Receita</span>
-                        <strong>
-                          {formatCurrency(receitaUltimo)}
-                          <BadgePerdaReceita perdaRs={perdaReceita} pct={varReceita} />
-                        </strong>
-                      </div>
-                      <div className="analisador-alerta-kpi">
-                        <span>Quantidade</span>
-                        <strong>
-                          {formatNumber(qtdUltimo)}
-                          <BadgeVariacao pct={varQtd} />
-                        </strong>
+                    <div className="analisador-alerta-cliente-acoes">
+                      <button
+                        type="button"
+                        className="analisador-btn analisador-btn-sec analisador-btn-compact analisador-alerta-painel-btn"
+                        onClick={() => void baixarPainel(
+                          item.cliente,
+                          indice + 1,
+                          clientesAlertaOrdenados.length,
+                        )}
+                        disabled={gerandoPainel != null}
+                        aria-label={`Gerar painel PDF de ${item.cliente}`}
+                      >
+                        {gerandoPainel === item.cliente
+                          ? <Loader2 size={14} className="dashboard-filter-spinner" aria-hidden="true" />
+                          : <FileDown size={14} aria-hidden="true" />}
+                        {gerandoPainel === item.cliente ? 'Gerando…' : 'Painel PDF'}
+                      </button>
+                      <div className="analisador-alerta-cliente-kpis">
+                        <div className="analisador-alerta-kpi">
+                          <span>Receita</span>
+                          <strong>
+                            {formatCurrency(receitaUltimo)}
+                            <BadgePerdaReceita perdaRs={perdaReceita} pct={varReceita} />
+                          </strong>
+                        </div>
+                        <div className="analisador-alerta-kpi">
+                          <span>Quantidade</span>
+                          <strong>
+                            {formatNumber(qtdUltimo)}
+                            <BadgeVariacao pct={varQtd} />
+                          </strong>
+                        </div>
                       </div>
                     </div>
                   </div>

@@ -9,7 +9,7 @@ const buf = fs.readFileSync(fontPath);
 const font = opentype.parse(buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength));
 
 const fontSize = 56;
-const word = 'Prisma';
+const word = '2D Prisma';
 const strokePad = 14;
 let x = 0;
 const letters = [];
@@ -17,7 +17,10 @@ const letters = [];
 for (const char of word) {
   const glyph = font.charToGlyph(char);
   const glyphPath = glyph.getPath(x, 0, fontSize);
-  letters.push(glyphPath.toPathData(2));
+  const d = glyphPath.toPathData(2);
+  // O espaço não tem contorno: entraria como path vazio, que o LoadingScreen
+  // ainda contaria no stagger da animação — um atraso sem nada desenhando.
+  if (d) letters.push(d);
   x += font.getAdvanceWidth(char, fontSize);
 }
 

@@ -41,3 +41,6 @@ dist_release/
 /.pytest_cache/
 /backend/.pytest_cache/
 /clientes-print.png
+
+# PDFs de amostra gerados por relatorio_cliente.py
+output/

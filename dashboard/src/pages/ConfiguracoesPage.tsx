@@ -126,6 +126,7 @@ export default function ConfiguracoesPage() {
 
   const [tagsCatalogo, setTagsCatalogo] = useState<TagCatalogoItem[]>(TAGS_CATALOGO_PADRAO);
   const [novoTagNome, setNovoTagNome] = useState('');
+  const [novaTagEntraNaAnalise, setNovaTagEntraNaAnalise] = useState(true);
   const [editandoTagId, setEditandoTagId] = useState<string | null>(null);
   const [salvandoTags, setSalvandoTags] = useState(false);
   const [feedbackTags, setFeedbackTags] = useState<{ tipo: 'ok' | 'erro'; texto: string } | null>(null);
@@ -453,9 +454,16 @@ export default function ConfiguracoesPage() {
     const ids = new Set(tagsCatalogo.map((item) => item.id));
     setTagsCatalogo((lista) => [
       ...lista,
-      { id: novoIdTag(rotulo, ids), rotulo, ativa: true, cor: '#64748b' },
+      {
+        id: novoIdTag(rotulo, ids),
+        rotulo,
+        ativa: true,
+        entra_na_analise: novaTagEntraNaAnalise,
+        cor: '#64748b',
+      },
     ]);
     setNovoTagNome('');
+    setNovaTagEntraNaAnalise(true);
   };
 
   const salvarTags = async () => {
@@ -653,7 +661,7 @@ export default function ConfiguracoesPage() {
           <section className="glass-card glass-card-flat config-page-card" aria-labelledby="setor-atualizacoes">
             <h2 id="setor-atualizacoes" className="config-page-card-titulo">Atualizações</h2>
             <p className="config-page-card-desc">
-              Pasta compartilhada de onde o Prisma lê as novas versões publicadas.
+              Pasta compartilhada de onde o 2D Prisma lê as novas versões publicadas.
             </p>
 
             <label className="analisador-campo">
@@ -738,7 +746,7 @@ export default function ConfiguracoesPage() {
             <section className="glass-card glass-card-flat config-page-card" aria-labelledby="setor-inicio">
               <h2 id="setor-inicio" className="config-page-card-titulo">Inicialização</h2>
               <p className="config-page-card-desc">
-                Quando o Prisma deve abrir sozinho nesta máquina.
+                Quando o 2D Prisma deve abrir sozinho nesta máquina.
               </p>
 
               <label className="analisador-check-linha">
@@ -769,11 +777,11 @@ export default function ConfiguracoesPage() {
                   onChange={(e) => setHorarioInicio(e.target.value)}
                   onBlur={() => { if (comHorario) void salvarInicio(inicio.logon, horarioInicio); }}
                   disabled={salvandoInicio || !comHorario}
-                  aria-label="Horário para abrir o Prisma"
+                  aria-label="Horário para abrir o 2D Prisma"
                 />
               </label>
               <p className="analisador-hint">
-                O horário só vale com a máquina ligada. Se o Prisma já estiver aberto na hora,
+                O horário só vale com a máquina ligada. Se o 2D Prisma já estiver aberto na hora,
                 nada acontece — ele apenas traz a janela do navegador.
               </p>
 
@@ -846,6 +854,14 @@ export default function ConfiguracoesPage() {
                                 />
                                 Ativa
                               </label>
+                              <label className="analisador-check-linha config-tipos-check">
+                                <input
+                                  type="checkbox"
+                                  checked={tag.entra_na_analise}
+                                  onChange={(e) => atualizarTag(tag.id, { entra_na_analise: e.target.checked })}
+                                />
+                                Entra na análise
+                              </label>
                             </div>
                           ) : (
                             <span className="config-tipos-label">{tag.rotulo}</span>
@@ -890,6 +906,14 @@ export default function ConfiguracoesPage() {
                     placeholder="Adicionar..."
                     aria-label="Nome da nova tag"
                   />
+                  <label className="analisador-check-linha config-tipos-check config-tipos-add-analise">
+                    <input
+                      type="checkbox"
+                      checked={novaTagEntraNaAnalise}
+                      onChange={(e) => setNovaTagEntraNaAnalise(e.target.checked)}
+                    />
+                    Entra na análise
+                  </label>
                   <button type="submit" className="config-tipos-btn-add" aria-label="Adicionar tag">
                     <Plus size={18} />
                   </button>
@@ -1050,7 +1074,7 @@ export default function ConfiguracoesPage() {
             )}
           </section>
         </div>
-        {versao && <footer className="config-page-versao">Prisma v{versao}</footer>}
+        {versao && <footer className="config-page-versao">2D Prisma v{versao}</footer>}
       </div>
       <PastaPickerModal
         aberto={buscando !== null}

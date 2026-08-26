@@ -77,7 +77,7 @@ def test_menu_tem_os_tres_itens(monkeypatch):
     criados = _pystray_falso(monkeypatch)
     assert bandeja.executar("http://127.0.0.1:8004", ao_sair=lambda: None) is True
     rotulos = [getattr(i, "rotulo", i) for i in _itens(criados[0])]
-    assert rotulos == ["Abrir Prisma", "Verificar atualização", "---", "Sair"]
+    assert rotulos == ["Abrir 2D Prisma", "Verificar atualização", "---", "Sair"]
 
 
 def test_abrir_usa_a_url_do_servidor(monkeypatch):
@@ -85,7 +85,7 @@ def test_abrir_usa_a_url_do_servidor(monkeypatch):
     abertas = []
     monkeypatch.setattr(bandeja.webbrowser, "open", lambda u: abertas.append(u))
     bandeja.executar("http://127.0.0.1:8007", ao_sair=lambda: None)
-    _item(criados[0], "Abrir Prisma").acao()
+    _item(criados[0], "Abrir 2D Prisma").acao()
     assert abertas == ["http://127.0.0.1:8007"]
 
 

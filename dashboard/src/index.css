@@ -338,6 +338,13 @@ h3 {
 .app-sidebar-nav {
   display: flex;
   flex-direction: column;
+  gap: 0.95rem;
+  width: 100%;
+}
+
+.app-sidebar-nav-grupo {
+  display: flex;
+  flex-direction: column;
   gap: 0.2rem;
   width: 100%;
 }
@@ -2562,6 +2569,17 @@ h3 {
   gap: 0.5rem;
 }
 
+.config-tipos-add-analise {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.5rem;
+  padding: 0 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 0.65rem;
+  background: rgba(255, 255, 255, 0.035);
+  font-size: 0.82rem;
+}
+
 .config-tipos-add-input {
   flex: 1;
   min-width: 0;
@@ -2594,6 +2612,20 @@ h3 {
 
 .config-tipos-btn-add:hover {
   filter: brightness(1.08);
+}
+
+@media (max-width: 620px) {
+  .config-tipos-add {
+    flex-wrap: wrap;
+  }
+
+  .config-tipos-add-input {
+    min-width: calc(100% - 3rem);
+  }
+
+  .config-tipos-add-analise {
+    order: 3;
+  }
 }
 
 .config-params-por-relatorio {
@@ -3609,6 +3641,26 @@ h3 {
   opacity: 1;
 }
 
+/* Fora por regra (abaixo do corte / não harmonizado) não é o mesmo que
+   desmarcado à mão: a linha continua legível, com faixa e percentuais, só
+   apagada. Riscar tudo era o que transformava a tabela num borrão. */
+.analisador-tabela tbody tr.is-fora-regra td {
+  opacity: 0.68;
+}
+
+.analisador-marca-regra {
+  margin-left: 0.5rem;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  font-size: 0.62rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  vertical-align: middle;
+  opacity: 0.85;
+}
+
 .analisador-tabela .col-check {
   width: 3.4rem;
   text-align: center;
@@ -4353,6 +4405,20 @@ h3 {
   flex-shrink: 0;
 }
 
+.analisador-alerta-cliente-acoes {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  flex: 0 1 auto;
+}
+
+.analisador-alerta-painel-btn {
+  min-height: 2.55rem;
+  white-space: nowrap;
+}
+
 .analisador-alerta-kpi {
   display: flex;
   flex-direction: column;
@@ -4426,6 +4492,19 @@ h3 {
 @media (max-width: 900px) {
   .analisador-alerta-charts-grid {
     grid-template-columns: 1fr;
+  }
+
+  .analisador-alerta-cliente-acoes {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .analisador-alerta-cliente-kpis {
+    flex: 1 1 20rem;
+  }
+
+  .analisador-alerta-kpi {
+    flex: 1 1 10.5rem;
   }
 
   /* Dois gráficos empilhados: bloco mais alto */

@@ -138,12 +138,12 @@ Três coisas a não mexer sem entender:
 
 ### Escopo global: empresa + loja
 
-A barra lateral é a única dona do escopo. `SidebarEmpresaSelect` grava `alvo_empresa`; `SidebarLojaSelect` grava `prisma_loja_<empresa>` (`utils/lojaSelecionada.ts`) e só aparece quando a empresa tem mais de uma loja. `hooks/useEscopoAtual` entrega `{empresa, loja}` já sincronizado — as telas não leem mais o localStorage por conta própria, que era como cada uma acabava com uma regra diferente para zerar a loja.
+A barra lateral é a única dona do escopo. `SidebarEmpresaSelect` grava `alvo_empresa`; `SidebarLojaSelect` grava `prisma_loja_<empresa>` (`utils/lojaSelecionada.ts`) e só aparece quando a empresa tem mais de uma loja. `hooks/useEscopoAtual` entrega `{empresa, lojas, loja}` já sincronizado — `lojas` é a lista crua e `loja` é o escopo codificado que as APIs esperam. As telas não leem mais o localStorage por conta própria, que era como cada uma acabava com uma regra diferente para zerar a loja.
 
 Três consequências a ter em mente:
 
-- **Uma loja por vez** (`''` = todas). O backend continua entendendo o escopo multi-loja (`@lojas:[...]`), e `config.json`/`clientes_tags.json` já gravados assim seguem válidos no disco, mas nenhuma tela produz mais esse escopo.
-- **Nenhuma tela tem seletor de loja próprio.** Saíram o filtro "Loja" da `FilterBar`, o do Analisador, o do Estoque e o de Clientes. No Dashboard a loja não é filtro: vira índice em `maps.s` e entra no mesmo cálculo de antes — o summary já traz a loja em cada linha, então não há ida ao servidor.
+- **Qualquer combinação de lojas** (lista vazia = todas). O escopo viaja no contrato de sempre — nome puro para uma loja, `@lojas:[...]` para várias (`codificarEscopoLojas`) — e é ele que nomeia o escopo em que `config.json` e `clientes_tags.json` são lidos e gravados. Ordenar antes de codificar não é cosmético: a mesma seleção precisa gerar sempre a mesma chave, senão a config salva não é reencontrada. O combobox multi só confirma ao fechar o painel, comportamento que já era o do Analisador.
+- **Nenhuma tela tem seletor de loja próprio.** Saíram o filtro "Loja" da `FilterBar`, o do Analisador, o do Estoque e o de Clientes. No Dashboard a loja não é filtro: os nomes viram índices em `maps.s` e entram no mesmo cálculo de antes — o summary já traz a loja em cada linha, então não há ida ao servidor.
 - **A lista de lojas sai de `GET /api/dashboard/empresas/{empresa}/lojas`**, que lê o `resumo_monitor.json` (poucos KB), não a base. O seletor aparece no Dashboard público: tirar a lista da base carregaria o XLSX inteiro para preencher um combobox, anulando o ganho do summary pré-gerado. Empresa sem summary responde lista vazia e o seletor some, em vez de a tela quebrar.
 - `data/summary.json` vs `public/data/summary.json` — o dashboard estático lê o JSON gerado por `process_data.py`; `public/data/` é servido estaticamente pelo Vite/build, `src/data/` é uma cópia usada em import direto no código — ao regenerar dados, checar se as duas precisam ser atualizadas. Não se aplica ao modo por empresa, que busca do backend em runtime.
 - `types/dashboard.ts` — tipos compartilhados do shape de `summary.json` (mesmo formato tanto no estático quanto no gerado em runtime por empresa).
@@ -161,6 +161,31 @@ Três consequências a ter em mente:
   - `recursos.py` — helpers de caminho (assets embutidos, pasta de dados locais) herdados do app desktop original — partes como `_MEIPASS` do PyInstaller e permissão de dados locais não se aplicam ao contexto web.
 - `exportar_excel.py` — export Excel via openpyxl; define `CATALOGO_RELATORIOS`, `COLUNAS_MOEDA_POR_ANALISE`, `NOMES_ANALISE` (usados também por `main.py` e por `exportadores_pdf_word.py`).
 - Base padrão do Analisador (`base_de_dados.xlsx`) e `Base.csv` por empresa são cacheadas em memória por mtime (`_cache_base` / `_cache_base_empresa` / `_cache_summary_dashboard`).
+
+### Escopo de produtos no Analisador: regra, não lista de nomes
+
+Três coisas tiram um produto dos relatórios, e elas são de naturezas diferentes:
+
+| Origem | Onde vive | Efeito |
+|---|---|---|
+| Checkbox da linha na prévia | `produtos_excluidos` no `config.json` | exclusão manual, nome a nome |
+| "Desconsiderar os demais" | flag `desconsiderar_demais_produtos` | derivada da curva, na hora do cálculo |
+| "Desconsiderar não harmonizados" | flag `desconsiderar_nao_harmonizados` | derivada do nome, na hora do cálculo |
+
+Até a versão anterior os dois checkboxes **materializavam nomes** dentro de `produtos_excluidos`. Isso congelava uma foto: mudar o corte depois não devolvia ninguém, e exclusão manual virava indistinguível de exclusão por regra. `_curva_produtos` centraliza a ordem, que não é arbitrária — manual e não harmonizado saem **antes** da curva (o balde `NÃO HARMONIZADO` costuma ser o maior item da base e deslocaria todo o Pareto); "demais" é **consequência** da curva, então só pode ser decidido depois dela. `previa_produtos` e `_carregar_df_filtrado` (relatório final) usam a mesma função — é o que garante que a prévia e o PDF concordem.
+
+Ao carregar um `config.json` antigo, o frontend subtrai de `produtos_excluidos` os nomes que a resposta traz em `produtos_fora_por_regra`, deixando ali só o manual. Efeito colateral aceito: produto excluído à mão que também está abaixo do corte perde a marcação manual — enquanto a regra estiver ligada dá no mesmo.
+
+**O teto de itens em produto é ação, não efeito colateral.** O problema da versão antiga não era existir um máximo — era ele rebaixar o corte dentro da prévia, deixando a tela mostrar 90% enquanto classificava com outro número, e item de R$ 298 mil caindo em "Demais". Hoje `/api/produtos/sugerir-corte` (botão "Sugerir corte automaticamente", espelhando o de clientes) devolve o percentual e a tela o grava no campo: o número lido é o número que classifica. A prévia nunca mexe no corte sozinha.
+
+### Sugestão automática de cortes (`sugerir_cortes_grupos`)
+
+`_ajustar_corte_para_max` escolhe, para a faixa que começa no corte anterior, o maior valor da grade de 0,5% que ainda deixa a faixa dentro do máximo. Duas coisas que a versão anterior errava e que os testes em `test_sugestao_cortes.py` travam:
+
+- **só sabia diminuir.** O corte inicial (30/50/60) virava teto, então o máximo nunca preenchia — Gisalto saía com 15 clientes no Grupo 1 pedindo 20. De `cortes_iniciais` hoje só importa **quantos** cortes existem; cada percentual sai da curva.
+- **deixava grupo vazio.** Na Altese um cliente sozinho passa dos 50%: o Grupo 1 ficava com ele, o Grupo 2 nascia vazio (`[1, 0, 17]`) e virava seção em branco no relatório. Agora `[18, 17, 14]`.
+
+A contagem às vezes para abaixo do máximo (os 18 acima) porque o corte é ancorado na grade de 0,5% em vez de virar um número de quatro casas decimais — foi escolha explícita: o percentual continua sendo a régua legível do relatório. Sem busca passo a passo: as entradas da curva estão ordenadas, então é `searchsorted`.
 
 ### Pastas fonte e trabalho
 - **Fonte** (RO): subpastas por cliente com `BI/` contendo exports de movimento e produto. Listagem de empresas = subpastas da fonte que têm `BI/`.
