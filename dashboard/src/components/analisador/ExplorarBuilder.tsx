@@ -857,7 +857,7 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
 
   const tooltipStyle = {
     background: '#0f172a',
-    border: '1px solid rgba(255,255,255,0.12)',
+    border: '1px solid var(--border-strong)',
     borderRadius: 8,
   } as const;
 
@@ -919,7 +919,7 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
               <Bar
                 dataKey="frequencia"
                 name="Frequência"
-                fill="#10b981"
+                fill='var(--success)'
                 radius={[3, 3, 0, 0]}
                 isAnimationActive={false}
               />

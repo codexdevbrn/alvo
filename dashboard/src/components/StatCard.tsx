@@ -12,7 +12,7 @@ interface StatCardProps {
 }
 
 export const StatCard = ({ title, value, icon: Icon, trend, trendUp, useTrendColor, onClick }: StatCardProps) => {
-    const accentColor = useTrendColor ? (trendUp ? '#10b981' : '#ff6f61') : 'var(--accent)';
+    const accentColor = useTrendColor ? (trendUp ? 'var(--success)' : 'var(--danger)') : 'var(--accent)';
     return (
         <div
             className={`glass-card stat-card-container ${onClick ? 'interactive-card' : ''} stat-card-responsive`}
@@ -24,15 +24,15 @@ export const StatCard = ({ title, value, icon: Icon, trend, trendUp, useTrendCol
                 <h3 className="stat-card-value">{value}</h3>
                 {trend && (
                     <p className="stat-card-trend" style={{
-                        color: trendUp ? '#10b981' : '#f43f5e'
+                        color: trendUp ? 'var(--success)' : 'var(--danger)'
                     }}>
                         {trendUp ? '↑' : '↓'} {trend}
                     </p>
                 )}
             </div>
             <div className="stat-card-icon-container" style={{
-                background: useTrendColor ? (trendUp ? 'rgba(16, 185, 129, 0.16)' : 'rgba(255, 99, 71, 0.16)') : 'var(--accent)',
-                color: useTrendColor ? (trendUp ? '#10b981' : '#ff6f61') : 'var(--accent-contrast)',
+                background: useTrendColor ? (trendUp ? 'var(--success-bg)' : 'var(--danger-bg)') : 'var(--accent)',
+                color: useTrendColor ? (trendUp ? 'var(--success)' : 'var(--danger)') : 'var(--accent-contrast)',
             }}>
                 <Icon className="stat-icon" />
             </div>

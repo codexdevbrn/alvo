@@ -155,8 +155,8 @@ function CustomDropdown({
                             onChange={e => setSearch(e.target.value)}
                             onClick={e => e.stopPropagation()}
                             style={{
-                                background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)',
-                                borderRadius: '8px', padding: '8px 12px', color: 'white', fontSize: '0.85rem', outline: 'none'
+                                background: 'var(--surface-1)', border: '1px solid var(--border)',
+                                borderRadius: '8px', padding: '8px 12px', color: 'var(--text-primary)', fontSize: '0.85rem', outline: 'none'
                             }}
                         />
                         <div className="custom-scrollbar" style={{ overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '2px' }}>
@@ -434,7 +434,7 @@ export function FilterBar({ data, filters, filterOptions, setters, onClear }: Fi
                         justifyContent: 'center',
                         alignItems: 'center',
                         gap: '10px',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         border: '1px solid var(--border)',
                         cursor: 'pointer'
                     }}
@@ -459,7 +459,7 @@ export function FilterBar({ data, filters, filterOptions, setters, onClear }: Fi
                     <div className="mobile-filter-modal-overlay">
                         <div className="mobile-filter-modal-content">
                             <div className="mobile-filter-modal-header">
-                                <h2 style={{ color: 'white', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+                                <h2 style={{ color: 'var(--text-primary)', fontSize: '1.25rem', display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
                                     <SlidersHorizontal size={20} color="var(--accent)" /> Filtros e Períodos
                                 </h2>
                                 <button

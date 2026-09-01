@@ -31,6 +31,7 @@ RAIZ_ECOSSISTEMA = os.path.join("01 - Marco + Monitores", "Ecossistema-Monitoria
 SUBPASTA_FONTE = "Dados Alvos"
 SUBPASTA_TRABALHO = "analisador"
 SUBPASTA_ATUALIZACOES = os.path.join("Prisma", "Atualizações")
+SUBPASTA_CARTEIRA = "Carteira"
 
 
 def raiz_onedrive_empresa() -> Optional[str]:
@@ -94,3 +95,26 @@ def trabalho() -> Optional[str]:
 
 def atualizacoes() -> Optional[str]:
     return _padrao(SUBPASTA_ATUALIZACOES)
+
+
+def carteira() -> Optional[str]:
+    """Pasta compartilhada do CRM da carteira, quando já existir."""
+    return _padrao(SUBPASTA_CARTEIRA)
+
+
+def database_carteira() -> Optional[str]:
+    """Workbook do CRM; nunca é criado nem alterado pelo Prisma."""
+    pasta = carteira()
+    if not pasta:
+        return None
+    caminho = os.path.join(pasta, "database_dev.xlsx")
+    return caminho if os.path.isfile(caminho) else None
+
+
+def dossie_carteira() -> Optional[str]:
+    """Destino dos MDs da carteira; só devolve pasta previamente criada."""
+    pasta = carteira()
+    if not pasta:
+        return None
+    caminho = os.path.join(pasta, "dossie")
+    return caminho if os.path.isdir(caminho) else None

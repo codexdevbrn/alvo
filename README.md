@@ -25,6 +25,55 @@ O Vite já tem proxy de `/api` para `http://localhost:8000` (`vite.config.ts`).
 
 **Atualizar os dados do dashboard**: `python process_data.py` na raiz (lê `base_de_dados.xlsx`, grava `dashboard/public/data/summary.json`).
 
+## Análises diárias da carteira com Ollama Cloud
+
+O lote lê, sem alterar, `Carteira/database_dev.xlsx`, os arquivos
+`Carteira/dossie/<clientId>-crm.md` e os summaries da pasta de trabalho do Prisma.
+Para cada empresa com correspondência exata, grava somente
+`Carteira/dossie/<clientId>-analise.md`. Empresas sem correspondência são ignoradas.
+
+O modelo padrão é `gpt-oss:120b`. A API key nunca deve ser colocada no código,
+na linha de comando ou no workbook. Configure uma vez no Windows; o script salva
+um blob DPAPI fora do repositório, legível somente pelo mesmo usuário:
+
+```powershell
+.\configurar_ollama.ps1
+```
+
+Valide entradas e mapeamentos sem chamar a nuvem e sem gravar MD:
+
+```powershell
+python .\gerar_analises_ia.py --dry-run
+```
+
+Registre o lote de segunda a sexta, às 02:00. Ele normaliza todas as empresas
+primeiro e analisa apenas summaries renovados durante a execução:
+
+```powershell
+.\agendar_normalizacao_todas.ps1
+```
+
+A tarefa usa o usuário Windows atual, pois o DPAPI é vinculado a ele. O usuário
+deve estar conectado; se o computador estiver indisponível às 02:00, a opção
+`StartWhenAvailable` tenta executar quando possível.
+
+### Chat sobre a empresa
+
+A rota `/assistente` permite conversar com o Ollama Cloud usando exclusivamente
+os arquivos `<clientId>-crm.md` e `<clientId>-analise.md` da empresa selecionada
+na barra lateral. Os documentos e a API key ficam no backend; o navegador recebe
+somente metadados de disponibilidade e a resposta final. O histórico permanece
+apenas na página e é apagado ao trocar de empresa ou iniciar nova conversa.
+
+O chat segue o modo aberto das demais telas, limita perguntas e requisições por
+máquina e bloqueia empresas sem correspondência exata, MD ausente ou análise
+diária com `status: erro`.
+
+Logs operacionais ficam em `logs_agendador/` e não contêm a chave. Falha de um
+cliente não interrompe os demais. Conforme a política do processo, uma falha
+substitui a análise anterior por um MD com `status: erro`. A execução real exige
+que o gerador do CRM já tenha criado cada `<clientId>-crm.md`.
+
 ## Deploy
 
 - **Executável Windows** (para máquinas sem Python/Node/XAMPP): `.\build.ps1` gera, em

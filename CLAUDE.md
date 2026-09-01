@@ -147,6 +147,48 @@ Três coisas a não mexer sem entender:
 - `components/` — componentes do Dashboard na raiz (`MetricsGrid`, `HistoryChart`, `BreakdownSection`, `FilterBar`, `PeriodSelector`, `EmpresaSelector`, `RevenueDetailModal`, etc.); componentes específicos do Analisador ficam em `components/analisador/` (`ConfigModal`, `ExportarModal`, `ResultTable`, `PreviaClientesTable`, `PreviaProdutosTable`, `NumberStepper`).
 - `EmpresaSelector` / `ConfigModal` — dois campos de caminho (fonte RO + trabalho RW), compartilhados conceitualmente entre Dashboard e Analisador.
 
+### Linguagem visual: chapado, borda e um acento
+
+A hierarquia é dada por **preenchimento sólido + borda**. Não há vidro:
+`backdrop-filter` está fora do projeto, e `box-shadow` só aparece em camada
+**flutuante** (dropdown, popover, tooltip, modal), via `--shadow-flutuante` —
+onde a sombra é o único sinal de que o elemento não pertence ao fluxo. Card
+tem hover com `translateY(-2px)`, mas **sem sombra**: é deslocamento, não
+elevação. Card que não pode saltar (`.glass-card-flat`, a lista de empresas, o
+painel do chat) zera com `transform: none`.
+
+Os tokens em `dashboard/src/index.css` (`:root`) são a fonte única:
+
+| Token | Uso |
+|---|---|
+| `--bg-main` / `--sidebar` / `--bg-card` | canvas, barra lateral, card |
+| `--surface-1` … `--surface-4` | degraus de preenchimento (input, hover, chip, trilho) |
+| `--border` / `--border-strong` | hairline e separador forte |
+| `--accent` + `--accent-contrast` | pill/tab/botão **ativo**: ouro chapado, texto escuro |
+| `--raio-card` / `--raio-controle` / `--raio-pill` | 12px / 8px / redondo |
+
+Três coisas encodadas aqui:
+
+- **Nada de `rgba(255,255,255,α)` como preenchimento.** Fill translúcido depende
+  do pai, então o mesmo componente mudava de tom entre a barra lateral (`#08080a`)
+  e o card (`#131316`) — e o degrau ficava indefinido em cima de gráfico. Os
+  `--surface-*` tornam o degrau explícito. Cinza translúcido de _texto_ também
+  saiu: use `--text-primary/secondary/muted`.
+- **Branco puro não existe na paleta.** O canvas é preto quente, e `#fff` sobre
+  ele destoa do `--text-primary` (`#f4f4f2`) usado ao lado. Sobre preenchimento
+  ouro o texto é `--accent-contrast`, não branco.
+- **Só dois raios.** Antes eram 26 valores distintos, o que fazia cada tela
+  parecer de um app diferente. Raio menor que 6px (barra de progresso, thumb) e
+  `50%` (avatar, botão redondo) seguem literais de propósito.
+- **Acento semântico é filete, não borda.** O `--stat-accent` do StatCard vira
+  um `::before` de 3px na lateral esquerda, recuado no topo e na base
+  (`.stat-card-container::before`). Pseudo-elemento porque `border-left` herda o
+  `border-radius` do card e curva nas duas pontas — vira uma lasca arredondada;
+  recuado porque assim o filete nunca alcança canto. Tingir a borda inteira com
+  `color-mix` também foi testado e pesou demais em três cards lado a lado. Chip
+  do ícone e linha de tendência usam os mesmos `--success`/`--danger` do filete,
+  senão o card mostra dois verdes.
+
 ### Escopo global: empresa + loja
 
 A barra lateral é a única dona do escopo. `SidebarEmpresaSelect` grava `alvo_empresa`; `SidebarLojaSelect` grava `prisma_loja_<empresa>` (`utils/lojaSelecionada.ts`) e só aparece quando a empresa tem mais de uma loja. `hooks/useEscopoAtual` entrega `{empresa, lojas, loja}` já sincronizado — `lojas` é a lista crua e `loja` é o escopo codificado que as APIs esperam. As telas não leem mais o localStorage por conta própria, que era como cada uma acabava com uma regra diferente para zerar a loja.

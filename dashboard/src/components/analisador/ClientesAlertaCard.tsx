@@ -530,7 +530,7 @@ export function ClientesAlertaCard({
           <AlertTriangle size={18} style={{ color: '#f59e0b' }} /> Clientes em alerta
         </h2>
         <p className="analisador-hint" style={{ margin: 0 }}>
-          Crie uma tag chamada <strong style={{ color: 'white' }}>Alerta</strong> em Configurações
+          Crie uma tag chamada <strong style={{ color: 'var(--text-primary)' }}>Alerta</strong> em Configurações
           e marque os clientes na prévia para acompanhar aqui.
         </p>
       </div>

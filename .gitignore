@@ -10,6 +10,7 @@ Base.antes-harm.csv
 
 # Configurações locais de ferramentas
 .claude/
+*.dpapi
 
 # Pastas de dados locais (não versionar — muito grandes)
 dados-trabalho/

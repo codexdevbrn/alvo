@@ -481,7 +481,7 @@ function HistoryChartInner({
     return (
         <div className="glass-card chart-full" style={containerStyle}>
             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: isMobile ? '1rem' : '1.5rem', flexWrap: 'wrap', gap: '0.5rem' }}>
-                <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'white', fontSize: isMobile ? '1rem' : '1.1rem' }}>
+                <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', color: 'var(--text-primary)', fontSize: isMobile ? '1rem' : '1.1rem' }}>
                     <TrendingUp size={20} color="var(--accent)" /> Histórico
                 </h3>
                 <div style={{ display: 'flex', gap: '1rem', fontSize: '0.7rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>

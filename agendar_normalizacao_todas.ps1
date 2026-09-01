@@ -1,11 +1,6 @@
-# Registra (ou atualiza) a tarefa agendada de normalização noturna.
-# Requer PowerShell com permissão para criar tarefas (idealmente Admin).
-#
-# Uso:
-#   powershell -ExecutionPolicy Bypass -File .\agendar_normalizacao_todas.ps1
-#   powershell -ExecutionPolicy Bypass -File .\agendar_normalizacao_todas.ps1 -Hora "04:00"
-#   powershell -ExecutionPolicy Bypass -File .\agendar_normalizacao_todas.ps1 -Remover
-
+# Registra ou atualiza o lote noturno: normalizacao seguida das analises Ollama Cloud.
+# Requer a chave previamente salva por configurar_ollama.ps1.
+[CmdletBinding()]
 param(
     [string]$NomeTarefa = "Prisma-NormalizarTodasEmpresas",
     [string]$Hora = "02:00",
@@ -14,11 +9,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 $raiz = Split-Path -Parent $MyInvocation.MyCommand.Path
-$bat = Join-Path $raiz "normalizar_todas_empresas.bat"
-
-if (-not (Test-Path $bat)) {
-    throw "Não encontrado: $bat"
-}
+$orquestrador = Join-Path $raiz "executar_lote_noturno.ps1"
+$arquivoSegredo = Join-Path $env:LOCALAPPDATA "Prisma\secrets\ollama_api_key.dpapi"
 
 if ($Remover) {
     Unregister-ScheduledTask -TaskName $NomeTarefa -Confirm:$false -ErrorAction SilentlyContinue
@@ -26,22 +18,30 @@ if ($Remover) {
     exit 0
 }
 
+if (-not (Test-Path -LiteralPath $orquestrador)) {
+    throw "Orquestrador nao encontrado: $orquestrador"
+}
+if (-not (Test-Path -LiteralPath $arquivoSegredo)) {
+    throw "Chave Ollama ausente. Execute .\configurar_ollama.ps1 antes de agendar."
+}
+
 $python = Get-Command python -ErrorAction SilentlyContinue
 if (-not $python) {
-    throw "python não está no PATH. Instale/configure antes de agendar."
+    throw "Python nao esta no PATH. Instale ou configure antes de agendar."
 }
+$powershell = (Get-Command PowerShell.exe -ErrorAction Stop).Source
 
 Unregister-ScheduledTask -TaskName $NomeTarefa -Confirm:$false -ErrorAction SilentlyContinue
 
-$acao = New-ScheduledTaskAction -Execute $bat -WorkingDirectory $raiz
-# seg=Monday ... sex=Friday (madrugada antes do dia útil)
+$argumentos = "-NoProfile -ExecutionPolicy Bypass -File `"$orquestrador`" -Python `"$($python.Source)`""
+$acao = New-ScheduledTaskAction -Execute $powershell -Argument $argumentos -WorkingDirectory $raiz
+# Segunda a sexta, depois do fechamento e da normalizacao das bases.
 $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday -At $Hora
 $settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
     -DontStopIfGoingOnBatteries `
     -StartWhenAvailable `
     -ExecutionTimeLimit (New-TimeSpan -Hours 6)
-
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
 
 Register-ScheduledTask `
@@ -50,11 +50,11 @@ Register-ScheduledTask `
     -Trigger $trigger `
     -Settings $settings `
     -Principal $principal `
-    -Description "Normaliza BI→Base.csv (+ Liquidez) de todas as empresas do Prisma (madrugada seg-sex)." `
+    -Description "Normaliza empresas e atualiza dossies executivos via Ollama Cloud (seg-sex)." `
     -Force | Out-Null
 
 Write-Host "Tarefa registrada: $NomeTarefa"
-Write-Host "  Quando:  seg-sex as $Hora"
-Write-Host "  Comando: $bat"
+Write-Host "  Quando:  segunda a sexta as $Hora"
+Write-Host "  Comando: $powershell $argumentos"
 Write-Host "  Teste:   Start-ScheduledTask -TaskName $NomeTarefa"
 Write-Host "  Remover: powershell -File .\agendar_normalizacao_todas.ps1 -Remover"

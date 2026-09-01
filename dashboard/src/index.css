@@ -11,6 +11,27 @@
   --border: #222226;
   --border-strong: #2c2c31;
 
+  /* Superficies solidas — substituem os fills translucidos rgba(255,255,255,a).
+     A hierarquia e por PREENCHIMENTO + BORDA, nunca por blur ou sombra: fill
+     translucido depende do pai, entao o mesmo componente mudava de tom entre a
+     sidebar (#08080a) e o card (#131316). Aqui o degrau e explicito. */
+  --surface-1: #15151a;
+  --surface-2: #1c1c22;
+  --surface-3: #26262d;
+  --surface-4: #33333a;
+
+  /* Raio: 2 degraus, card e controle. Evita cada tela inventar o seu. */
+  --raio-card: 12px;
+  --raio-controle: 8px;
+  --raio-pill: 999px;
+
+  /* Sombra so em camada FLUTUANTE (dropdown, popover, tooltip, modal), onde ela
+     e o unico sinal de que o elemento nao pertence ao fluxo. Card, botao e linha
+     de lista nao levam sombra nenhuma. */
+  --shadow-flutuante: 0 10px 28px rgba(0, 0, 0, 0.5);
+  --shadow-lg: var(--shadow-flutuante);
+  --bg-elevated: #16161c;
+
   --text-primary: #f4f4f2;
   --text-secondary: #a6a6ad;
   --text-muted: #6d6d76;
@@ -128,10 +149,9 @@ h3 {
   gap: 1.35rem;
   padding: 1.25rem 0.75rem;
   background: var(--sidebar);
-  /* Separador: hairline nítido + sombra de profundidade sobre o conteúdo. */
-  box-shadow:
-    inset -1px 0 0 0 var(--border-strong),
-    6px 0 28px -14px rgba(0, 0, 0, 0.8);
+  /* Separador: só o hairline. A sombra de profundidade sobre o conteúdo saiu
+     junto com o resto da elevação. */
+  box-shadow: inset -1px 0 0 0 var(--border-strong);
   overflow-x: hidden;
   overflow-y: auto;
   box-sizing: border-box;
@@ -229,7 +249,7 @@ h3 {
 .app-sidebar-logo {
   width: 2.1rem;
   height: 2.1rem;
-  border-radius: 0.55rem;
+  border-radius: var(--raio-controle);
   flex-shrink: 0;
   object-fit: cover;
 }
@@ -257,7 +277,7 @@ h3 {
   font-family: 'Outfit', sans-serif;
   font-weight: 700;
   font-size: 1.1rem;
-  color: #fff;
+  color: var(--text-primary);
   line-height: 1.1;
 }
 
@@ -278,15 +298,15 @@ h3 {
   width: 1.85rem;
   height: 1.85rem;
   border: 1px solid var(--border);
-  border-radius: 0.45rem;
-  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
   color: var(--text-muted);
   cursor: pointer;
   transition: background 0.14s ease, color 0.14s ease, border-color 0.14s ease;
 }
 
 .app-sidebar-toggle:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-2);
   color: var(--accent);
   border-color: var(--accent);
 }
@@ -324,9 +344,9 @@ h3 {
   min-height: 2.15rem;
   padding: 0.4rem 0.55rem;
   font-size: 0.78rem;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-1);
   border: 1px solid var(--border);
-  border-radius: 0.55rem;
+  border-radius: var(--raio-controle);
   color: var(--text-secondary);
 }
 
@@ -409,7 +429,7 @@ h3 {
   font-size: 0.85rem;
   font-weight: 500;
   padding: 0.55rem 0.6rem;
-  border-radius: 0.6rem;
+  border-radius: var(--raio-controle);
   cursor: pointer;
   text-align: left;
   position: relative;
@@ -446,7 +466,7 @@ h3 {
 }
 
 .app-sidebar-nav-item:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-1);
   color: var(--accent);
   transform: translateX(4px);
 }
@@ -486,14 +506,12 @@ h3 {
   color: var(--accent-contrast);
   font-weight: 700;
   justify-content: center;
-  box-shadow: 0 0 0 1px rgba(218, 187, 108, 0.35);
 }
 
 .app-sidebar-nav-item-destaque:hover {
   background: var(--accent-hover);
   color: var(--accent-contrast);
   transform: translateY(-1px);
-  box-shadow: 0 4px 14px rgba(218, 187, 108, 0.35);
 }
 
 .app-sidebar.is-collapsed .app-sidebar-nav-item-destaque {
@@ -552,7 +570,7 @@ h3 {
   font-family: 'Outfit', sans-serif;
   font-size: 1.75rem;
   font-weight: 700;
-  color: #fff;
+  color: var(--text-primary);
   margin: 0;
 }
 
@@ -596,7 +614,7 @@ h3 {
   font-family: 'Outfit', sans-serif;
   font-size: 1.05rem;
   font-weight: 650;
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .config-page-card-desc {
@@ -787,18 +805,16 @@ h3 {
 .glass-card {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border-radius: var(--raio-card);
   padding: 1.5rem;
-  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease, transform 0.15s ease;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
   position: relative;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
 }
 
 .glass-card:hover {
   border-color: var(--border-strong);
   background: var(--card-hover);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
-  transform: translateY(-3px);
+  transform: translateY(-2px);
 }
 
 .stat-grid {
@@ -856,19 +872,19 @@ h3 {
   }
 
   .glass-card {
-    border-radius: 1rem;
+    border-radius: var(--raio-card);
   }
 }
 
 .interactive-card:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--card-hover);
   border-color: var(--accent);
-  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.5);
-  transform: translateY(-3px);
+  transform: translateY(-2px);
 }
 
 .interactive-card:active {
-  transform: translateY(-1px);
+  background: var(--surface-2);
+  transform: translateY(0);
 }
 
 .chart-grid {
@@ -947,7 +963,7 @@ h3 {
 }
 
 .breakdown-sort-btn:hover {
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--text-primary);
 }
 
 .breakdown-sort-btn svg {
@@ -967,16 +983,16 @@ h3 {
   gap: 0.75rem;
   margin-bottom: 1.25rem;
   padding: 0.85rem;
-  background: rgba(10, 10, 12, 0.9);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  border-radius: 1rem;
+  /* Opaca de proposito: sticky sobre conteudo que rola. Com backdrop-filter o
+     texto de baixo atravessava; a separacao agora e a borda inferior. */
+  background: var(--bg-main);
+  border-radius: var(--raio-card);
   border: 1px solid var(--border);
+  border-bottom-color: var(--border-strong);
   /* Fica visível ao rolar até os gráficos */
   position: sticky;
   top: 0;
   z-index: 50;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.4);
 }
 
 .filters-grid {
@@ -990,9 +1006,9 @@ h3 {
   display: flex;
   width: min(100%, 360px);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--raio-controle);
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-1);
 }
 
 .granularidade-seg-btn {
@@ -1013,12 +1029,12 @@ h3 {
 }
 
 .granularidade-seg-btn.is-active {
-  background: rgba(218, 187, 108, 0.28);
-  color: white;
+  background: var(--accent);
+  color: var(--accent-contrast);
 }
 
 .granularidade-seg-btn:hover:not(.is-active) {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-1);
   color: var(--text-primary);
 }
 
@@ -1029,7 +1045,7 @@ h3 {
   flex-wrap: wrap;
   gap: 0.65rem;
   padding-top: 0.65rem;
-  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  border-top: 1px solid var(--border);
 }
 
 .granularidade-options {
@@ -1079,7 +1095,7 @@ h3 {
 
 .periodo-fechado-check.filters-option-chip {
   cursor: pointer;
-  color: rgba(255, 255, 255, 0.92);
+  color: var(--text-primary);
   font-weight: 500;
   font-size: 0.78rem;
   user-select: none;
@@ -1122,7 +1138,7 @@ h3 {
   flex-direction: column;
   gap: 0.3rem;
   padding: 0.35rem 0.55rem;
-  border-radius: 8px;
+  border-radius: var(--raio-controle);
   border: 1px solid rgba(218, 187, 108, 0.28);
   background: rgba(218, 187, 108, 0.08);
   color: var(--text-secondary);
@@ -1162,9 +1178,9 @@ h3 {
   position: relative;
   display: flex;
   padding: 2px;
-  border-radius: 7px;
+  border-radius: var(--raio-controle);
   background: rgba(0, 0, 0, 0.25);
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border);
 }
 
 .visao-toggle-thumb {
@@ -1174,8 +1190,7 @@ h3 {
   left: 2px;
   width: calc(50% - 2px);
   border-radius: 5px;
-  background: rgba(218, 187, 108, 0.35);
-  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  background: var(--accent);
   transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1);
   pointer-events: none;
   z-index: 0;
@@ -1203,11 +1218,11 @@ h3 {
 }
 
 .visao-toggle-btn.is-active {
-  color: #fff;
+  color: var(--text-primary);
 }
 
 .visao-toggle-btn:not(.is-active):hover {
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text-primary);
 }
 
 .periodo-fechado-check input[type='checkbox'] {
@@ -1274,7 +1289,7 @@ h3 {
 @media (max-width: 480px) {
   .glass-card {
     padding: 0.6rem;
-    border-radius: 0.75rem;
+    border-radius: var(--raio-card);
   }
 
   h1 {
@@ -1303,7 +1318,7 @@ h3 {
 }
 
 .recharts-tooltip-wrapper {
-  backdrop-filter: blur(10px) !important;
+  filter: none !important;
 }
 
 /* Linha de corte — meses fechados (HistoryChart) */
@@ -1314,10 +1329,7 @@ h3 {
 }
 
 .gradient-text {
-  background: linear-gradient(135deg, #e8cc86 0%, #dabb6c 100%);
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--accent);
 }
 
 .filter-group {
@@ -1366,8 +1378,8 @@ h3 {
 .custom-select {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 0.65rem;
-  color: #ffffff;
+  border-radius: var(--raio-controle);
+  color: var(--text-primary);
   padding: 0.45rem 2rem 0.45rem 0.7rem;
   font-size: 0.85rem;
   font-weight: 500;
@@ -1383,7 +1395,7 @@ h3 {
 
 .custom-select option {
   background-color: #1a1a1e;
-  color: #ffffff;
+  color: var(--text-primary);
   padding: 12px;
   font-size: 0.9375rem;
 }
@@ -1407,11 +1419,11 @@ h3 {
 }
 
 .year-tab {
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
   color: #94a3b8;
   padding: 6px 16px;
-  border-radius: 6px;
+  border-radius: var(--raio-controle);
   cursor: pointer;
   font-weight: 500;
   transition: all 0.2s ease;
@@ -1419,29 +1431,29 @@ h3 {
 
 .year-tab.active {
   background: var(--accent);
-  color: white;
+  color: var(--accent-contrast);
   border-color: var(--accent);
 }
 
 .month-btn:hover {
-  background: rgba(255, 255, 255, 0.08) !important;
-  color: white !important;
+  background: var(--surface-2) !important;
+  color: var(--text-primary) !important;
 }
 
 .month-btn.selected-a {
   background: var(--accent) !important;
-  color: white !important;
+  color: var(--accent-contrast) !important;
   border-color: var(--accent) !important;
 }
 
 .month-btn.selected-b {
-  background: #10b981 !important;
-  color: white !important;
-  border-color: #10b981 !important;
+  background: var(--success) !important;
+  color: var(--accent-contrast) !important;
+  border-color: var(--success) !important;
 }
 
 .custom-select:hover {
-  background-color: rgba(255, 255, 255, 0.08);
+  background-color: var(--surface-2);
   border-color: var(--accent);
   background-position: calc(100% - 0.65rem) calc(50% + 2.2px);
 }
@@ -1453,7 +1465,7 @@ h3 {
 
 .comparison-badge {
   padding: 0.25rem 0.5rem;
-  border-radius: 0.5rem;
+  border-radius: var(--raio-controle);
   font-size: 0.75rem;
   font-weight: 600;
   margin-left: 0.5rem;
@@ -1461,7 +1473,7 @@ h3 {
 
 .comparison-up {
   background: rgba(16, 185, 129, 0.1);
-  color: #10b981;
+  color: var(--success);
 }
 
 .comparison-down {
@@ -1471,24 +1483,24 @@ h3 {
 
 .btn-clear {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--border);
   color: var(--text-secondary);
   padding: 0.5rem 1rem;
-  border-radius: 0.75rem;
+  border-radius: var(--raio-card);
   cursor: pointer;
   font-size: 0.875rem;
   align-self: flex-end;
 }
 
 .btn-clear:hover {
-  background: rgba(255, 255, 255, 0.05);
-  color: white;
+  background: var(--surface-1);
+  color: var(--text-primary);
 }
 
 /* Scrollbar — alinhada ao tema escuro (página + painéis .custom-scrollbar) */
 * {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+  scrollbar-color: var(--surface-4) transparent;
 }
 
 *::-webkit-scrollbar {
@@ -1501,8 +1513,8 @@ h3 {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
-  border-radius: 999px;
+  background: var(--surface-3);
+  border-radius: var(--raio-pill);
   border: 2px solid transparent;
   background-clip: padding-box;
 }
@@ -1524,13 +1536,13 @@ h3 {
 }
 
 .custom-scrollbar::-webkit-scrollbar-track {
-  background: rgba(255, 255, 255, 0.02);
-  border-radius: 999px;
+  background: var(--surface-1);
+  border-radius: var(--raio-pill);
 }
 
 .custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.16);
-  border-radius: 999px;
+  background: var(--surface-4);
+  border-radius: var(--raio-pill);
   border: 0;
 }
 
@@ -1553,7 +1565,7 @@ h3 {
   align-items: center;
   gap: 0.45rem;
   padding: 0.45rem 0.75rem;
-  border-radius: 0.65rem;
+  border-radius: var(--raio-controle);
   background: rgba(218, 187, 108, 0.12);
   border: 1px solid rgba(218, 187, 108, 0.35);
   color: var(--text-primary);
@@ -1674,15 +1686,22 @@ h3 {
   min-width: 0;
   text-align: left;
   /* Ensure default left alignment */
-  border-left: 3px solid var(--stat-accent, var(--accent));
 }
 
-/* O acento da esquerda carrega a semântica do número (verde subiu, vermelho
-   caiu). O :hover de .glass-card/.interactive-card usa a forma curta
-   border-color, que repinta a borda INTEIRA e apagava essa cor justo quando o
-   ponteiro está no card. Só a esquerda é devolvida; o resto do hover fica. */
-.stat-card-container:hover {
-  border-left-color: var(--stat-accent, var(--accent));
+/* Filete do acento: a semântica do número (verde subiu, vermelho caiu) em
+   3px na lateral esquerda. É pseudo-elemento, e não `border-left`, porque a
+   borda de um lado herda o `border-radius` do card e curva nas duas pontas —
+   vira uma lasca arredondada. Recuado no topo e na base, o filete nunca toca
+   canto, então fica reto. Mesmo mecanismo do item ativo da barra lateral. */
+.stat-card-container::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.85rem;
+  bottom: 0.85rem;
+  width: 3px;
+  border-radius: var(--raio-pill);
+  background: var(--stat-accent, var(--accent));
 }
 
 .stat-card-content {
@@ -1708,7 +1727,7 @@ h3 {
 .stat-card-value {
   font-size: 1.5rem;
   font-weight: bold;
-  color: white;
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1725,7 +1744,7 @@ h3 {
 
 .stat-card-icon-container {
   padding: 0.65rem;
-  border-radius: 0.9rem;
+  border-radius: var(--raio-card);
   flex-shrink: 0;
   display: flex;
   align-items: center;
@@ -1742,8 +1761,7 @@ h3 {
   position: fixed;
   inset: 0;
   z-index: 10000;
-  background: rgba(0, 0, 0, 0.85);
-  backdrop-filter: blur(10px);
+  background: rgba(0, 0, 0, 0.72);
   display: flex;
   align-items: flex-end;
   justify-content: center;
@@ -1752,7 +1770,7 @@ h3 {
 .mobile-filter-modal-content {
   width: 100%;
   max-height: 90vh;
-  background: linear-gradient(180deg, #16161a 0%, #0a0a0c 100%);
+  background: var(--bg-card);
   border: 1px solid var(--border);
   border-bottom: none;
   border-top-left-radius: 1.25rem;
@@ -1760,7 +1778,7 @@ h3 {
   padding: 24px 20px;
   overflow-y: auto;
   position: relative;
-  box-shadow: 0 -15px 50px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow-flutuante);
   display: flex;
   flex-direction: column;
 }
@@ -1773,7 +1791,7 @@ h3 {
 }
 
 .mobile-filter-close-btn {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-1);
   border: none;
   border-radius: 50%;
   width: 36px;
@@ -1781,7 +1799,7 @@ h3 {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: white;
+  color: var(--text-primary);
   cursor: pointer;
 }
 
@@ -1795,10 +1813,10 @@ h3 {
 .mobile-filter-apply-btn {
   width: 100%;
   padding: 16px;
-  background: white;
-  color: black;
+  background: var(--accent);
+  color: var(--accent-contrast);
   border: none;
-  border-radius: 12px;
+  border-radius: var(--raio-card);
   margin-top: 24px;
   font-weight: bold;
   font-size: 1rem;
@@ -1897,12 +1915,12 @@ h3 {
 }
 
 .analisador-header-empresa-sep {
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--text-muted);
   font-weight: 400;
 }
 
 .analisador-header-empresa-nome {
-  color: rgba(255, 255, 255, 0.88);
+  color: var(--text-primary);
   font-size: 1.2rem;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1972,8 +1990,8 @@ h3 {
   margin: 0;
   padding: 0.85rem 0.9rem;
   border: 1px dashed var(--border);
-  border-radius: 0.75rem;
-  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--raio-card);
+  background: var(--surface-1);
   color: var(--text-secondary);
   font-size: 0.8rem;
   line-height: 1.4;
@@ -2032,10 +2050,14 @@ h3 {
 .analisador-tabs {
   display: flex;
   align-items: center;
-  gap: 0.4rem;
+  gap: 0.2rem;
+  width: fit-content;
+  max-width: 100%;
   overflow-x: auto;
-  padding: 0.4rem 0.4rem 0.65rem;
-  border-bottom: 1px solid var(--border);
+  padding: 0.25rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
   scroll-behavior: smooth;
 }
 
@@ -2045,8 +2067,8 @@ h3 {
   align-items: center;
   white-space: nowrap;
   border: 1px solid transparent;
-  border-radius: 0.65rem 0.65rem 0 0;
-  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  background: transparent;
   color: var(--text-secondary);
   font-size: 0.82rem;
   font-weight: 500;
@@ -2056,19 +2078,16 @@ h3 {
   font-family: inherit;
 }
 
-.analisador-tab:hover {
-  background: rgba(218, 187, 108, 0.1);
+.analisador-tab:hover:not(.is-ativa) {
+  background: var(--surface-3);
   color: var(--text-primary);
 }
 
 .analisador-tab.is-ativa {
-  background: var(--bg-card);
-  border-color: var(--border);
-  border-bottom-color: var(--bg-card);
-  color: var(--text-primary);
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
   font-weight: 600;
-  box-shadow: 0 -2px 0 var(--accent) inset;
-  margin-bottom: -1px;
 }
 
 .analisador-campo {
@@ -2086,7 +2105,7 @@ h3 {
 .analisador-input {
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 0.65rem;
+  border-radius: var(--raio-controle);
   padding: 0.65rem 0.85rem;
   color: var(--text-primary);
   font-size: 0.85rem;
@@ -2098,7 +2117,7 @@ h3 {
 }
 
 .analisador-input:hover {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-2);
   border-color: var(--accent);
 }
 
@@ -2143,7 +2162,7 @@ h3 {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
-  border-radius: 0.75rem;
+  border-radius: var(--raio-card);
   padding: 0.65rem 1.1rem;
   font-size: 0.85rem;
   font-weight: 600;
@@ -2217,12 +2236,11 @@ h3 {
   position: fixed;
   inset: 0;
   z-index: 1000;
-  background: rgba(0, 0, 0, 0.65);
+  background: rgba(0, 0, 0, 0.72);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 1.25rem;
-  backdrop-filter: blur(4px);
 }
 
 .config-modal {
@@ -2232,8 +2250,8 @@ h3 {
   flex-direction: column;
   background: #141418;
   border: 1px solid var(--border);
-  border-radius: 1rem;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  border-radius: var(--raio-card);
+  box-shadow: var(--shadow-flutuante);
   overflow: hidden;
 }
 
@@ -2266,8 +2284,8 @@ h3 {
   gap: 0.65rem;
   padding: 0.9rem 1rem 1rem;
   border: 1px solid var(--border);
-  border-radius: 0.85rem;
-  background: rgba(255, 255, 255, 0.015);
+  border-radius: var(--raio-card);
+  background: var(--surface-1);
 }
 
 .config-modal-secao h3 {
@@ -2307,7 +2325,7 @@ h3 {
   justify-content: center;
   width: 2.6rem;
   border: none;
-  border-radius: 0.65rem;
+  border-radius: var(--raio-controle);
   background: var(--accent);
   color: var(--accent-contrast);
   cursor: pointer;
@@ -2343,8 +2361,8 @@ h3 {
 }
 
 .config-tag-linha {
-  border-radius: 0.6rem;
-  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
   border: 1px solid var(--border);
   padding: 0.55rem 0.6rem;
   display: flex;
@@ -2370,7 +2388,7 @@ h3 {
   justify-content: center;
   width: 2rem;
   height: 2rem;
-  border-radius: 0.5rem;
+  border-radius: var(--raio-controle);
   border: 1px solid rgba(224, 100, 92, 0.35);
   background: rgba(224, 100, 92, 0.12);
   color: var(--danger);
@@ -2393,9 +2411,9 @@ h3 {
   width: 2rem;
   height: 2rem;
   padding: 0.2rem;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 0.5rem;
-  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--raio-controle);
+  background: var(--surface-2);
   cursor: pointer;
 }
 
@@ -2441,15 +2459,15 @@ h3 {
   align-items: center;
   gap: 0.65rem;
   padding: 0.55rem 0.65rem;
-  border-radius: 0.65rem;
-  background: rgba(255, 255, 255, 0.035);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
   border: 1px solid var(--border);
   min-height: 2.75rem;
 }
 
 .config-tipos-item.is-editando {
   border-color: var(--border-strong);
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--surface-1);
 }
 
 .config-tipos-swatch {
@@ -2457,7 +2475,7 @@ h3 {
   width: 0.85rem;
   height: 0.85rem;
   border-radius: 0.25rem;
-  border: 1px solid rgba(255, 255, 255, 0.2);
+  border: 1px solid var(--border-strong);
 }
 
 .config-tipos-cor {
@@ -2465,9 +2483,9 @@ h3 {
   width: 1.75rem;
   height: 1.75rem;
   padding: 0.15rem;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 0.4rem;
-  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--raio-controle);
+  background: var(--surface-2);
   cursor: pointer;
 }
 
@@ -2501,7 +2519,7 @@ h3 {
   min-width: 8rem;
   height: 2rem;
   padding: 0 0.65rem;
-  border-radius: 0.45rem;
+  border-radius: var(--raio-controle);
   border: 1px solid var(--border-strong);
   background: rgba(0, 0, 0, 0.25);
   color: var(--text-primary);
@@ -2537,22 +2555,22 @@ h3 {
   justify-content: center;
   width: 2rem;
   height: 2rem;
-  border-radius: 0.45rem;
+  border-radius: var(--raio-controle);
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease, filter 0.15s ease;
 }
 
 .config-tipos-btn-edit {
   border: 1px solid var(--border-strong);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--surface-1);
   color: var(--text-secondary);
 }
 
 .config-tipos-btn-edit:hover,
 .config-tipos-btn-edit.is-ativo {
-  border-color: rgba(255, 255, 255, 0.28);
+  border-color: var(--border-strong);
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-2);
 }
 
 .config-tipos-btn-del {
@@ -2583,8 +2601,8 @@ h3 {
   min-height: 2.5rem;
   padding: 0 0.6rem;
   border: 1px solid var(--border);
-  border-radius: 0.65rem;
-  background: rgba(255, 255, 255, 0.035);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
   font-size: 0.82rem;
 }
 
@@ -2593,9 +2611,9 @@ h3 {
   min-width: 0;
   height: 2.5rem;
   padding: 0 0.85rem;
-  border-radius: 0.65rem;
+  border-radius: var(--raio-controle);
   border: 1px solid var(--border);
-  background: rgba(255, 255, 255, 0.035);
+  background: var(--surface-1);
   color: var(--text-primary);
   font-size: 0.9rem;
 }
@@ -2613,7 +2631,7 @@ h3 {
   width: 2.5rem;
   height: 2.5rem;
   border: none;
-  border-radius: 0.55rem;
+  border-radius: var(--raio-controle);
   background: var(--accent);
   color: var(--accent-contrast);
 }
@@ -2679,8 +2697,8 @@ h3 {
   margin-bottom: 0.85rem;
   padding: 0.7rem 1rem;
   border: 1px solid var(--border);
-  border-radius: 0.6rem;
-  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
 }
 
 .analisador-faixa-totais-rotulo {
@@ -2765,7 +2783,7 @@ h3 {
   gap: 0.5rem;
   padding: 0.45rem 0.6rem;
   border: 0;
-  border-radius: 0.5rem;
+  border-radius: var(--raio-controle);
   background: transparent;
   color: inherit;
   font: inherit;
@@ -2775,7 +2793,7 @@ h3 {
 
 .pasta-picker-lista button:hover,
 .pasta-picker-lista button:focus-visible {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-2);
 }
 
 .pasta-picker-lista span {
@@ -2815,8 +2833,8 @@ h3 {
 }
 
 .exportar-modal-lista li {
-  border-radius: 0.6rem;
-  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
   border: 1px solid var(--border);
   transition: background 0.15s, border-color 0.15s;
 }
@@ -2883,7 +2901,7 @@ h3 {
   width: 1px;
   align-self: stretch;
   margin: 0.35rem 0.35rem;
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--surface-4);
   flex: 0 0 1px;
 }
 
@@ -2980,9 +2998,9 @@ h3 {
   appearance: none;
   width: 1rem;
   height: 1rem;
-  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  border: 1.5px solid var(--border-strong);
   border-radius: 0.3rem;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-2);
   cursor: pointer;
   flex-shrink: 0;
   position: relative;
@@ -3092,7 +3110,7 @@ h3 {
   background: var(--accent-glow);
   border: 1px solid rgba(218, 187, 108, 0.35);
   color: #a5b4fc;
-  border-radius: 999px;
+  border-radius: var(--raio-pill);
   min-width: 1.6rem;
   padding: 0.1rem 0.4rem;
   font-size: 0.75rem;
@@ -3115,10 +3133,10 @@ h3 {
   max-height: min(70vh, 420px);
   overflow-y: auto;
   padding: 0.4rem;
-  border-radius: 0.75rem;
+  border-radius: var(--raio-card);
   border: 1px solid var(--border);
   background: #141418;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  box-shadow: var(--shadow-flutuante);
   display: flex;
   flex-direction: column;
   gap: 0.1rem;
@@ -3205,8 +3223,8 @@ h3 {
   min-width: 0;
   padding: 0.35rem 0.45rem;
   border: 1px solid var(--border);
-  border-radius: 0.4rem;
-  background: rgba(255, 255, 255, 0.04);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
   color: var(--text-primary);
   font-size: 0.78rem;
   font-family: inherit;
@@ -3229,7 +3247,7 @@ h3 {
   align-items: center;
   justify-content: center;
   border: 1px solid rgba(218, 187, 108, 0.35);
-  border-radius: 0.4rem;
+  border-radius: var(--raio-controle);
   background: rgba(218, 187, 108, 0.18);
   color: var(--accent);
   font-size: 0.75rem;
@@ -3257,7 +3275,7 @@ h3 {
   color: var(--text-primary);
   text-align: left;
   padding: 0.5rem 0.55rem;
-  border-radius: 0.5rem;
+  border-radius: var(--raio-controle);
   font-size: 0.84rem;
   cursor: pointer;
   transition: background 0.15s ease;
@@ -3320,7 +3338,7 @@ h3 {
   height: 2rem;
   padding: 0;
   border: 1px solid currentColor;
-  border-radius: 0.5rem;
+  border-radius: var(--raio-controle);
   background: transparent;
   color: inherit;
   font-size: 1.25rem;
@@ -3385,7 +3403,7 @@ h3 {
   max-height: 420px;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border-radius: var(--raio-card);
   background: #121216;
   /* evita o thead sticky “vazar” o conteúdo por baixo */
   isolation: isolate;
@@ -3405,7 +3423,7 @@ h3 {
 .analisador-tabela th {
   text-align: left;
   padding: 0.6rem 0.5rem;
-  color: #ffffff;
+  color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3436,11 +3454,11 @@ h3 {
    mesma especificidade, então quem está depois no arquivo ganha — e o hover
    precisa vencer a faixa zebrada. */
 .analisador-tabela tbody tr:nth-child(even) td {
-  background-color: rgba(255, 255, 255, 0.032);
+  background-color: var(--surface-1);
 }
 
 .analisador-tabela tbody tr:hover td {
-  background: rgba(255, 255, 255, 0.075);
+  background: var(--surface-2);
 }
 
 .analisador-tabela tbody tr:hover td:first-child {
@@ -3522,8 +3540,8 @@ h3 {
   min-width: 0;
   padding: 0.8rem 0.9rem;
   border: 1px solid var(--border);
-  border-radius: 0.65rem;
-  background: rgba(255, 255, 255, 0.025);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
 }
 
 .tendencia-produtos-kpi > span,
@@ -3554,7 +3572,7 @@ h3 {
   min-width: 0;
   padding: 0.65rem 0.6rem 0.45rem;
   border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border-radius: var(--raio-card);
   background: #121216;
 }
 
@@ -3564,9 +3582,9 @@ h3 {
   min-width: 11rem;
   padding: 0.7rem 0.8rem;
   border: 1px solid var(--border-strong);
-  border-radius: 0.55rem;
-  background: rgba(19, 19, 22, 0.97);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.32);
+  border-radius: var(--raio-controle);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-flutuante);
   color: var(--text-secondary);
   font-size: 0.76rem;
 }
@@ -3582,7 +3600,7 @@ h3 {
 }
 
 .tendencia-produtos-legenda span { display: inline-flex; align-items: center; gap: 0.35rem; }
-.tendencia-produtos-legenda i { width: 1rem; height: 0.18rem; border-radius: 999px; }
+.tendencia-produtos-legenda i { width: 1rem; height: 0.18rem; border-radius: var(--raio-pill); }
 .tendencia-produtos-legenda i.is-receita { background: #dabb6c; }
 .tendencia-produtos-legenda i.is-quantidade { background: #60a5fa; }
 
@@ -3660,7 +3678,7 @@ h3 {
   margin-left: 0.5rem;
   padding: 0.05rem 0.4rem;
   border: 1px solid var(--border-strong);
-  border-radius: 999px;
+  border-radius: var(--raio-pill);
   font-size: 0.62rem;
   letter-spacing: 0.02em;
   text-transform: uppercase;
@@ -3762,8 +3780,8 @@ h3 {
   gap: 0.65rem;
   padding: 0.9rem 1rem;
   border: 1px solid var(--border);
-  border-radius: 0.85rem;
-  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--raio-card);
+  background: var(--surface-1);
   min-width: 0;
 }
 
@@ -3862,8 +3880,8 @@ h3 {
   gap: 0.3rem;
   padding: 0.25rem 0.35rem 0.25rem 0.25rem;
   border: 1px solid var(--border-strong);
-  border-radius: 0.5rem;
-  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
   font-size: 0.74rem;
   max-width: 100%;
 }
@@ -3930,7 +3948,7 @@ h3 {
 }
 
 .analisador-explorar-chip button:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-2);
   color: var(--text-primary);
 }
 
@@ -3956,8 +3974,8 @@ h3 {
   gap: 0.4rem;
   padding: 0.45rem 0.5rem;
   border: 1px solid var(--border);
-  border-radius: 0.55rem;
-  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
   color: var(--text-secondary);
   font: inherit;
   font-size: 0.74rem;
@@ -4039,7 +4057,7 @@ h3 {
 
 .analisador-explorar-fieldset {
   border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border-radius: var(--raio-card);
   padding: 0.75rem 1rem 1rem;
   margin: 0;
   width: 100%;
@@ -4169,7 +4187,7 @@ h3 {
 .analisador-explorar-legend-label {
   font-size: 0.78rem;
   font-weight: 550;
-  color: rgba(255, 255, 255, 0.78);
+  color: var(--text-secondary);
   line-height: 1.2;
   white-space: nowrap;
   overflow: hidden;
@@ -4256,8 +4274,8 @@ h3 {
   gap: 0.65rem 0.85rem;
   padding: 0.65rem 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 0.75rem;
-  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--raio-card);
+  background: var(--surface-1);
 }
 
 .analisador-alerta-filtros-label {
@@ -4285,7 +4303,7 @@ h3 {
   align-items: center;
   gap: 0.4rem;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--raio-pill);
   padding: 0.3rem 0.65rem;
   background: transparent;
   color: var(--text-secondary);
@@ -4298,8 +4316,8 @@ h3 {
 .analisador-alerta-filtro span {
   min-width: 1.2rem;
   padding: 0 0.25rem;
-  border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  border-radius: var(--raio-pill);
+  background: var(--surface-2);
   color: var(--text-primary);
   font-size: 0.68rem;
   text-align: center;
@@ -4332,11 +4350,11 @@ h3 {
   min-width: 1.5rem;
   height: 1.5rem;
   padding: 0 0.4rem;
-  border-radius: 999px;
+  border-radius: var(--raio-pill);
   font-size: 0.75rem;
   font-weight: 600;
-  color: white;
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  background: var(--surface-3);
 }
 
 .analisador-alerta-status {
@@ -4370,8 +4388,8 @@ h3 {
   gap: 0.75rem;
   padding: 0.85rem 1rem;
   border: 1px solid var(--border);
-  border-radius: 0.85rem;
-  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--raio-card);
+  background: var(--surface-1);
   min-width: 0;
   flex-shrink: 0;
 }
@@ -4394,7 +4412,7 @@ h3 {
 
 .analisador-alerta-cliente-nome {
   margin: 0;
-  color: white;
+  color: var(--text-primary);
   font-size: 0.95rem;
   font-weight: 600;
   line-height: 1.35;
@@ -4434,8 +4452,8 @@ h3 {
   min-width: 10.5rem;
   padding: 0.45rem 0.7rem;
   border: 1px solid var(--border);
-  border-radius: 0.55rem;
-  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
 }
 
 .analisador-alerta-kpi > span {
@@ -4450,7 +4468,7 @@ h3 {
   align-items: baseline;
   flex-wrap: wrap;
   gap: 0.4rem;
-  color: white;
+  color: var(--text-primary);
   font-size: 0.9rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
@@ -4464,7 +4482,7 @@ h3 {
 }
 
 .analisador-alerta-var.alta {
-  color: #10b981;
+  color: var(--success);
 }
 
 .analisador-alerta-var.queda {
@@ -4528,8 +4546,8 @@ h3 {
   gap: 0.75rem;
   padding: 0.65rem 0.75rem;
   border: 1px solid var(--border);
-  border-radius: 0.75rem;
-  background: rgba(255, 255, 255, 0.02);
+  border-radius: var(--raio-card);
+  background: var(--surface-1);
 }
 
 .analisador-cliente-tag-info {
@@ -4550,15 +4568,14 @@ h3 {
   font-size: 0.72rem;
   font-weight: 600;
   border: 1px solid;
-  border-radius: 999px;
+  border-radius: var(--raio-pill);
   padding: 0.15rem 0.55rem;
   display: inline-block;
   transition: filter 0.12s ease, transform 0.12s ease;
 }
 
 .analisador-tag-chip:hover {
-  filter: brightness(1.3);
-  transform: scale(1.06);
+  filter: brightness(1.25);
 }
 
 .analisador-grupos-lista {
@@ -4574,9 +4591,9 @@ h3 {
 
 .analisador-grupo-card {
   border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border-radius: var(--raio-card);
   padding: 0.85rem;
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--surface-1);
   min-width: 0;
 }
 
@@ -4592,7 +4609,7 @@ h3 {
   flex-direction: column;
   gap: 0.25rem;
   border: 1px solid var(--border);
-  border-radius: 0.65rem;
+  border-radius: var(--raio-controle);
   padding: 0.35rem;
 }
 
@@ -4607,13 +4624,13 @@ h3 {
   border: none;
   color: var(--text-primary);
   padding: 0.45rem 0.55rem;
-  border-radius: 0.45rem;
+  border-radius: var(--raio-controle);
   cursor: pointer;
   font: inherit;
 }
 
 .analisador-grupo-sugestao:hover {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-2);
 }
 
 .analisador-grupo-sugestao-nome {
@@ -4638,8 +4655,8 @@ h3 {
   font-size: 0.8rem;
   color: var(--text-secondary);
   padding: 0.3rem 0.4rem;
-  border-radius: 0.4rem;
-  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
 }
 
 .analisador-grupo-remover {
@@ -4674,7 +4691,7 @@ h3 {
   align-items: flex-start;
   gap: 0.65rem;
   padding: 0.55rem 0.65rem;
-  border-radius: 0.55rem;
+  border-radius: var(--raio-controle);
   border: 1px solid transparent;
   background: rgba(0, 0, 0, 0.18);
   color: var(--text-secondary);
@@ -4700,9 +4717,9 @@ h3 {
   width: 1rem;
   height: 1rem;
   margin-top: 0.15rem;
-  border: 1.5px solid rgba(255, 255, 255, 0.25);
+  border: 1.5px solid var(--border-strong);
   border-radius: 0.3rem;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--surface-2);
   cursor: pointer;
   flex-shrink: 0;
   position: relative;
@@ -4756,10 +4773,10 @@ h3 {
 /* Itens de dropdown custom (FilterBar, EmpresaSelector, etc.) */
 .dropdown-menu-item {
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--raio-controle);
   cursor: pointer;
   font-size: 0.85rem;
-  color: white;
+  color: var(--text-primary);
   background: transparent;
   transition: background 0.12s ease, color 0.12s ease;
   flex-shrink: 0;
@@ -4769,7 +4786,7 @@ h3 {
 .dropdown-menu-item:hover,
 .dropdown-menu-item:focus-visible {
   background: rgba(218, 187, 108, 0.22);
-  color: #fff;
+  color: var(--text-primary);
   outline: none;
 }
 
@@ -4779,8 +4796,8 @@ h3 {
 
 .dropdown-menu-item.is-muted:hover,
 .dropdown-menu-item.is-muted:focus-visible {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  background: var(--surface-3);
 }
 
 .dropdown-menu-item.is-selected {
@@ -4797,8 +4814,8 @@ h3 {
 .dropdown-menu-panel {
   background: #1a1a1e;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+  border-radius: var(--raio-card);
+  box-shadow: var(--shadow-flutuante);
 }
 
 .period-dropdown-action:hover,
@@ -4808,12 +4825,12 @@ h3 {
 }
 
 .period-dropdown-year-row {
-  border-radius: 10px;
+  border-radius: var(--raio-controle);
   transition: background 0.15s ease;
 }
 
 .period-dropdown-year-row:hover {
-  background: rgba(255, 255, 255, 0.07);
+  background: var(--surface-2);
 }
 
 .period-dropdown-chip {
@@ -4835,8 +4852,8 @@ h3 {
 
 /* Modal de config não deve “pular” no hover do glass-card (quebra o hover da lista) */
 .empresa-config-card.glass-card:hover {
+  background: var(--bg-card);
   transform: none;
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
 }
 
 .empresa-select-wrap {
@@ -4859,8 +4876,8 @@ h3 {
   max-height: min(320px, 50vh);
   background: #1a1a1e;
   border: 1px solid var(--border);
-  border-radius: 12px;
-  box-shadow: 0 -10px 28px rgba(0, 0, 0, 0.55);
+  border-radius: var(--raio-card);
+  box-shadow: var(--shadow-flutuante);
   overflow: hidden;
 }
 
@@ -4868,7 +4885,7 @@ h3 {
 .empresa-dropdown-panel.is-abaixo {
   top: calc(100% + 8px);
   bottom: auto;
-  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-flutuante);
 }
 
 /* Card da empresa analisada: dropdown não pode ser cortado */
@@ -4883,8 +4900,8 @@ h3 {
   gap: 0.45rem;
   padding: 0 0.55rem;
   border: 1px solid var(--border);
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
   color: var(--text-secondary);
   flex-shrink: 0;
 }
@@ -4922,10 +4939,10 @@ h3 {
 /* Alias: empresa usa as mesmas regras do dropdown genérico */
 .empresa-dropdown-item {
   padding: 8px 12px;
-  border-radius: 8px;
+  border-radius: var(--raio-controle);
   cursor: pointer;
   font-size: 0.85rem;
-  color: white;
+  color: var(--text-primary);
   background: transparent;
   transition: background 0.12s ease, color 0.12s ease;
   flex-shrink: 0;
@@ -4935,7 +4952,7 @@ h3 {
 .empresa-dropdown-item:hover,
 .empresa-dropdown-item:focus-visible {
   background: rgba(218, 187, 108, 0.22);
-  color: #fff;
+  color: var(--text-primary);
   outline: none;
 }
 
@@ -4945,8 +4962,8 @@ h3 {
 
 .empresa-dropdown-item.is-padrao:hover,
 .empresa-dropdown-item.is-padrao:focus-visible {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  background: var(--surface-3);
 }
 
 .empresa-dropdown-item.is-selecionada {
@@ -5016,7 +5033,7 @@ h3 {
      top/left/bottom/right: auto !important anulava o inline e o painel
      ficava fora da tela / invisível ao abrir na sidebar. */
   max-height: min(360px, 55vh);
-  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.6);
+  box-shadow: var(--shadow-flutuante);
   opacity: 1;
   transform: none;
 }
@@ -5041,7 +5058,7 @@ button.dropdown-menu-item:focus-visible,
 button.empresa-dropdown-item:hover,
 button.empresa-dropdown-item:focus-visible {
   background: rgba(218, 187, 108, 0.22);
-  color: #fff;
+  color: var(--text-primary);
   outline: none;
 }
 
@@ -5068,8 +5085,8 @@ button.dropdown-menu-item.is-padrao:hover,
 button.dropdown-menu-item.is-padrao:focus-visible,
 button.empresa-dropdown-item.is-padrao:hover,
 button.empresa-dropdown-item.is-padrao:focus-visible {
-  color: #fff;
-  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+  background: var(--surface-3);
 }
 
 .analisador-combobox-check-slot {
@@ -5184,7 +5201,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   overflow: auto;
   max-height: min(58vh, 720px);
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--raio-controle);
 }
 
 .clientes-tabela thead {
@@ -5208,7 +5225,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 .clientes-tag-toggle {
   --tag-cor: var(--accent);
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--raio-pill);
   background: transparent;
   color: var(--text-secondary);
   padding: 0.28rem 0.62rem;
@@ -5299,7 +5316,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   padding: 0.75rem;
   border: 1px solid var(--border);
   border-left: 3px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--raio-controle);
   background: color-mix(in srgb, var(--bg-card) 80%, transparent);
 }
 
@@ -5330,7 +5347,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   align-self: end;
   color: var(--text-secondary);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--raio-controle);
   background: transparent;
   cursor: pointer;
 }
@@ -5372,7 +5389,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   padding: 0.85rem;
   color: var(--text-secondary);
   border: 1px dashed var(--border);
-  border-radius: 10px;
+  border-radius: var(--raio-controle);
   background: color-mix(in srgb, var(--bg-card) 70%, transparent);
 }
 
@@ -5399,7 +5416,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 .clientes-ritmo-resumo small {
   padding: 0.4rem 0.65rem;
   border: 1px solid var(--border);
-  border-radius: 999px;
+  border-radius: var(--raio-pill);
   color: var(--text-secondary);
 }
 
@@ -5421,7 +5438,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   padding: 0.8rem;
   border: 1px solid var(--border);
   border-left: 3px solid var(--text-muted);
-  border-radius: 10px;
+  border-radius: var(--raio-controle);
 }
 
 .clientes-ritmo-alerta.is-queda {
@@ -5451,7 +5468,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   color: var(--tag-cor);
   font-size: 0.72rem;
   border: 1px solid color-mix(in srgb, var(--tag-cor) 55%, transparent);
-  border-radius: 999px;
+  border-radius: var(--raio-pill);
   background: color-mix(in srgb, var(--tag-cor) 10%, transparent);
 }
 
@@ -5507,7 +5524,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   color: var(--text-secondary);
   text-align: center;
   border: 1px dashed var(--border);
-  border-radius: 10px;
+  border-radius: var(--raio-controle);
 }
 
 @media (max-width: 1180px) {
@@ -5636,15 +5653,15 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   display: flex;
   padding: 0.2rem;
   border: 1px solid var(--border);
-  border-radius: 0.65rem;
-  background: rgba(255, 255, 255, 0.035);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
 }
 
 .monitor-segmentado button {
   min-height: 2rem;
   padding: 0.35rem 0.65rem;
   border: 0;
-  border-radius: 0.48rem;
+  border-radius: var(--raio-controle);
   color: var(--text-secondary);
   background: transparent;
   font: inherit;
@@ -5654,8 +5671,8 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 }
 
 .monitor-segmentado button.is-ativo {
-  color: var(--accent-hover);
-  background: var(--accent-soft);
+  color: var(--accent-contrast);
+  background: var(--accent);
 }
 
 .monitor-segmentado button:focus-visible {
@@ -5701,12 +5718,13 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   min-height: 13.5rem;
   padding: 0;
   overflow: hidden;
-  transition: border-color 0.18s ease, transform 0.18s ease, box-shadow 0.18s ease;
+  transition: border-color 0.18s ease, background 0.18s ease, transform 0.18s ease;
 }
 
 .monitor-card:hover,
 .monitor-card:focus-within {
   border-color: rgba(111, 140, 196, 0.55);
+  background: var(--card-hover);
   transform: translateY(-2px);
 }
 
@@ -5792,7 +5810,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 .monitor-favorita-tag {
   flex: 0 0 auto;
   padding: 0.12rem 0.4rem;
-  border-radius: 999px;
+  border-radius: var(--raio-pill);
   color: var(--accent-hover);
   background: var(--accent-soft);
   font-size: 0.62rem;
@@ -5891,10 +5909,10 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   gap: 0.2rem;
   padding: 0.45rem 0.6rem;
   border: 1px solid var(--border-strong);
-  border-radius: 0.5rem;
+  border-radius: var(--raio-controle);
   color: var(--text-secondary);
   background: var(--bg-card);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.32);
+  box-shadow: var(--shadow-flutuante);
   font-size: 0.68rem;
 }
 
@@ -6067,7 +6085,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   margin-bottom: 1rem;
   padding: 0.7rem 0.85rem;
   border: 1px solid rgba(218, 187, 108, 0.45);
-  border-radius: 0.75rem;
+  border-radius: var(--raio-card);
   background: var(--accent-soft);
 }
 
@@ -6104,7 +6122,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   justify-content: center;
   padding: 0.3rem;
   border: 0;
-  border-radius: 0.4rem;
+  border-radius: var(--raio-controle);
   color: var(--text-muted);
   background: transparent;
   cursor: pointer;
@@ -6112,7 +6130,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 
 .banner-atualizacao-fechar:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--surface-2);
 }
 
 @media (max-width: 640px) {
@@ -6162,7 +6180,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   min-height: 26rem;
   overflow: auto;
   border: 1px solid var(--border);
-  border-radius: 0.75rem;
+  border-radius: var(--raio-card);
   background: var(--bg-elevated, #16161c);
 }
 
@@ -6351,7 +6369,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   max-width: 22rem;
   padding: 0.7rem 0.8rem;
   border: 1px solid var(--border-strong);
-  border-radius: 0.65rem;
+  border-radius: var(--raio-controle);
   color: var(--text-primary);
   background: var(--bg-elevated);
   box-shadow: var(--shadow-lg);
@@ -6438,7 +6456,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   display: inline-flex;
   align-items: center;
   padding: 0.2rem 0.48rem;
-  border-radius: 999px;
+  border-radius: var(--raio-pill);
   color: var(--text-secondary);
   background: color-mix(in srgb, var(--text-secondary) 12%, transparent);
   font-size: 0.68rem;
@@ -6475,4 +6493,480 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   .estoque-busca { width: 100%; }
   .estoque-chart-wrap { height: 27rem; }
   .estoque-chart-legenda { position: static; justify-content: flex-start; padding: 0 0.5rem; }
+}
+
+/* ---------------------------------------------------------------------------
+   Assistente IA — conversa executiva sobre os MDs da empresa
+   --------------------------------------------------------------------------- */
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.dashboard-container.chat-ia-page {
+  width: 100%;
+  height: 100dvh;
+  max-width: 1280px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.chat-ia-header {
+  flex: 0 0 auto;
+}
+
+.chat-ia-limpar,
+.chat-ia-acao {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--raio-controle);
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  padding: 0.58rem 0.75rem;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 650;
+  cursor: pointer;
+  transition: border-color 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.chat-ia-limpar:hover,
+.chat-ia-acao:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.chat-ia-limpar:focus-visible,
+.chat-ia-acao:focus-visible,
+.chat-ia-composer textarea:focus-visible,
+.chat-ia-composer button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.chat-ia-limpar:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.chat-ia-aviso {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  max-width: 720px;
+}
+
+.chat-ia-aviso > svg {
+  flex: 0 0 auto;
+  color: var(--accent);
+}
+
+.chat-ia-aviso strong,
+.chat-ia-aviso p {
+  display: block;
+}
+
+.chat-ia-aviso p {
+  margin: 0.25rem 0 0.8rem;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.chat-ia-layout {
+  display: grid;
+  grid-template-columns: minmax(220px, 270px) minmax(0, 1fr);
+  gap: 1rem;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.chat-ia-contexto,
+.chat-ia-conversa {
+  min-width: 0;
+  min-height: 0;
+}
+
+.chat-ia-contexto.glass-card:hover,
+.chat-ia-conversa.glass-card:hover,
+.chat-ia-aviso.glass-card:hover {
+  background: var(--bg-card);
+  border-color: var(--border);
+  transform: none;
+}
+
+.chat-ia-contexto {
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.chat-ia-contexto-titulo {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.chat-ia-contexto-titulo > svg {
+  color: var(--accent);
+}
+
+.chat-ia-contexto-titulo strong,
+.chat-ia-contexto-titulo span {
+  display: block;
+}
+
+.chat-ia-contexto-titulo strong {
+  font-size: 0.84rem;
+}
+
+.chat-ia-contexto-titulo span {
+  margin-top: 0.12rem;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.chat-ia-contexto-carregando {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+}
+
+.chat-ia-documentos {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.chat-ia-documento {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+}
+
+.chat-ia-documento > div {
+  min-width: 0;
+}
+
+.chat-ia-documento strong,
+.chat-ia-documento span {
+  display: block;
+}
+
+.chat-ia-documento strong {
+  font-size: 0.75rem;
+  color: var(--text-primary);
+}
+
+.chat-ia-documento span {
+  margin-top: 0.12rem;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 0.64rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-ia-documento.is-ok > svg:last-child {
+  color: var(--success);
+}
+
+.chat-ia-documento.is-erro > svg:last-child {
+  color: var(--danger);
+}
+
+.chat-ia-privacidade {
+  margin: 0.25rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  line-height: 1.5;
+}
+
+.chat-ia-conversa {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+}
+
+.chat-ia-mensagens {
+  flex: 1 1 auto;
+  min-height: 260px;
+  overflow-y: auto;
+  padding: 1.25rem;
+}
+
+.chat-ia-vazio {
+  width: min(520px, 100%);
+  min-height: 100%;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 2rem 1rem;
+}
+
+.chat-ia-vazio-icone {
+  width: 3.4rem;
+  height: 3.4rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: var(--raio-card);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.chat-ia-vazio h2 {
+  margin: 1rem 0 0;
+  font-size: 1.18rem;
+}
+
+.chat-ia-vazio p {
+  max-width: 440px;
+  margin: 0.45rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.55;
+}
+
+.chat-ia-mensagem {
+  width: fit-content;
+  max-width: min(78%, 760px);
+  margin-bottom: 1rem;
+}
+
+.chat-ia-mensagem.is-user {
+  margin-left: auto;
+}
+
+.chat-ia-mensagem-autor {
+  display: block;
+  margin: 0 0 0.28rem 0.2rem;
+  color: var(--text-muted);
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.chat-ia-mensagem.is-user .chat-ia-mensagem-autor {
+  text-align: right;
+  margin-right: 0.2rem;
+}
+
+.chat-ia-mensagem p {
+  margin: 0;
+  padding: 0.8rem 0.95rem;
+  border: 1px solid var(--border);
+  border-radius: 0.2rem 0.85rem 0.85rem 0.85rem;
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font-size: 0.86rem;
+  line-height: 1.62;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.chat-ia-mensagem.is-user p {
+  border-color: color-mix(in srgb, var(--accent) 28%, var(--border));
+  border-radius: 0.85rem 0.2rem 0.85rem 0.85rem;
+  background: var(--accent-soft);
+}
+
+.chat-ia-mensagem.is-digitando p {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-secondary);
+}
+
+.chat-ia-spin {
+  animation: chat-ia-spin 0.9s linear infinite;
+}
+
+@keyframes chat-ia-spin {
+  to { transform: rotate(360deg); }
+}
+
+.chat-ia-erro {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 1rem 0.65rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, var(--border));
+  border-radius: var(--raio-controle);
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 0.76rem;
+}
+
+.chat-ia-erro svg {
+  flex: 0 0 auto;
+}
+
+.chat-ia-composer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.65rem;
+  margin: 0 1rem;
+  padding: 0.65rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--raio-card);
+  background: var(--surface-1);
+}
+
+.chat-ia-composer:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--border));
+  box-shadow: 0 0 0 3px var(--accent-glow);
+}
+
+.chat-ia-composer textarea {
+  width: 100%;
+  max-height: 150px;
+  resize: vertical;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.chat-ia-composer textarea::placeholder {
+  color: var(--text-muted);
+}
+
+.chat-ia-composer textarea:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.chat-ia-composer button {
+  width: 2.45rem;
+  height: 2.45rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: var(--raio-controle);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  cursor: pointer;
+}
+
+.chat-ia-composer button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.chat-ia-composer button:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.chat-ia-composer-hint {
+  margin: 0.4rem 1.1rem 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.64rem;
+  text-align: right;
+}
+
+@media (max-width: 900px) {
+  .dashboard-container.chat-ia-page {
+    height: auto;
+    min-height: calc(100dvh - 4rem);
+  }
+
+  .chat-ia-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-ia-contexto {
+    align-self: stretch;
+  }
+
+  .chat-ia-documentos {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .chat-ia-privacidade {
+    grid-column: 1 / -1;
+  }
+
+  .chat-ia-conversa {
+    min-height: 62dvh;
+  }
+}
+
+@media (max-width: 600px) {
+  .chat-ia-header {
+    align-items: stretch;
+  }
+
+  .chat-ia-limpar {
+    width: 100%;
+  }
+
+  .chat-ia-documentos {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-ia-privacidade {
+    grid-column: auto;
+  }
+
+  .chat-ia-mensagens {
+    padding: 1rem 0.75rem;
+  }
+
+  .chat-ia-mensagem {
+    max-width: 92%;
+  }
+
+  .chat-ia-mensagem p {
+    font-size: 0.82rem;
+  }
+
+  .chat-ia-composer {
+    margin: 0 0.65rem;
+  }
+
+  .chat-ia-composer-hint {
+    margin-right: 0.75rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .chat-ia-spin {
+    animation-duration: 1.8s;
+  }
 }

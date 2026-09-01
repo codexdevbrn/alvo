@@ -17,6 +17,7 @@ import {
   PanelLeftOpen,
   UsersRound,
   PackageSearch,
+  Bot,
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getToken, clearToken, obterStatusAtualizacao, type StatusAtualizacao } from '../api/client';
@@ -107,6 +108,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   const emMonitor = location.pathname.startsWith('/monitor');
   const emClientes = location.pathname.startsWith('/clientes');
   const emEstoque = location.pathname.startsWith('/estoque');
+  const emAssistente = location.pathname.startsWith('/assistente');
   const emConfig = location.pathname.startsWith('/config');
   const emMercadologico = location.pathname.startsWith('/mercadologico');
   const emDashboard = location.pathname === '/';
@@ -252,6 +254,13 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
               collapsed={colapsado}
               ativo={emEstoque}
               onClick={() => navigate('/estoque')}
+            />
+            <NavItem
+              icon={<Bot size={17} />}
+              label="Assistente IA"
+              collapsed={colapsado}
+              ativo={emAssistente}
+              onClick={() => navigate('/assistente')}
             />
           </div>
 

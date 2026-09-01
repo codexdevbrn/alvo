@@ -313,15 +313,60 @@ def _texto_cortado(texto: str, largura: float, fonte: str, tamanho: float) -> st
 
 
 def _linha_texto(canvas, x: float, y: float, texto: str, *, tamanho=7, cor="#f4f4f5",
-                 fonte="Helvetica", alinhamento="left") -> None:
+                 fonte="Helvetica", alinhamento="left", espacamento=0.0) -> None:
     canvas.setFont(fonte, tamanho)
     canvas.setFillColor(_hex(cor))
+    if espacamento:
+        # O espaçamento entre letras só existe no objeto de texto do reportlab,
+        # e ele muda a largura — daí o alinhamento ser calculado à mão aqui.
+        from reportlab.pdfbase.pdfmetrics import stringWidth
+
+        largura_texto = stringWidth(texto, fonte, tamanho) + espacamento * len(texto)
+        if alinhamento == "right":
+            inicio = x - largura_texto
+        elif alinhamento == "center":
+            inicio = x - largura_texto / 2
+        else:
+            inicio = x
+        objeto = canvas.beginText(inicio, y)
+        objeto.setFont(fonte, tamanho)
+        objeto.setFillColor(_hex(cor))
+        objeto.setCharSpace(espacamento)
+        objeto.textOut(texto)
+        # O espaçamento é estado do PDF e vazaria para os textos seguintes,
+        # alargando-os e estourando os alinhamentos à direita.
+        canvas.saveState()
+        canvas.drawText(objeto)
+        canvas.restoreState()
+        return
     if alinhamento == "right":
         canvas.drawRightString(x, y, texto)
     elif alinhamento == "center":
         canvas.drawCentredString(x, y, texto)
     else:
         canvas.drawString(x, y, texto)
+
+
+def _titulo_secao(canvas, x: float, y: float, texto: str, cor: str) -> None:
+    """Título de seção: caixa alta, espaçado e sempre acima da moldura."""
+    _linha_texto(
+        canvas, x, y, texto, tamanho=8, fonte="Helvetica-Bold", cor=cor,
+        espacamento=1.15,
+    )
+
+
+def _teto_agradavel(valor: float, divisoes: int = 4) -> float:
+    """Arredonda o topo do eixo para um número redondo, como no painel de referência."""
+    valor = _numero(valor)
+    if valor <= 0:
+        return float(divisoes)
+    bruto = valor / divisoes
+    magnitude = 10 ** math.floor(math.log10(bruto))
+    for fator in (1, 1.5, 2, 2.5, 3, 4, 5, 6, 8, 10):
+        passo = fator * magnitude
+        if passo >= bruto:
+            return passo * divisoes
+    return bruto * divisoes
 
 
 def _painel(canvas, x: float, y: float, largura: float, altura: float, *, destaque=False) -> None:
@@ -338,8 +383,11 @@ def _desenhar_kpi(canvas, x: float, y: float, largura: float, titulo: str,
                   valor: str, anterior: str, media: str,
                   var_anterior: float | None, var_media: float | None) -> None:
     _painel(canvas, x, y, largura, 68, destaque=True)
-    _linha_texto(canvas, x + 12, y + 49, titulo.upper(), tamanho=7.5, cor="#a3a3a3")
-    _linha_texto(canvas, x + 12, y + 31, valor, tamanho=15, fonte="Helvetica-Bold")
+    _linha_texto(
+        canvas, x + 12, y + 49, titulo.upper(), tamanho=7.5, cor="#a3a3a3",
+        espacamento=1.1,
+    )
+    _linha_texto(canvas, x + 12, y + 30, valor, tamanho=16, fonte="Helvetica-Bold")
     cor_var = "#efca35" if (var_anterior or 0) >= 0 else "#e59a9a"
     _linha_texto(
         canvas, x + largura - 12, y + 33, _fmt_pct(var_anterior), tamanho=10,
@@ -355,10 +403,8 @@ def _desenhar_kpi(canvas, x: float, y: float, largura: float, titulo: str,
 
 
 def _desenhar_grafico(canvas, dados: dict, x: float, y: float, largura: float, altura: float) -> None:
-    _linha_texto(
-        canvas, x, y + altura + 13,
-        "RECEITA E ITENS · EVOLUÇÃO MENSAL",
-        tamanho=8, fonte="Helvetica-Bold", cor="#d8b323",
+    _titulo_secao(
+        canvas, x, y + altura + 15, "RECEITA E ITENS  ·  EVOLUÇÃO MENSAL", "#d8b323",
     )
     serie = dados["serie"]
     if not serie:
@@ -367,10 +413,8 @@ def _desenhar_grafico(canvas, dados: dict, x: float, y: float, largura: float, a
     margem_esq, margem_dir, margem_inf, margem_sup = 31, 25, 22, 10
     gx, gy = x + margem_esq, y + margem_inf
     gw, gh = largura - margem_esq - margem_dir, altura - margem_inf - margem_sup
-    max_receita = max(max(item["receita"] for item in serie), 1.0)
-    max_qtd = max(max(item["qtd"] for item in serie), 1.0)
-    max_receita *= 1.12
-    max_qtd *= 1.12
+    max_receita = _teto_agradavel(max(max(item["receita"] for item in serie), 1.0) * 1.02)
+    max_qtd = _teto_agradavel(max(max(item["qtd"] for item in serie), 1.0) * 1.02)
     for indice in range(5):
         yy = gy + gh * indice / 4
         canvas.setStrokeColor(_hex("#2a2a2a"))
@@ -387,6 +431,7 @@ def _desenhar_grafico(canvas, dados: dict, x: float, y: float, largura: float, a
     passo = gw / len(serie)
     barra = min(24, passo * 0.62)
     pontos: list[tuple[float, float]] = []
+    rotulos: list[tuple[float, float, str, str]] = []
     for indice, item in enumerate(serie):
         centro = gx + passo * (indice + 0.5)
         h_barra = gh * item["receita"] / max_receita
@@ -396,11 +441,18 @@ def _desenhar_grafico(canvas, dados: dict, x: float, y: float, largura: float, a
             canvas, centro, gy - 12, item["rotulo"], tamanho=5.4, cor="#a3a3a3",
             alinhamento="center",
         )
-        if h_barra > 8:
-            _linha_texto(
-                canvas, centro, gy + h_barra - 7, _fmt_numero(item["receita"]),
-                tamanho=5, cor="#090909", fonte="Helvetica-Bold", alinhamento="center",
-            )
+        if item["receita"] > 0:
+            # Rótulo acima da barra, como na referência; só entra dentro dela
+            # quando a barra chega perto do topo do eixo.
+            if h_barra + 11 <= gh:
+                rotulos.append((
+                    centro, gy + h_barra + 4, _fmt_numero(item["receita"]),
+                    "#efca35" if item["atual"] else "#c9c9cb",
+                ))
+            else:
+                rotulos.append((
+                    centro, gy + h_barra - 8, _fmt_numero(item["receita"]), "#090909",
+                ))
         pontos.append((centro, gy + gh * item["qtd"] / max_qtd))
     canvas.setStrokeColor(_hex("#f4f4f5"))
     canvas.setLineWidth(1.7)
@@ -409,6 +461,19 @@ def _desenhar_grafico(canvas, dados: dict, x: float, y: float, largura: float, a
     for px, py in pontos:
         canvas.setFillColor(_hex("#f4f4f5"))
         canvas.circle(px, py, 2.2, fill=1, stroke=0)
+    # Rótulos por último: onde a linha de itens cruza a barra, o número precisa
+    # ficar por cima para continuar legível.
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+
+    for rx, ry, texto, cor in rotulos:
+        if cor != "#090909":
+            largura_rotulo = stringWidth(texto, "Helvetica-Bold", 5.4) + 4
+            canvas.setFillColor(_hex("#0d0d0d"))
+            canvas.rect(rx - largura_rotulo / 2, ry - 1.8, largura_rotulo, 8, fill=1, stroke=0)
+        _linha_texto(
+            canvas, rx, ry, texto, tamanho=5.4, cor=cor,
+            fonte="Helvetica-Bold", alinhamento="center",
+        )
     legenda_x = x + largura / 2 - 38
     canvas.setFillColor(_hex("#b9b9bb"))
     canvas.rect(legenda_x, y + 1, 7, 4, fill=1, stroke=0)
@@ -418,13 +483,8 @@ def _desenhar_grafico(canvas, dados: dict, x: float, y: float, largura: float, a
     _linha_texto(canvas, legenda_x + 76, y + 0.5, "Itens", tamanho=5.8, cor="#f4f4f5")
 
 
-def _desenhar_lojas(canvas, dados: dict, x: float, y: float, largura: float, altura: float) -> None:
-    _linha_texto(canvas, x, y + altura + 12, "LOJAS", tamanho=8, fonte="Helvetica-Bold", cor="#d8b323")
-    _painel(canvas, x, y, largura, altura)
+def _lojas_exibidas(dados: dict) -> list[dict]:
     lojas = list(dados.get("lojas") or [])
-    if not lojas:
-        _linha_texto(canvas, x + 12, y + altura / 2, "Loja não disponível na base.", cor="#a3a3a3")
-        return
     exibidas = lojas[:4]
     if len(lojas) > 4:
         restantes = lojas[4:]
@@ -434,6 +494,22 @@ def _desenhar_lojas(canvas, dados: dict, x: float, y: float, largura: float, alt
             "qtd": sum(item["qtd"] for item in restantes),
             "participacao": sum(item["participacao"] for item in restantes),
         })
+    return exibidas
+
+
+def _altura_lojas(dados: dict) -> float:
+    """Altura só do que existe — painel vazio sobrando era o que destoava da referência."""
+    linhas = max(len(_lojas_exibidas(dados)), 1)
+    return 28 + 14 * linhas
+
+
+def _desenhar_lojas(canvas, dados: dict, x: float, y: float, largura: float, altura: float) -> None:
+    _titulo_secao(canvas, x, y + altura + 13, "LOJAS", "#d8b323")
+    _painel(canvas, x, y, largura, altura)
+    exibidas = _lojas_exibidas(dados)
+    if not exibidas:
+        _linha_texto(canvas, x + 12, y + altura / 2 - 3, "Loja não disponível na base.", cor="#a3a3a3")
+        return
     _linha_texto(canvas, x + 12, y + altura - 15, "LOJA", tamanho=5.6, cor="#8f8f8f", fonte="Helvetica-Bold")
     _linha_texto(canvas, x + largura - 115, y + altura - 15, "RECEITA", tamanho=5.6, cor="#8f8f8f", fonte="Helvetica-Bold")
     _linha_texto(canvas, x + largura - 58, y + altura - 15, "% CLIENTE", tamanho=5.6, cor="#8f8f8f", fonte="Helvetica-Bold")
@@ -447,17 +523,16 @@ def _desenhar_lojas(canvas, dados: dict, x: float, y: float, largura: float, alt
 
 def _desenhar_tabela_produtos(
     canvas, dados: dict, chave: str, titulo: str, x: float, topo: float,
-    largura: float, cor_titulo: str,
+    largura: float, cor_titulo: str, *, mes_atual: str = "ATUAL",
 ) -> None:
     itens = dados["produtos"][chave]
     total = dados["contagens_produtos"][chave]
     rotulo_total = f"{total} produto" if total == 1 else f"{total} produtos"
-    _linha_texto(
-        canvas, x, topo, f"{titulo.upper()}  ·  {rotulo_total}",
-        tamanho=8, fonte="Helvetica-Bold", cor=cor_titulo,
-    )
-    y_header = topo - 17
+    _titulo_secao(canvas, x, topo, f"{titulo.upper()}  ·  {rotulo_total}", cor_titulo)
     row_h = 17
+    # 11pt entre a base do título e o topo da moldura: com 0 o cabeçalho comia
+    # os descendentes do título ("Ç", "Q") e ele parecia colado no card.
+    y_header = topo - 11 - row_h
     col_prod = largura * 0.43
     col_atual = largura * 0.18
     col_media = largura * 0.17
@@ -466,13 +541,13 @@ def _desenhar_tabela_produtos(
     canvas.rect(x, y_header, largura, row_h, fill=1, stroke=0)
     cabecalhos = (
         (x + 5, "PRODUTO", "left"),
-        (x + col_prod + col_atual - 5, "ATUAL R$", "right"),
-        (x + col_prod + col_atual + col_media - 5, "MÉDIA R$", "right"),
+        (x + col_prod + col_atual - 5, f"{mes_atual} R$", "right"),
+        (x + col_prod + col_atual + col_media - 5, "MÉD R$", "right"),
         (x + col_prod + col_atual + col_media + col_var - 5, "VAR.", "right"),
-        (x + largura - 5, "UN", "right"),
+        (x + largura - 5, f"{mes_atual} UN", "right"),
     )
     for cx, texto, alinhamento in cabecalhos:
-        _linha_texto(canvas, cx, y_header + 5.5, texto, tamanho=5.2, cor="#9a9a9a", fonte="Helvetica-Bold", alinhamento=alinhamento)
+        _linha_texto(canvas, cx, y_header + 5.5, texto, tamanho=5.2, cor="#9a9a9a", fonte="Helvetica-Bold", alinhamento=alinhamento, espacamento=0.6)
     if not itens:
         _painel(canvas, x, y_header - row_h, largura, row_h)
         _linha_texto(canvas, x + 6, y_header - row_h + 5.5, "Nenhum produto neste grupo.", tamanho=6, cor="#8f8f8f")
@@ -512,6 +587,20 @@ def gerar_painel_cliente_pdf(
     canvas.rect(0, 0, largura, altura, fill=1, stroke=0)
 
     referencia = pd.Timestamp(dados["data_referencia"])
+    mes_atual_abrev = MESES_ABREV[referencia.month - 1].upper()
+    periodo_anterior = dados["periodo_anterior"] or ""
+    partes_periodo = periodo_anterior.split("-")
+    mes_anterior_extenso = "mês anterior"
+    rotulo_anterior = "mês anterior"
+    if (
+        len(partes_periodo) == 2
+        and partes_periodo[0].isdigit()
+        and partes_periodo[1].isdigit()
+        and 1 <= int(partes_periodo[1]) <= 12
+    ):
+        mes_indice = int(partes_periodo[1]) - 1
+        mes_anterior_extenso = MESES_PT[mes_indice]
+        rotulo_anterior = f"{MESES_ABREV[mes_indice]}/{partes_periodo[0][-2:]}"
     prefixo = "CLIENTE MONITORADO"
     if posicao and total and posicao > 0 and total > 0:
         prefixo = f"CLIENTE {min(posicao, total)} DE {total}"
@@ -519,57 +608,68 @@ def gerar_painel_cliente_pdf(
         f"{prefixo}  ·  {MESES_PT[referencia.month - 1].upper()} "
         f"{referencia.year}  ·  ANÁLISE MENSAL"
     )
-    _linha_texto(canvas, 40, 511, escopo, tamanho=8, fonte="Helvetica-Bold", cor="#d8b323")
-    _linha_texto(canvas, 40, 485, dados["cliente"], tamanho=18, fonte="Helvetica-Bold")
+    _linha_texto(
+        canvas, 40, 511, escopo, tamanho=8, fonte="Helvetica-Bold", cor="#d8b323",
+        espacamento=1.6,
+    )
+    _linha_texto(canvas, 40, 484, dados["cliente"], tamanho=18, fonte="Helvetica-Bold")
     contexto = " · ".join(parte for parte in (empresa, loja or "Todas as lojas") if parte)
     if contexto:
-        _linha_texto(canvas, 40, 470, contexto, tamanho=6.5, cor="#8f8f8f")
+        _linha_texto(canvas, 40, 469, contexto, tamanho=6.5, cor="#8f8f8f")
 
     delta = dados["delta_receita_anterior"]
-    _painel(canvas, 760, 480, 160, 43, destaque=True)
-    _linha_texto(canvas, 772, 496, "Dif. vs mês anterior", tamanho=6.5, cor="#a3a3a3")
+    _painel(canvas, 740, 480, 180, 43, destaque=True)
+    _linha_texto(canvas, 752, 496, f"Δ vs {mes_anterior_extenso}", tamanho=6.5, cor="#a3a3a3")
     _linha_texto(
-        canvas, 908, 495, ("+" if delta > 0 else "") + _fmt_moeda(delta),
+        canvas, 906, 495, ("+" if delta > 0 else "") + _fmt_moeda(delta),
         tamanho=12, fonte="Helvetica-Bold",
         cor="#efca35" if delta >= 0 else "#e59a9a", alinhamento="right",
     )
 
     media_rotulo = f"média {dados['meses_media']}M" if dados["meses_media"] else "sem média"
-    periodo_anterior = dados["periodo_anterior"] or "mês anterior"
-    partes_periodo = periodo_anterior.split("-")
-    if (
-        len(partes_periodo) == 2
-        and partes_periodo[0].isdigit()
-        and partes_periodo[1].isdigit()
-        and 1 <= int(partes_periodo[1]) <= 12
-    ):
-        periodo_anterior = (
-            f"{MESES_ABREV[int(partes_periodo[1]) - 1]}/{partes_periodo[0][-2:]}"
-        )
     _desenhar_kpi(
         canvas, 40, 390, 210, "Receita", _fmt_moeda(dados["receita_atual"]),
-        f"{periodo_anterior} {_fmt_moeda(dados['receita_anterior'])}",
+        f"{rotulo_anterior} {_fmt_moeda(dados['receita_anterior'])}",
         f"{media_rotulo} {_fmt_moeda(dados['receita_media'])}",
         dados["variacao_receita_anterior"], dados["variacao_receita_media"],
     )
     _desenhar_kpi(
         canvas, 265, 390, 210, "Itens", _fmt_numero(dados["qtd_atual"]),
-        f"{periodo_anterior} {_fmt_numero(dados['qtd_anterior'])}",
+        f"{rotulo_anterior} {_fmt_numero(dados['qtd_anterior'])}",
         f"{media_rotulo} {_fmt_numero(dados['qtd_media'])}",
         dados["variacao_qtd_anterior"], dados["variacao_qtd_media"],
     )
-    _desenhar_grafico(canvas, dados, 40, 205, 435, 150)
-    _desenhar_lojas(canvas, dados, 40, 54, 435, 105)
+    # A coluna esquerda é dividida de baixo para cima: as lojas ocupam só o que
+    # têm, e o gráfico recebe a sobra. Painel de altura fixa com uma loja só
+    # deixava metade da página vazia.
+    altura_lojas = _altura_lojas(dados)
+    base_lojas = 54.0
+    topo_grafico = 355.0
+    altura_grafico = topo_grafico - (base_lojas + altura_lojas + 26)
+    _desenhar_grafico(
+        canvas, dados, 40, topo_grafico - altura_grafico, 435, altura_grafico,
+    )
+    _desenhar_lojas(canvas, dados, 40, base_lojas, 435, altura_lojas)
 
-    _desenhar_tabela_produtos(canvas, dados, "subiram", "Produtos que subiram", 510, 452, 410, "#d8b323")
-    _desenhar_tabela_produtos(canvas, dados, "mantiveram", "Produtos que mantiveram o padrão", 510, 315, 410, "#b9b9bb")
-    _desenhar_tabela_produtos(canvas, dados, "cairam", "Produtos que caíram", 510, 178, 410, "#e59a9a")
+    for chave, titulo, topo, cor in (
+        ("subiram", "Produtos que subiram", 455, "#d8b323"),
+        ("mantiveram", "Produtos que mantiveram o padrão", 320, "#b9b9bb"),
+        ("cairam", "Produtos que caíram", 185, "#e59a9a"),
+    ):
+        _desenhar_tabela_produtos(
+            canvas, dados, chave, titulo, 510, topo, 410, cor,
+            mes_atual=mes_atual_abrev,
+        )
 
     _linha_texto(
         canvas, 40, 22,
-        "Critério de produtos: acima de +20% sobe; entre -20% e +20% mantém; abaixo de -20% cai.",
+        "Até 5 produtos por grupo, os maiores em receita do mês. "
+        "Critério: acima de +20% sobe; entre -20% e +20% mantém; abaixo de -20% cai.",
         tamanho=5.8, cor="#777777",
     )
-    _linha_texto(canvas, 920, 22, "2D Prisma - Clientes", tamanho=5.8, cor="#777777", alinhamento="right")
+    rodape_direita = "2D Prisma - Clientes"
+    if posicao and total and posicao > 0 and total > 0:
+        rodape_direita = f"{rodape_direita}   {min(posicao, total)} / {total}"
+    _linha_texto(canvas, 920, 22, rodape_direita, tamanho=5.8, cor="#777777", alinhamento="right")
     canvas.showPage()
     canvas.save()

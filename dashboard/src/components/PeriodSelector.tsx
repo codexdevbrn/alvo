@@ -422,7 +422,7 @@ export function PeriodSelector({
                   key={y}
                   style={{
                     marginBottom: '8px',
-                    borderBottom: '1px solid rgba(255,255,255,0.05)',
+                    borderBottom: '1px solid var(--border)',
                     paddingBottom: '4px',
                   }}
                 >
@@ -434,7 +434,7 @@ export function PeriodSelector({
                       display: 'flex',
                       justifyContent: 'space-between',
                       alignItems: 'center',
-                      background: isExpanded ? 'rgba(255,255,255,0.03)' : 'transparent',
+                      background: isExpanded ? 'var(--surface-1)' : 'transparent',
                       transition: 'background 0.2s',
                     }}
                   >
@@ -445,7 +445,7 @@ export function PeriodSelector({
                           width: '18px',
                           height: '18px',
                           borderRadius: '5px',
-                                          border: `1.5px solid ${yearAllSelected || yearSomeSelected ? corAno(y) : 'rgba(255,255,255,0.2)'}`,
+                                          border: `1.5px solid ${yearAllSelected || yearSomeSelected ? corAno(y) : 'var(--border-strong)'}`,
                                           backgroundColor: yearAllSelected
                                             ? corAnoSolida(y)
                                             : yearSomeSelected
@@ -532,7 +532,7 @@ export function PeriodSelector({
                                     cursor: 'pointer',
                                     background: mesEstaSelecionado(idx)
                                       ? corAnoSolida(y)
-                                      : 'rgba(255,255,255,0.02)',
+                                      : 'var(--surface-1)',
                                     color: mesEstaSelecionado(idx)
                                       ? 'white'
                                       : 'var(--text-secondary)',
@@ -564,7 +564,7 @@ export function PeriodSelector({
                                     ? corAnoSolida(y)
                                     : partial
                                       ? `${corAnoSolida(y)}40`
-                                      : 'rgba(255,255,255,0.02)',
+                                      : 'var(--surface-1)',
                                   color: on || partial ? 'white' : 'var(--text-secondary)',
                                   transition: 'all 0.2s',
                                   fontWeight: on ? 600 : 500,

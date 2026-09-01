@@ -91,6 +91,61 @@ export async function login(usuario: string, senha: string): Promise<string> {
   return dados.token;
 }
 
+export interface ChatIAMensagem {
+  role: 'user' | 'assistant';
+  content: string;
+}
+
+export interface DocumentoContextoIA {
+  disponivel: boolean;
+  atualizado_em: string | null;
+  status?: string | null;
+}
+
+export interface ContextoChatIA {
+  client_id: string;
+  empresa: string;
+  pronto: boolean;
+  provisorio: boolean;
+  crm: DocumentoContextoIA;
+  analise: DocumentoContextoIA;
+  /** Fatos numéricos da base da empresa; opcional, não bloqueia a conversa. */
+  dados: DocumentoContextoIA & { motivo?: string | null };
+}
+
+export interface RespostaChatIA {
+  resposta: string;
+  empresa: string;
+  client_id: string;
+  modelo: string;
+}
+
+/** Metadados dos MDs; o conteúdo integral nunca é enviado ao navegador. */
+export async function obterContextoChatIA(
+  empresa: string,
+  signal?: AbortSignal,
+): Promise<ContextoChatIA> {
+  const params = new URLSearchParams({ empresa });
+  const res = await chamar(`/api/ia/contexto?${params}`, {
+    headers: authHeaders(),
+    signal,
+  });
+  return tratarResposta(res);
+}
+
+/** Envia somente pergunta/histórico. Backend acrescenta os MDs e guarda a chave. */
+export async function conversarChatIA(
+  empresa: string,
+  mensagens: ChatIAMensagem[],
+): Promise<RespostaChatIA> {
+  const res = await chamar('/api/ia/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ empresa, mensagens }),
+  });
+  return tratarResposta(res);
+}
+
 export interface ItemCatalogo {
   chave: string;
   titulo: string;

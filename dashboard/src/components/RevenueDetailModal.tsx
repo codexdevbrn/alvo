@@ -70,8 +70,7 @@ export function RevenueDetailModal({
             position: 'fixed',
             inset: 0,
             zIndex: 10000,
-            background: 'rgba(0,0,0,0.85)',
-            backdropFilter: 'blur(10px)',
+            background: 'rgba(0,0,0,0.72)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -93,7 +92,7 @@ export function RevenueDetailModal({
                         position: 'absolute',
                         top: isMobile ? '1rem' : '1.5rem',
                         right: isMobile ? '0.75rem' : '1.5rem',
-                        background: 'rgba(255,255,255,0.05)',
+                        background: 'var(--surface-1)',
                         border: 'none',
                         borderRadius: '50%',
                         width: '32px',
@@ -101,7 +100,7 @@ export function RevenueDetailModal({
                         display: 'flex',
                         alignItems: 'center',
                         justifyContent: 'center',
-                        color: 'white',
+                        color: 'var(--text-primary)',
                         cursor: 'pointer',
                         zIndex: 10
                     }}
@@ -126,7 +125,7 @@ export function RevenueDetailModal({
                                 paddingRight: isMobile ? '0' : '40px'
                             }}>
                                 <h2 style={{
-                                    color: 'white',
+                                    color: 'var(--text-primary)',
                                     margin: 0,
                                     display: 'flex',
                                     alignItems: 'center',
@@ -220,11 +219,11 @@ export function RevenueDetailModal({
                                             <>
                                                 <div className="glass-card" style={{ padding: isMobile ? '0.75rem' : '1rem', border: '1px solid var(--accent)' }}>
                                                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Total ({selectedYears[0]})</p>
-                                                    <h3 style={{ fontSize: isMobile ? '0.9rem' : '1.25rem', color: 'white', margin: 0 }}>{format(tTotal.rawRev)}</h3>
+                                                    <h3 style={{ fontSize: isMobile ? '0.9rem' : '1.25rem', color: 'var(--text-primary)', margin: 0 }}>{format(tTotal.rawRev)}</h3>
                                                 </div>
                                                 <div className="glass-card" style={{ padding: isMobile ? '0.75rem' : '1rem' }}>
                                                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Média ({selectedYears[0]})</p>
-                                                    <h3 style={{ fontSize: isMobile ? '0.85rem' : '1.1rem', color: 'white', opacity: 0.8, margin: 0 }}>{format(tTotal.rev)}</h3>
+                                                    <h3 style={{ fontSize: isMobile ? '0.85rem' : '1.1rem', color: 'var(--text-primary)', opacity: 0.8, margin: 0 }}>{format(tTotal.rev)}</h3>
                                                 </div>
                                                 <div className="glass-card" style={{
                                                     padding: isMobile ? '0.75rem' : '1rem',
@@ -232,7 +231,7 @@ export function RevenueDetailModal({
                                                     flexDirection: 'column'
                                                 }}>
                                                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Tendência</p>
-                                                    <span style={{ fontSize: isMobile ? '1.1rem' : '1.25rem', fontWeight: 'bold', color: trendPct >= 0 ? '#10b981' : '#f43f5e' }}>
+                                                    <span style={{ fontSize: isMobile ? '1.1rem' : '1.25rem', fontWeight: 'bold', color: trendPct >= 0 ? 'var(--success)' : '#f43f5e' }}>
                                                         {trendPct >= 0 ? '↑' : '↓'} {formatPercent(Math.abs(trendPct))}
                                                     </span>
                                                 </div>
@@ -252,7 +251,7 @@ export function RevenueDetailModal({
                                                     return (
                                                         <div key={year} className="glass-card" style={{ padding: isMobile ? '0.75rem' : '1rem', border: year === newestYear ? '1px solid var(--accent)' : undefined }}>
                                                             <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Total ({year})</p>
-                                                            <h3 style={{ fontSize: isMobile ? '0.9rem' : '1.25rem', color: 'white', margin: 0 }}>{format(v.rawRev)}</h3>
+                                                            <h3 style={{ fontSize: isMobile ? '0.9rem' : '1.25rem', color: 'var(--text-primary)', margin: 0 }}>{format(v.rawRev)}</h3>
                                                         </div>
                                                     );
                                                 })}
@@ -262,7 +261,7 @@ export function RevenueDetailModal({
                                                     flexDirection: 'column'
                                                 }}>
                                                     <p style={{ color: 'var(--text-secondary)', fontSize: '0.65rem', textTransform: 'uppercase', marginBottom: '0.4rem' }}>Perf. Geral</p>
-                                                    <span style={{ fontSize: isMobile ? '1.1rem' : '1.25rem', fontWeight: 'bold', color: trendPct >= 0 ? '#10b981' : '#f43f5e' }}>
+                                                    <span style={{ fontSize: isMobile ? '1.1rem' : '1.25rem', fontWeight: 'bold', color: trendPct >= 0 ? 'var(--success)' : '#f43f5e' }}>
                                                         {trendPct >= 0 ? '↑' : '↓'} {formatPercent(Math.abs(trendPct))}
                                                     </span>
                                                 </div>
@@ -295,13 +294,13 @@ export function RevenueDetailModal({
 
                                 {/* Scrollable Table Area (Expanded to space) */}
                                 <div className="custom-scrollbar" style={{
-                                    background: 'rgba(255,255,255,0.02)',
+                                    background: 'var(--surface-1)',
                                     borderRadius: '0.75rem',
                                     border: '1px solid var(--border)',
                                     overflowX: 'auto',
                                     marginBottom: isMobile ? '2rem' : '0'
                                 }}>
-                                    <table style={{ width: '100%', borderCollapse: 'collapse', color: 'white', fontSize: isMobile ? '0.8rem' : '1rem' }}>
+                                    <table style={{ width: '100%', borderCollapse: 'collapse', color: 'var(--text-primary)', fontSize: isMobile ? '0.8rem' : '1rem' }}>
                                         <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: '#1a1a1e' }}>
                                             <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--border)', color: 'var(--text-secondary)' }}>
                                                 <th style={{ padding: isMobile ? '0.75rem' : '1rem' }}>Mês / Ano</th>
@@ -315,7 +314,7 @@ export function RevenueDetailModal({
                                                 const valB = historyType === 'revenue' ? row.revenueB : (historyType === 'mfr' ? row.cntB : row.clientsB);
                                                 const format = (v: number) => historyType === 'revenue' ? formatCurrency(v).replace(',00', '') : formatNumber(Math.round(v));
                                                 return (
-                                                    <tr key={i} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
+                                                    <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
                                                         <td style={{ padding: isMobile ? '0.75rem' : '1rem', fontWeight: 600 }}>{row.name}</td>
                                                         {mData.labelA && !mData.isTrend && <td style={{ padding: isMobile ? '0.75rem' : '1rem' }}>{format(valA ?? 0)}</td>}
                                                         <td style={{ padding: isMobile ? '0.75rem' : '1rem' }}>{format(valB ?? 0)}</td>

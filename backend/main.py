@@ -34,6 +34,7 @@ from starlette.background import BackgroundTask
 
 import atualizacoes
 import caminhos_padrao
+import chat_ia as chat_carteira
 import dados_no_disco
 import db
 import inicio_automatico
@@ -151,6 +152,111 @@ def login(dados: LoginRequest):
     if not db.verificar_login(dados.usuario, dados.senha):
         raise HTTPException(status_code=401, detail="Usuário ou senha inválidos.")
     return {"token": criar_token(dados.usuario)}
+
+
+# ---------------------------------------------------------------------------
+# Assistente IA da carteira
+# ---------------------------------------------------------------------------
+
+CHAT_REQUISICOES_POR_MINUTO = 8
+_chat_rate_lock = threading.Lock()
+_chat_rate: dict[str, list[float]] = {}
+
+
+class ChatMensagemBody(BaseModel):
+    role: str
+    content: str
+
+
+class ChatEmpresaBody(BaseModel):
+    empresa: str
+    mensagens: list[ChatMensagemBody]
+
+
+def _limitar_chat(chave: str) -> None:
+    """Rate limit em memória; protege custo sem persistir conteúdo da conversa."""
+    agora = time.monotonic()
+    inicio = agora - 60.0
+    with _chat_rate_lock:
+        recentes = [instante for instante in _chat_rate.get(chave, []) if instante >= inicio]
+        if len(recentes) >= CHAT_REQUISICOES_POR_MINUTO:
+            raise HTTPException(
+                status_code=429,
+                detail="Muitas perguntas em pouco tempo. Aguarde um minuto e tente novamente.",
+            )
+        recentes.append(agora)
+        _chat_rate[chave] = recentes
+
+
+def _contexto_chat_empresa(empresa: str) -> chat_carteira.ContextoEmpresa:
+    database = caminhos_padrao.database_carteira()
+    dossie = caminhos_padrao.dossie_carteira()
+    if not database or not dossie:
+        raise chat_carteira.ErroChatIA(
+            "carteira_nao_configurada",
+            "Database ou pasta de dossiês da carteira não está disponível.",
+        )
+    # Pasta de trabalho entra como opcional: sem ela o chat segue só com os MDs.
+    return chat_carteira.carregar_contexto_empresa(
+        empresa,
+        database=database,
+        dossie=dossie,
+        trabalho=_resolver_caminho_trabalho(),
+    )
+
+
+def _erro_http_chat(exc: chat_carteira.ErroChatIA) -> HTTPException:
+    if exc.codigo in {"empresa_ausente", "mensagem_invalida", "mensagem_vazia", "pergunta_ausente", "pergunta_extensa", "historico_extenso"}:
+        status = 400
+    elif exc.codigo in {"empresa_sem_dossie"}:
+        status = 404
+    elif exc.codigo in {"crm_md_ausente", "analise_md_ausente", "analise_indisponivel"}:
+        status = 409
+    elif exc.codigo.startswith("ollama_"):
+        status = 503 if "key" in exc.codigo else 502
+    else:
+        status = 422
+    return HTTPException(status_code=status, detail=str(exc))
+
+
+@app.get("/api/ia/contexto")
+def obter_contexto_chat_empresa(
+    empresa: str,
+    _usuario: str = Depends(exigir_login),
+):
+    """Informa presença/atualização dos MDs, sem devolver seu conteúdo."""
+    try:
+        return chat_carteira.status_contexto(_contexto_chat_empresa(empresa))
+    except chat_carteira.ErroChatIA as exc:
+        raise _erro_http_chat(exc) from exc
+
+
+@app.post("/api/ia/chat")
+def conversar_com_empresa(
+    corpo: ChatEmpresaBody,
+    request: Request,
+    usuario: str = Depends(exigir_login),
+):
+    """Conversa sobre os MDs; não grava histórico nem devolve os documentos."""
+    host = request.client.host if request.client else "sem-host"
+    _limitar_chat(f"{usuario}:{host}")
+    try:
+        contexto = _contexto_chat_empresa(corpo.empresa)
+        chave = chat_carteira.carregar_api_key_ollama()
+        resposta = chat_carteira.responder_chat(
+            contexto,
+            [mensagem.model_dump() for mensagem in corpo.mensagens],
+            chave,
+        )
+        return {
+            "resposta": resposta,
+            "empresa": contexto.empresa_carteira,
+            "client_id": contexto.client_id,
+            "modelo": chat_carteira.MODELO_OLLAMA,
+        }
+    except chat_carteira.ErroChatIA as exc:
+        logger.warning("Chat IA falhou usuario=%s codigo=%s", usuario, exc.codigo)
+        raise _erro_http_chat(exc) from exc
 
 
 # ---------------------------------------------------------------------------

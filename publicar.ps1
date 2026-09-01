@@ -48,6 +48,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $raiz = $PSScriptRoot
 
+# O Python usa a pagina de codigo legada quando stdout e capturado no Windows,
+# enquanto o PowerShell 7 interpreta a saida nativa como UTF-8. Sem alinhar os
+# dois lados, caminhos com acento viram caracteres de substituicao e Test-Path
+# procura uma pasta inexistente. A variavel afeta apenas subprocessos deste script.
+$env:PYTHONIOENCODING = 'utf-8'
+
 function Etapa($texto) { Write-Host "`n=== $texto ===" -ForegroundColor Cyan }
 
 # "Prisma-1.0.11.zip" -> [version]1.0.11. Comparar os nomes como texto erraria:

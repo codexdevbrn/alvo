@@ -76,7 +76,6 @@ interface TrendCardProps {
     title: string;
     items: TrendItem[];
     barColor: string;
-    barGlow: string;
     isMobile: boolean;
     /** Rótulo do período atual (ex.: "2026") — deixa claro que o R$ é total, não média. */
     labelPeriodo?: string;
@@ -86,12 +85,12 @@ interface TrendCardProps {
 // Sub-component: single ranked list card (used for cliente/fabricante/categoria)
 // ==========================================
 
-function TrendCard({ title, items, barColor, barGlow, isMobile, labelPeriodo }: TrendCardProps) {
+function TrendCard({ title, items, barColor, isMobile, labelPeriodo }: TrendCardProps) {
     const maxAtual = Math.max(0, ...items.map((item) => item.rev25));
 
     return (
         <div className="glass-card">
-            <h3 style={{ color: 'white', marginBottom: '0.35rem', fontSize: isMobile ? '1rem' : '1.25rem' }}>{title}</h3>
+            <h3 style={{ color: 'var(--text-primary)', marginBottom: '0.35rem', fontSize: isMobile ? '1rem' : '1.25rem' }}>{title}</h3>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.75rem', margin: '0 0 1.25rem' }}>
               Total em {labelPeriodo || 'período atual'} · % vs mesmo mês do ano anterior · barra proporcional ao valor
             </p>
@@ -115,9 +114,9 @@ function TrendCard({ title, items, barColor, barGlow, isMobile, labelPeriodo }: 
                             <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.4rem', fontSize: isMobile ? '0.7rem' : '0.8rem' }}>
                                 <span style={{ color: 'var(--text-primary)', fontWeight: 600, maxWidth: isMobile ? '120px' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.name}</span>
                                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                                    <span style={{ color: 'white', fontWeight: 600 }}>{formatCurrency(item.rev25)}</span>
+                                    <span style={{ color: 'var(--text-primary)', fontWeight: 600 }}>{formatCurrency(item.rev25)}</span>
                                     <span style={{
-                                        color: isPositive ? '#10b981' : '#ff6f61',
+                                        color: isPositive ? 'var(--success)' : 'var(--danger)',
                                         fontSize: '0.65rem',
                                         fontWeight: 'bold'
                                     }}>
@@ -125,13 +124,12 @@ function TrendCard({ title, items, barColor, barGlow, isMobile, labelPeriodo }: 
                                     </span>
                                 </div>
                             </div>
-                            <div style={{ width: '100%', height: '4px', background: 'rgba(255,255,255,0.05)', borderRadius: '2px' }}>
+                            <div style={{ width: '100%', height: '4px', background: 'var(--surface-2)', borderRadius: '2px' }}>
                                 <div style={{
                                     width: `${barPct}%`,
                                     height: '100%',
                                     background: barColor,
                                     borderRadius: '2px',
-                                    boxShadow: `0 0 8px ${barGlow}`,
                                     transition: 'width 0.5s cubic-bezier(0.22, 0.61, 0.36, 1)'
                                 }} />
                             </div>
@@ -196,7 +194,7 @@ export function BreakdownSection({
 
         return (
             <div className="glass-card" style={{ gridColumn: 'span 2' }}>
-                <h3 style={{ color: 'white', marginBottom: '1.5rem', fontSize: isMobile ? '1rem' : '1.25rem' }}>{title}</h3>
+                <h3 style={{ color: 'var(--text-primary)', marginBottom: '1.5rem', fontSize: isMobile ? '1rem' : '1.25rem' }}>{title}</h3>
                 <div className="custom-scrollbar" style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: isMobile ? '0.75rem' : '0.85rem' }}>
                         <thead>
@@ -212,8 +210,8 @@ export function BreakdownSection({
                             {sortedProducts.map((p) => {
                                 const delta = productDelta(p);
                                 return (
-                                    <tr key={p.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.03)' }}>
-                                        <td style={{ padding, color: 'white', fontWeight: 500 }}>
+                                    <tr key={p.id} style={{ borderBottom: '1px solid var(--border)' }}>
+                                        <td style={{ padding, color: 'var(--text-primary)', fontWeight: 500 }}>
                                             <span style={{ maxWidth: isMobile ? '100px' : 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', display: 'block' }}>{p.name}</span>
                                         </td>
                                         <td style={{ padding, color: 'var(--text-secondary)', maxWidth: isMobile ? '140px' : '280px' }}>
@@ -223,7 +221,7 @@ export function BreakdownSection({
                                         <td style={{ padding, color: 'var(--text-secondary)', textAlign: 'right' }}>{formatCurrency(p.avg25)}</td>
                                         <td style={{ padding, textAlign: 'right' }}>
                                             <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                                <span style={{ color: delta >= 0 ? '#10b981' : '#f43f5e', fontWeight: 700 }}>
+                                                <span style={{ color: delta >= 0 ? 'var(--success)' : '#f43f5e', fontWeight: 700 }}>
                                                     {delta > 0 ? '+' : ''}{delta > 1000 ? '1k%+' : formatPercent(delta, delta > 100 ? 0 : 1)}
                                                 </span>
                                             </div>
@@ -248,7 +246,6 @@ export function BreakdownSection({
                 title="Performance por Cliente"
                 items={topClients}
                 barColor="var(--accent-tertiary)"
-                barGlow="rgba(104, 129, 141, 0.28)"
                 isMobile={isMobile}
                 labelPeriodo={labelB}
             />
@@ -256,7 +253,6 @@ export function BreakdownSection({
                 title="Performance por Fabricante"
                 items={topMfrs}
                 barColor="var(--accent)"
-                barGlow="rgba(218, 187, 108, 0.25)"
                 isMobile={isMobile}
                 labelPeriodo={labelB}
             />
@@ -264,7 +260,6 @@ export function BreakdownSection({
                 title="Performance por Categoria"
                 items={topDescs}
                 barColor="var(--accent-secondary-bright)"
-                barGlow="rgba(48, 67, 115, 0.35)"
                 isMobile={isMobile}
                 labelPeriodo={labelB}
             />

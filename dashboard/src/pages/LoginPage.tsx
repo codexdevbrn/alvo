@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import type { FormEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Lock, User } from 'lucide-react';
 import { login } from '../api/client';
 
 export default function LoginPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [usuario, setUsuario] = useState('');
   const [senha, setSenha] = useState('');
   const [erro, setErro] = useState<string | null>(null);
@@ -17,7 +18,11 @@ export default function LoginPage() {
     setCarregando(true);
     try {
       await login(usuario, senha);
-      navigate('/analisador');
+      const estado = location.state as { from?: unknown } | null;
+      const destino = typeof estado?.from === 'string' && estado.from.startsWith('/')
+        ? estado.from
+        : '/analisador';
+      navigate(destino, { replace: true });
     } catch (erroLogin) {
       setErro(erroLogin instanceof Error ? erroLogin.message : 'Falha ao entrar.');
     } finally {
@@ -40,7 +45,7 @@ export default function LoginPage() {
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
           Usuário
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', borderRadius: '0.75rem', padding: '0.6rem 0.8rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--surface-1)', border: '1px solid var(--border)', borderRadius: 'var(--raio-controle)', padding: '0.6rem 0.8rem' }}>
             <User size={16} color="var(--text-secondary)" />
             <input
               value={usuario}
@@ -54,7 +59,7 @@ export default function LoginPage() {
 
         <label style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
           Senha
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border)', borderRadius: '0.75rem', padding: '0.6rem 0.8rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', background: 'var(--surface-1)', border: '1px solid var(--border)', borderRadius: 'var(--raio-controle)', padding: '0.6rem 0.8rem' }}>
             <Lock size={16} color="var(--text-secondary)" />
             <input
               type="password"
@@ -74,7 +79,7 @@ export default function LoginPage() {
             onClick={() => navigate('/')}
             disabled={carregando}
             style={{
-              flex: 1, background: 'rgba(255,255,255,0.05)', color: 'var(--text-primary)',
+              flex: 1, background: 'var(--surface-1)', color: 'var(--text-primary)',
               border: '1px solid var(--border)', borderRadius: '0.75rem',
               padding: '0.75rem', fontSize: '0.95rem', fontWeight: 600, cursor: carregando ? 'not-allowed' : 'pointer',
               opacity: carregando ? 0.7 : 1,

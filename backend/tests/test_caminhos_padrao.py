@@ -9,7 +9,15 @@ import os
 import caminhos_padrao
 
 
-def _montar_onedrive(raiz, subpastas=("Dados Alvos", "analisador", os.path.join("Prisma", "Atualizações"))):
+def _montar_onedrive(
+    raiz,
+    subpastas=(
+        "Dados Alvos",
+        "analisador",
+        os.path.join("Prisma", "Atualizações"),
+        "Carteira",
+    ),
+):
     """Cria `OneDrive - <dominio>/01 - Marco + Monitores/Ecossistema-Monitoria/...`."""
     onedrive = raiz / f"OneDrive - {caminhos_padrao.SUFIXO_ONEDRIVE_EMPRESA}"
     base = onedrive / caminhos_padrao.RAIZ_ECOSSISTEMA
@@ -59,16 +67,27 @@ def test_sem_onedrive_nenhum(tmp_path, monkeypatch):
     assert caminhos_padrao.fonte_dados() is None
     assert caminhos_padrao.trabalho() is None
     assert caminhos_padrao.atualizacoes() is None
+    assert caminhos_padrao.carteira() is None
+    assert caminhos_padrao.database_carteira() is None
+    assert caminhos_padrao.dossie_carteira() is None
 
 
-def test_tres_caminhos_resolvidos(tmp_path, monkeypatch):
+def test_caminhos_resolvidos(tmp_path, monkeypatch):
     onedrive = _montar_onedrive(tmp_path)
+    carteira = onedrive / caminhos_padrao.RAIZ_ECOSSISTEMA / "Carteira"
+    (carteira / "dossie").mkdir()
+    (carteira / "database_dev.xlsx").touch()
     _limpar_ambiente(monkeypatch)
     monkeypatch.setenv("OneDriveCommercial", str(onedrive))
     base = os.path.join(str(onedrive), caminhos_padrao.RAIZ_ECOSSISTEMA)
     assert caminhos_padrao.fonte_dados() == os.path.join(base, "Dados Alvos")
     assert caminhos_padrao.trabalho() == os.path.join(base, "analisador")
     assert caminhos_padrao.atualizacoes() == os.path.join(base, "Prisma", "Atualizações")
+    assert caminhos_padrao.carteira() == os.path.join(base, "Carteira")
+    assert caminhos_padrao.database_carteira() == os.path.join(
+        base, "Carteira", "database_dev.xlsx",
+    )
+    assert caminhos_padrao.dossie_carteira() == os.path.join(base, "Carteira", "dossie")
 
 
 def test_fonte_e_trabalho_nunca_coincidem(tmp_path, monkeypatch):
@@ -93,3 +112,4 @@ def test_subpasta_ausente_nao_e_sugerida(tmp_path, monkeypatch):
     assert caminhos_padrao.fonte_dados() is not None
     assert caminhos_padrao.trabalho() is None
     assert caminhos_padrao.atualizacoes() is None
+    assert caminhos_padrao.carteira() is None

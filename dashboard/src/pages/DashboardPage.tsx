@@ -907,7 +907,7 @@ export default function DashboardPage() {
     <div className="glass-card" style={{ padding: '0.85rem 1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
       <AlertTriangle size={18} color="#f59e0b" style={{ flexShrink: 0 }} />
       <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-        <strong style={{ color: 'white' }}>Base de dados em montagem.</strong> Os números abaixo podem estar incompletos ou desatualizados até a base ficar pronta.
+        <strong style={{ color: 'var(--text-primary)' }}>Base de dados em montagem.</strong> Os números abaixo podem estar incompletos ou desatualizados até a base ficar pronta.
       </span>
     </div>
   ) : null;
@@ -924,7 +924,7 @@ export default function DashboardPage() {
           {avisoBaseDados}
           <div className="glass-card" style={{ padding: '4rem', textAlign: 'center' }}>
             <AlertTriangle size={48} color="#f43f5e" style={{ marginBottom: '1rem' }} />
-            <h2 style={{ color: 'white' }}>Não foi possível carregar os dados</h2>
+            <h2 style={{ color: 'var(--text-primary)' }}>Não foi possível carregar os dados</h2>
             <p style={{ color: 'var(--text-secondary)' }}>
               {aguardandoBaseDados
                 ? 'A base de dados ainda está sendo montada. Volte em breve.'
@@ -952,7 +952,7 @@ export default function DashboardPage() {
         <div className="glass-card" style={{ padding: '0.85rem 1.25rem', marginBottom: '1.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
           <AlertTriangle size={18} color="#f43f5e" style={{ flexShrink: 0 }} />
           <span style={{ color: 'var(--text-secondary)', fontSize: '0.9rem' }}>
-            Não foi possível carregar os dados de <strong style={{ color: 'white' }}>{empresa}</strong>: {empresaError}
+            Não foi possível carregar os dados de <strong style={{ color: 'var(--text-primary)' }}>{empresa}</strong>: {empresaError}
           </span>
         </div>
       )}
@@ -1017,7 +1017,7 @@ export default function DashboardPage() {
       {processed.noDataMessage ? (
         <div className="glass-card" style={{ padding: '4rem', textAlign: 'center', marginBottom: '2rem' }}>
           <AlertTriangle size={48} color="#f43f5e" style={{ marginBottom: '1rem' }} />
-          <h2 style={{ color: 'white' }}>Sem dados para esta seleção</h2>
+          <h2 style={{ color: 'var(--text-primary)' }}>Sem dados para esta seleção</h2>
           <p style={{ color: 'var(--text-secondary)' }}>{processed.noDataMessage}</p>
         </div>
       ) : (

@@ -1,17 +1,6 @@
 @echo off
-REM Wrapper para o Agendador de Tarefas — normalização noturna de todas as empresas.
+REM Compatibilidade: orquestra normalização e análises IA pelo PowerShell seguro.
 setlocal
 cd /d "%~dp0"
-
-set "PYTHONUTF8=1"
-set "LOGDIR=%~dp0logs_agendador"
-if not exist "%LOGDIR%" mkdir "%LOGDIR%"
-
-set "STAMP=%DATE:~6,4%-%DATE:~3,2%-%DATE:~0,2%_%TIME:~0,2%%TIME:~3,2%%TIME:~6,2%"
-set "STAMP=%STAMP: =0%"
-
-echo [%DATE% %TIME%] Inicio normalizar_todas_empresas >> "%LOGDIR%\agendador.log"
-python "%~dp0normalizar_todas_empresas.py" %* >> "%LOGDIR%\agendador_detalhado.log" 2>&1
-set "ERR=%ERRORLEVEL%"
-echo [%DATE% %TIME%] Fim exit=%ERR% >> "%LOGDIR%\agendador.log"
-exit /b %ERR%
+PowerShell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0executar_lote_noturno.ps1" %*
+exit /b %ERRORLEVEL%

@@ -228,6 +228,7 @@ def montar_card(
     *,
     metrica: str = "receita",
     meses: int | None = 12,
+    hoje: date | None = None,
 ) -> dict:
     """Dados de um minicard: série da métrica pedida, total e variação vs ano anterior.
 
@@ -338,7 +339,7 @@ def montar_card(
         # mês/ano de atualização, sem o dia, então não há como dividir apenas
         # pelos dias úteis já transcorridos.
         "ultimo_periodo_parcial": _eh_mes_corrente(
-            janela[-1].get("periodo") if janela else None
+            janela[-1].get("periodo") if janela else None, hoje
         ),
         "dias_uteis_janela": dias_uteis_janela if metrica == "receita_dia" else None,
         "meses_serie": len(serie),
