@@ -50,7 +50,6 @@ hiddenimports = [
     # Scripts da raiz importados por main.py via sys.path.
     "normalizar_base",
     "normalizar_liquidez",
-    "harmonizar_descricoes",
     # Modo Prisma.exe --pre-gerar: o lote é importado sob demanda, então a análise
     # estática não o alcança pelo entrypoint.
     "normalizar_todas_empresas",

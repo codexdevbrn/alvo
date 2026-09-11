@@ -8,21 +8,21 @@ Projeto Prisma = Dashboard de vendas ("Alvo") + Analisador de Monitoria, unifica
 
 - **Dashboard** (`/`, público) — visualização de receita/quantidade por período, loja, cliente, fabricante e produto. Duas fontes de dados possíveis:
   - **Modo estático** (empresa `''`, padrão): lê `dashboard/public/data/summary.json`, gerado offline por `process_data.py` a partir de `base_de_dados.xlsx` (export do Power BI).
-  - **Modo por empresa**: usuário escolhe uma empresa no seletor (`EmpresaSelector`), e o frontend busca `GET /api/dashboard/summary/{empresa}` no backend, que garante/gera `Base.csv` na pasta de trabalho a partir do BI da pasta fonte e devolve o summary (`backend/dashboard_summary.py`), com cache em memória por mtime.
-- **Analisador de Monitoria** (`/analisador`, atrás de login) — configuração de exclusões/cortes de clientes e produtos sobre a base padrão (`base_de_dados.xlsx`) ou, com empresa selecionada, sobre o `Base.csv` dessa empresa na pasta de trabalho; relatórios do catálogo, export Excel/PDF. Precisa do backend em `backend/` (FastAPI), que reaproveita o motor de análise (`engine/analise_funil.py`) do app desktop original (`erickxc/analisador-monitoria-2d`).
+  - **Modo por empresa**: usuário escolhe uma empresa no seletor (`EmpresaSelector`), e o frontend busca `GET /api/dashboard/summary/{empresa}` no backend, que lê os dois CSV da empresa na pasta fonte (sem gerar nada em disco) e devolve o summary (`backend/dashboard_summary.py`), com cache em memória por mtime.
+- **Analisador de Monitoria** (`/analisador`, atrás de login) — configuração de exclusões/cortes de clientes e produtos sobre a base padrão (`base_de_dados.xlsx`) ou, com empresa selecionada, sobre a base dessa empresa lida direto da fonte; relatórios do catálogo, export Excel/PDF. Precisa do backend em `backend/` (FastAPI), que reaproveita o motor de análise (`engine/analise_funil.py`) do app desktop original (`erickxc/analisador-monitoria-2d`).
 
 Os dois módulos compartilham **dois caminhos** (chaves SQLite em `config_app`):
 
 | Chave | Papel | Conteúdo |
 |---|---|---|
-| `caminho_fonte_dados` | **Somente leitura absoluta** | `/{cliente}/BI/{cliente}_MOVIMENTO_ATUAL.*` (ou `_MOVIMENTO`) + `{cliente}_PRODUTO.*` |
-| `caminho_trabalho` | Escrita | `/{cliente}/Base.csv`, `config.json`, `harm.xlsx`, backups |
+| `caminho_fonte_dados` | **Somente leitura absoluta** | `/{cliente}/{cliente}_MOVIMENTO_ATUAL.csv` + `/{cliente}_PRODUTO.csv` (`;`, aspas duplas), direto na pasta do cliente |
+| `caminho_trabalho` | Escrita | `/{cliente}/config.json`, `summary_dashboard.json`, `resumo_monitor.json`, backups; sem `Base.csv`/`harm.xlsx` intermediário |
 
 **Caminhos padrão** (`backend/caminhos_padrao.py`): quando nada foi configurado, os três caminhos são resolvidos dentro do OneDrive corporativo — `Dados Alvos` (fonte), `analisador` (trabalho) e `Prisma\Atualizações` (canal), todos sob `<OneDrive>\01 - Marco + Monitores\Ecossistema-Monitoria`. A raiz local do OneDrive é descoberta em tempo de execução (`%OneDriveCommercial%`, com varredura do perfil como reserva), porque ela contém o nome do usuário do Windows e não pode ser fixada no código. Assim uma máquina nova funciona sem ninguém digitar caminho. O que o usuário salvar em Configurações tem precedência, e só pastas que existem são sugeridas.
 
 Consequência a ter em mente: a pasta de trabalho padrão é **compartilhada**. Isso é intencional — é nela que o lote noturno grava os summaries, e apontar uma máquina para pasta local vazia faria cada empresa ser gerada na hora (a Altese leva ~219 s contra ~1 s lendo o summary pronto). Em troca, uma instância rodando do fonte sem configuração também escreve lá; para experimentar sem risco, configure uma pasta de trabalho local.
 
-Regra inviolável: o app **nunca** cria, altera, apaga ou renomeia nada sob a pasta fonte. Toda escrita (normalização, harmonização, config) vai só para a pasta de trabalho. Fonte e trabalho não podem ser a mesma pasta nem uma dentro da outra — o backend recusa antes de qualquer `makedirs`/`to_csv`. O CLI `normalizar_base.py` exige `--trabalho` e também recusa gravar sob a fonte; `harmonizar_descricoes.py` recusa pastas que contenham `BI/`. Endpoints: `GET/POST /api/dashboard/caminho-fonte-dados` e `.../caminho-trabalho` (dash, público); `GET/POST /api/config/caminho-fonte-dados` e `.../caminho-trabalho` (Analisador, autenticado). Aliases legados (`caminho-dados`, `caminho-empresas`) ainda redirecionam para fonte/trabalho.
+Regra inviolável: o app **nunca** cria, altera, apaga ou renomeia nada sob a pasta fonte. Toda escrita (config, summaries) vai só para a pasta de trabalho. Fonte e trabalho não podem ser a mesma pasta nem uma dentro da outra — o backend recusa antes de qualquer `makedirs`/`to_csv`. O CLI `normalizar_base.py` exige `--trabalho` e também recusa gravar sob a fonte. Endpoints: `GET/POST /api/dashboard/caminho-fonte-dados` e `.../caminho-trabalho` (dash, público); `GET/POST /api/config/caminho-fonte-dados` e `.../caminho-trabalho` (Analisador, autenticado). Aliases legados (`caminho-dados`, `caminho-empresas`) ainda redirecionam para fonte/trabalho.
 
 ## Comandos
 
@@ -43,24 +43,19 @@ npm run build       # tsc -b && vite build
 npm run lint         # eslint .
 npm run preview
 ```
-**Deploy (XAMPP)** — instalação servida na LAN (`http://monitor-2d/`):
-Ao alterar o frontend, além de rodar `npm run build`, é necessário copiar os arquivos de `dashboard/dist` para o diretório do Apache: `c:\xampp\monitoria\htdocs`. (Ex: `Copy-Item -Path ".\dist\*" -Destination "c:\xampp\monitoria\htdocs" -Recurse -Force`)
-
-O Apache (`c:\xampp\monitoria\apache\conf\httpd.conf`) escuta na 80 em todas as interfaces e faz `ProxyPass /api http://127.0.0.1:8003/api`; o backend roda como serviço via `nssm` (`c:\xampp\monitoria\prisma-svc`). Consequência a ter em mente: **a API é alcançável por qualquer máquina da rede**, e `auth.LOGIN_DESATIVADO = True` não barra ninguém. Rota destrutiva nova precisa de proteção própria — ver o gate de origem local em `_exigir_origem_local`.
-
-**Deploy (executável)** — distribuição para máquinas que não têm Python nem XAMPP: ver "Empacotamento e atualização" abaixo. Nesse modo o próprio FastAPI serve o `dashboard/dist`, então o Apache não é necessário.
+**Deploy (executável)** — único modo de distribuição hoje (o deploy via XAMPP/Apache foi descontinuado): ver "Empacotamento e atualização" abaixo. Nesse modo o próprio FastAPI serve o `dashboard/dist` e escuta só em `127.0.0.1`, sem depender de servidor web externo.
 
 Vite tem proxy de `/api` → `http://127.0.0.1:8003` (`dashboard/vite.config.ts`), então em dev o frontend chama `/api` relativo.
 
 **Atualizar dados do dashboard (modo estático)**: `python process_data.py` na raiz (lê `base_de_dados.xlsx`, grava `dashboard/public/data/summary.json`).
 
-**Harmonizar descrições de produto de uma empresa**: `python harmonizar_descricoes.py "<pasta_trabalho>/<empresa>"` (lê `harm.xlsx` da pasta de trabalho, reescreve a coluna `descricao` do `Base.csv`; `--dry-run` só mostra o relatório sem gravar; backup `Base.antes-harm.csv` na primeira execução). A normalização BI→Base: `python normalizar_base.py "<pasta_fonte>/<empresa>" --trabalho "<pasta_trabalho>/<empresa>"`.
+**Regenerar summary/resumo de uma empresa**: `python normalizar_base.py "<pasta_fonte>/<empresa>" --trabalho "<pasta_trabalho>/<empresa>"` — lê os dois CSV da fonte (`{empresa}_MOVIMENTO_ATUAL.csv` + `{empresa}_PRODUTO.csv`) e grava `summary_dashboard.json`/`resumo_monitor.json` na pasta de trabalho; a descrição harmonizada já vem pronta em `DESCRICAO_HARMONIZADA` no `_PRODUTO.csv`, sem passo manual.
 
 **Testes do backend**: `cd backend && python -m pytest -q`. Não há testes automatizados no frontend.
 
 ## Empacotamento e atualização
 
-O Prisma também é distribuído como executável Windows, para máquinas onde instalar Python, Node e XAMPP não se justifica. Nesse modo o backend serve o `dashboard/dist` embutido, escolhe uma porta livre a partir da 8003 e abre o navegador.
+O Prisma também é distribuído como executável Windows, para máquinas onde instalar Python e Node não se justifica. Nesse modo o backend serve o `dashboard/dist` embutido, escolhe uma porta livre a partir da 8003 e abre o navegador.
 
 ### Publicar uma release
 
@@ -110,7 +105,7 @@ Três consequências que já custaram um ciclo de teste cada, e que quem mexer a
 
 `dados_no_disco.py`: marca fonte e trabalho com `FILE_ATTRIBUTE_PINNED` — o mesmo "Sempre manter neste dispositivo" do OneDrive. Serve para máquina nova, onde os arquivos podem ser placeholder e a primeira leitura paga download; **não** acelera o que já está local.
 
-Os dois endpoints usam `_exigir_origem_local`, como `/aplicar`: alteram o logon da máquina e disparam download de gigabytes, e o Apache expõe a API para a rede.
+Os dois endpoints usam `_exigir_origem_local`, como `/aplicar`: alteram o logon da máquina e disparam download de gigabytes — ação de máquina local, não de rede.
 
 ### Como a atualização funciona
 
@@ -118,7 +113,7 @@ O canal é uma pasta compartilhada (na prática o OneDrive da empresa) configura
 
 Três coisas a não mexer sem entender:
 
-- **`_exigir_origem_local`** recusa `/api/atualizacoes/aplicar` de fora da máquina, inclusive loopback com cabeçalho de proxy. Sem isso, o `ProxyPass` do Apache deixaria qualquer PC da rede substituir a instalação.
+- **`_exigir_origem_local`** recusa `/api/atualizacoes/aplicar` de fora da máquina, inclusive loopback com cabeçalho de proxy — defesa contra qualquer reverse proxy futuro que reexponha a API na rede, já que o login pode estar desativado (`auth.LOGIN_DESATIVADO`).
 - **`CREATE_NEW_CONSOLE`**, não `DETACHED_PROCESS`, ao lançar o app e o atualizador: sem console, o bootloader do PyInstaller morre antes de subir o servidor.
 - **O atualizador roda de uma cópia no `%TEMP%`**, nunca de dentro da pasta que substitui: o Windows mantém handle no binário em execução e na cwd, e o rename falha com `WinError 32`.
 
@@ -203,18 +198,18 @@ Três consequências a ter em mente:
 - Filtros do Dashboard usam debounce (`useDebouncedValue`, ~300ms) + `useTransition` para recalcular sem travar a UI ao clicar rápido em filtros.
 
 ### Backend (`backend/`)
-- `main.py` — app FastAPI, define todas as rotas: login, catálogo, base (Excel padrão ou `Base.csv` por empresa), prévias, caminhos fonte/trabalho, config.json por empresa, dashboard por empresa, análise, export. CORS liberado só para `http://localhost:5173`.
+- `main.py` — app FastAPI, define todas as rotas: login, catálogo, base (Excel padrão ou os dois CSV por empresa, lidos direto da fonte), prévias, caminhos fonte/trabalho, config.json por empresa, dashboard por empresa, análise, export. CORS liberado só para `http://localhost:5173`.
 - `auth.py` — geração/validação de token (`criar_token`, `exigir_login` como dependency do FastAPI). As rotas `/api/dashboard/*` **não** exigem login — o dashboard é público (app de uso interno).
 - `db.py` — camada SQLite: usuários (login do Analisador) e `config_app` (chave/valor genérico: `caminho_fonte_dados`, `caminho_trabalho`, com fallback das chaves legadas). Banco em `backend/dados_locais/app.db`.
 - `monitor_empresas.py` — resumo de poucos KB por empresa (`resumo_monitor.json`), derivado do summary e usado pela tela de Monitoramento e pelo seletor de lojas. O cache é invalidado pelo mtime do summary, e é o **lote noturno** (`normalizar_todas_empresas`) que o regera junto do summary. Sem isso a invalidação diária caía no primeiro usuário a abrir a tela: reconstruir os 46 resumos custa ~18 s de CPU com os arquivos já locais, mais o download de ~65 MB de summary numa máquina em que o OneDrive ainda não baixou — contra 0,4 s lendo os resumos prontos. Se a tela voltar a demorar, o suspeito é o lote não ter rodado.
-- `_ensure_base_csv` / `_assert_escrita_fora_da_fonte` — ao selecionar empresa, só usa o `Base.csv` já existente no trabalho (não regenera se o BI for mais novo); regeneração só com `forcar=True` / botão Regenerar base / lote noturno. A data do último movimento no topo do dashboard continua lida do BI (`_data_ultimo_movimento_bi`). Aborta se o destino estiver sob a fonte ou se fonte == trabalho.
-- `dashboard_summary.py` — gera o summary do Dashboard (mesmo shape de `summary.json`) a partir de um DataFrame já limpo pelo motor (`carregar_csv`), vetorizado com pandas (evita `iterrows`, lento nas ~650 mil linhas típicas de uma base).
+- `_carregar_base_empresa_sem_trava` / `_assert_escrita_fora_da_fonte` — ao selecionar empresa, lê os dois CSV direto da fonte e cacheia em RAM por mtime; nada é persistido no trabalho (nem `Base.csv` nem intermediário). A data do último movimento no topo do dashboard vem de `DATA_MOVIMENTO` (`_data_ultimo_movimento_bi`), não mais de mtime de arquivo. Aborta se o destino estiver sob a fonte ou se fonte == trabalho.
+- `dashboard_summary.py` — gera o summary do Dashboard (mesmo shape de `summary.json`) a partir de um DataFrame já limpo pelo motor (`carregar_csv_base_empresa`), vetorizado com pandas (evita `iterrows`, lento nas ~650 mil linhas típicas de uma base).
 - `engine/` — motor de análise reaproveitado do app desktop original:
-  - `analise_funil.py` — lógica central de análise do funil de vendas (classificação ABC de clientes/produtos, erosão, churn, migração, tendências) a partir da base carregada (`carregar_csv`/`carregar_excel_base`).
+  - `analise_funil.py` — lógica central de análise do funil de vendas (classificação ABC de clientes/produtos, erosão, churn, migração, tendências) a partir da base carregada (`carregar_csv`/`carregar_csv_base_empresa`). `carregar_csv_base_empresa` faz o join `{empresa}_MOVIMENTO_ATUAL.csv` × `{empresa}_PRODUTO.csv` pela chave de produto, monta `CMV`, `Vendedor`, `Data_Venda_Diaria` e a `descricao` a partir de `DESCRICAO_HARMONIZADA` (fallback para a bruta). `montar_estoque_e_vendas` deriva estoque/vendas de `QUANTIDADE_ESTOQUE` do PRODUTO, com custo unitário = CMV total ÷ QTD total do produto.
   - `exportadores_pdf_word.py` — geração de relatórios PDF/Word (reportlab, python-docx).
   - `recursos.py` — helpers de caminho (assets embutidos, pasta de dados locais) herdados do app desktop original — partes como `_MEIPASS` do PyInstaller e permissão de dados locais não se aplicam ao contexto web.
 - `exportar_excel.py` — export Excel via openpyxl; define `CATALOGO_RELATORIOS`, `COLUNAS_MOEDA_POR_ANALISE`, `NOMES_ANALISE` (usados também por `main.py` e por `exportadores_pdf_word.py`).
-- Base padrão do Analisador (`base_de_dados.xlsx`) e `Base.csv` por empresa são cacheadas em memória por mtime (`_cache_base` / `_cache_base_empresa` / `_cache_summary_dashboard`).
+- Base padrão do Analisador (`base_de_dados.xlsx`) e a base por empresa (lida direto da fonte) são cacheadas em memória por mtime (`_cache_base` / `_cache_base_empresa` / `_cache_summary_dashboard`).
 
 ### Escopo de produtos no Analisador: regra, não lista de nomes
 
@@ -263,8 +258,8 @@ calcula isso não acontece, porque eles saem da própria curva.
 A contagem às vezes para abaixo do máximo (os 18 acima) porque o corte é ancorado na grade de 0,5% em vez de virar um número de quatro casas decimais — foi escolha explícita: o percentual continua sendo a régua legível do relatório. Sem busca passo a passo: as entradas da curva estão ordenadas, então é `searchsorted`.
 
 ### Pastas fonte e trabalho
-- **Fonte** (RO): subpastas por cliente com `BI/` contendo exports de movimento e produto. Listagem de empresas = subpastas da fonte que têm `BI/`.
-- **Trabalho** (RW): subpastas por cliente com `Base.csv` (schema canônico de `engine.analise_funil.carregar_csv`), `config.json` (Analisador) e opcionalmente `harm.xlsx` e `clientes_harm.json`. O app pode criar a pasta do cliente aqui na primeira seleção.
+- **Fonte** (RO): subpastas por cliente com `{cliente}_MOVIMENTO_ATUAL.csv` + `{cliente}_PRODUTO.csv` direto na pasta (sem subpasta `BI/`), `;` e aspas duplas. Listagem de empresas = subpastas da fonte que têm os dois arquivos (`resolver_arquivos_dados`).
+- **Trabalho** (RW): subpastas por cliente com `config.json` (Analisador), `summary_dashboard.json`, `resumo_monitor.json` e opcionalmente `clientes_harm.json`. Sem `Base.csv`/`harm.xlsx` — a base em si nunca é persistida fora da fonte. O app pode criar a pasta do cliente aqui na primeira seleção.
 
 ### Harmonização de nomes de cliente (`clientes_harm.json`)
 

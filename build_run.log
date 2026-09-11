@@ -1,0 +1,271 @@
+
+> dashboard@0.0.0 build
+> tsc -b && vite build
+
+vite v7.3.1 building client environment for production...
+transforming...
+✓ 2455 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                     0.82 kB │ gzip:   0.40 kB
+dist/assets/index-CvErCgYF.css    121.47 kB │ gzip:  20.00 kB
+dist/assets/index-DukqWqDW.js   1,301.44 kB │ gzip: 399.16 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 13.32s
+........................................................................ [ 27%]
+........................................................................ [ 54%]
+........................................................................ [ 81%]
+.................................................                        [100%]
+============================== warnings summary ===============================
+main.py:125
+  C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\backend\main.py:125: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    @app.on_event("startup")
+
+..\..\..\..\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\fastapi\applications.py:4598
+  C:\Users\bi_2d_gzgh6n0\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\fastapi\applications.py:4598: DeprecationWarning: 
+          on_event is deprecated, use lifespan event handlers instead.
+  
+          Read more about it in the
+          [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+          
+    return self.router.on_event(event_type)  # ty: ignore[deprecated]
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+265 passed, 2 warnings in 5.05s
+269 INFO: PyInstaller: 6.19.0, contrib hooks: 2026.1
+270 INFO: Python: 3.14.2
+301 INFO: Platform: Windows-11-10.0.26200-SP0
+301 INFO: Python environment: C:\Users\bi_2d_gzgh6n0\AppData\Local\Python\pythoncore-3.14-64
+333 INFO: Module search paths (PYTHONPATH):
+['C:\\Users\\bi_2d_gzgh6n0\\Desktop\\Yann\\Projeto - Prisma',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\python314.zip',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\DLLs',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Roaming\\Python\\Python314\\site-packages',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\win32',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\win32\\lib',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\Pythonwin',
+ 'C:\\Users\\bi_2d_gzgh6n0\\Desktop\\Yann\\Projeto - Prisma\\backend',
+ 'C:\\Users\\bi_2d_gzgh6n0\\Desktop\\Yann\\Projeto - Prisma']
+748 INFO: Appending 'datas' from .spec
+749 INFO: checking Analysis
+815 INFO: Building because hiddenimports changed
+815 INFO: Looking for Python shared library...
+815 INFO: Using Python shared library: C:\Users\bi_2d_gzgh6n0\AppData\Local\Python\pythoncore-3.14-64\python314.dll
+815 INFO: Running Analysis Analysis-00.toc
+815 INFO: Target bytecode optimization level: 0
+815 INFO: Initializing module dependency graph...
+816 INFO: Initializing module graph hook caches...
+969 INFO: Analyzing modules for base_library.zip ...
+1794 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+2785 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+5248 INFO: Processing standard module hook 'hook-difflib.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+5390 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+8202 INFO: Caching module dependency graph...
+8237 INFO: Analyzing C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\backend\servidor.py
+8313 INFO: Processing standard module hook 'hook-sysconfig.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+8328 INFO: Processing standard module hook 'hook-_ctypes.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+8410 INFO: Processing standard module hook 'hook-multiprocessing.util.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+8557 INFO: Processing standard module hook 'hook-xml.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+9213 INFO: Processing standard module hook 'hook-PIL.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+9353 INFO: Processing standard module hook 'hook-PIL.Image.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+9737 INFO: Processing standard module hook 'hook-numpy.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+12257 INFO: Processing standard module hook 'hook-platform.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+13003 INFO: Processing standard module hook 'hook-psutil.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+14253 INFO: Processing pre-safe-import-module hook 'hook-typing_extensions.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+14257 INFO: SetuptoolsInfo: initializing cached setuptools info...
+15937 INFO: Processing standard module hook 'hook-charset_normalizer.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+16580 INFO: Processing standard module hook 'hook-xml.etree.cElementTree.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+16874 INFO: Processing standard module hook 'hook-PIL.ImageFilter.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+17294 INFO: Processing standard module hook 'hook-pystray.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+17656 INFO: Processing pre-safe-import-module hook 'hook-six.moves.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+17746 INFO: Processing pre-safe-import-module hook 'hook-gi.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+C:\Users\bi_2d_gzgh6n0\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\pystray\_util\gtk.py:53: SyntaxWarning: 'return' in a 'finally' block
+  return False
+18382 INFO: Processing standard module hook 'hook-pandas.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+19925 INFO: Processing standard module hook 'hook-zoneinfo.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+22510 INFO: Processing standard module hook 'hook-pandas.io.formats.style.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+25884 INFO: Processing standard module hook 'hook-pandas.plotting.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+26833 INFO: Processing standard module hook 'hook-dateutil.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+28357 INFO: Processing standard module hook 'hook-openpyxl.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+28518 INFO: Processing standard module hook 'hook-lxml.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+28920 INFO: Processing standard module hook 'hook-lxml.etree.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+32839 INFO: Processing standard module hook 'hook-sqlalchemy.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+33907 INFO: Processing pre-safe-import-module hook 'hook-importlib_metadata.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+33909 INFO: Setuptools: 'importlib_metadata' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.importlib_metadata'!
+33923 INFO: Processing standard module hook 'hook-setuptools.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+33971 INFO: Processing pre-safe-import-module hook 'hook-distutils.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+34044 INFO: Processing pre-safe-import-module hook 'hook-jaraco.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+34045 INFO: Setuptools: 'jaraco' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.jaraco'!
+34064 INFO: Processing pre-safe-import-module hook 'hook-more_itertools.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+34065 INFO: Setuptools: 'more_itertools' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.more_itertools'!
+34450 INFO: Processing pre-safe-import-module hook 'hook-packaging.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+34844 INFO: Processing standard module hook 'hook-setuptools._vendor.jaraco.text.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+34846 INFO: Processing pre-safe-import-module hook 'hook-importlib_resources.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+34865 INFO: Processing pre-safe-import-module hook 'hook-backports.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+34866 INFO: Setuptools: 'backports' appears to be a full setuptools-vendored copy - creating alias to 'setuptools._vendor.backports'!
+35562 INFO: Processing pre-safe-import-module hook 'hook-tomli.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+35562 INFO: Setuptools: 'tomli' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.tomli'!
+36454 INFO: Processing pre-safe-import-module hook 'hook-wheel.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+36455 INFO: Setuptools: 'wheel' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.wheel'!
+36562 INFO: Processing standard module hook 'hook-setuptools._vendor.importlib_metadata.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+36650 INFO: Processing pre-safe-import-module hook 'hook-zipp.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\pre_safe_import_module'
+36651 INFO: Setuptools: 'zipp' appears to be a setuptools-vendored copy - creating alias to 'setuptools._vendor.zipp'!
+41590 INFO: Processing standard module hook 'hook-sqlite3.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+41948 INFO: Processing standard module hook 'hook-pandas.io.clipboard.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+42201 INFO: Processing standard module hook 'hook-xml.dom.domreg.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+44640 INFO: Processing standard module hook 'hook-uvicorn.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+46426 INFO: Processing standard module hook 'hook-websockets.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+47974 INFO: Processing standard module hook 'hook-cryptography.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+49676 INFO: hook-cryptography: cryptography does not seem to be using dynamically linked OpenSSL.
+50476 INFO: Processing standard module hook 'hook-bcrypt.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+51135 INFO: Processing standard module hook 'hook-anyio.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+52938 INFO: Processing standard module hook 'hook-pydantic.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+54386 INFO: Processing standard module hook 'hook-pygments.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+58749 INFO: Processing standard module hook 'hook-certifi.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+60161 INFO: Processing standard module hook 'hook-dns.rdata.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+61362 INFO: Processing standard module hook 'hook-pythoncom.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+61528 INFO: Processing standard module hook 'hook-pywintypes.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+64010 INFO: Processing standard module hook 'hook-reportlab.lib.utils.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+64151 INFO: Processing standard module hook 'hook-reportlab.pdfbase._fontdata.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+67589 INFO: Processing standard module hook 'hook-docx.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+69043 INFO: Analyzing hidden import 'uvicorn.loops.auto'
+69064 INFO: Analyzing hidden import 'uvicorn.protocols.http.auto'
+69070 INFO: Analyzing hidden import 'uvicorn.protocols.websockets.auto'
+69078 INFO: Analyzing hidden import 'uvicorn.lifespan.on'
+69094 INFO: Processing module hooks (post-graph stage)...
+69368 WARNING: Hidden import "charset_normalizer.md__mypyc" not found!
+70285 INFO: Processing standard module hook 'hook-lxml.isoschematron.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+70933 INFO: Processing standard module hook 'hook-jinja2.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+72569 INFO: Processing standard module hook 'hook-PIL.SpiderImagePlugin.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+78479 INFO: Processing standard module hook 'hook-sqlalchemy.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+78901 WARNING: Hidden import "pysqlite2" not found!
+78901 WARNING: Hidden import "MySQLdb" not found!
+78913 INFO: Processing standard module hook 'hook-psycopg2.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+81308 INFO: Processing standard module hook 'hook-psycopg_binary.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+82693 INFO: Processing standard module hook 'hook-lxml.objectify.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+82694 WARNING: Hidden import "mx.DateTime" not found!
+82700 INFO: Processing standard module hook 'hook-tzdata.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\stdhooks'
+83202 INFO: Performing binary vs. data reclassification (693 entries)
+85354 INFO: Looking for ctypes DLLs
+85480 INFO: Analyzing run-time hooks ...
+85491 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+85502 INFO: Including run-time hook 'pyi_rth_pkgutil.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+85511 INFO: Including run-time hook 'pyi_rth_cryptography_openssl.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\rthooks'
+85518 INFO: Including run-time hook 'pyi_rth_traitlets.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\rthooks'
+85524 INFO: Including run-time hook 'pyi_rth_setuptools.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+85533 INFO: Including run-time hook 'pyi_rth_pythoncom.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\rthooks'
+85540 INFO: Including run-time hook 'pyi_rth_pywintypes.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\_pyinstaller_hooks_contrib\\rthooks'
+85543 INFO: Including run-time hook 'pyi_rth_multiprocessing.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+85602 INFO: Creating base_library.zip...
+85622 INFO: Looking for dynamic libraries
+89328 INFO: Extra DLL search directories (AddDllDirectory): ['C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\numpy.libs', 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\pandas.libs', 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\psycopg_binary.libs', 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\psycopg_binary.libs', 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\psycopg2_binary.libs']
+89329 INFO: Extra DLL search directories (PATH): []
+90849 INFO: Warnings written to C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\build_pyinstaller\prisma\warn-prisma.txt
+91064 INFO: Graph cross-reference written to C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\build_pyinstaller\prisma\xref-prisma.html
+91187 INFO: checking PYZ
+91237 INFO: Building because toc changed
+91237 INFO: Building PYZ (ZlibArchive) C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\build_pyinstaller\prisma\PYZ-00.pyz
+92720 INFO: Building PYZ (ZlibArchive) C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\build_pyinstaller\prisma\PYZ-00.pyz completed successfully.
+92772 INFO: checking PKG
+92783 INFO: Building because C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\build_pyinstaller\prisma\PYZ-00.pyz changed
+92784 INFO: Building PKG (CArchive) Prisma.pkg
+92830 INFO: Building PKG (CArchive) Prisma.pkg completed successfully.
+92831 INFO: Bootloader C:\Users\bi_2d_gzgh6n0\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\run.exe
+92831 INFO: checking EXE
+92841 INFO: Rebuilding EXE-00.toc because pkg is more recent
+92841 INFO: Building EXE from EXE-00.toc
+92841 INFO: Copying bootloader EXE to C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\build_pyinstaller\prisma\Prisma.exe
+92919 INFO: Copying icon to EXE
+92953 INFO: Copying 0 resources to EXE
+92953 INFO: Embedding manifest in EXE
+92988 INFO: Appending PKG archive to EXE
+93049 INFO: Fixing EXE headers
+93531 INFO: Building EXE from EXE-00.toc completed successfully.
+93539 INFO: checking COLLECT
+93561 INFO: Removing dir C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\dist_pyinstaller\Prisma
+93892 INFO: Building COLLECT COLLECT-00.toc
+95834 INFO: Building COLLECT COLLECT-00.toc completed successfully.
+95854 INFO: Build complete! The results are available in: C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\dist_pyinstaller
+137 INFO: PyInstaller: 6.19.0, contrib hooks: 2026.1
+137 INFO: Python: 3.14.2
+166 INFO: Platform: Windows-11-10.0.26200-SP0
+166 INFO: Python environment: C:\Users\bi_2d_gzgh6n0\AppData\Local\Python\pythoncore-3.14-64
+177 INFO: Module search paths (PYTHONPATH):
+['C:\\Users\\bi_2d_gzgh6n0\\Desktop\\Yann\\Projeto - Prisma',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\python314.zip',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\DLLs',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Roaming\\Python\\Python314\\site-packages',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\win32',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\win32\\lib',
+ 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\Pythonwin',
+ 'C:\\Users\\bi_2d_gzgh6n0\\Desktop\\Yann\\Projeto - Prisma\\atualizador']
+552 INFO: checking Analysis
+567 INFO: Building because excludes changed
+567 INFO: Looking for Python shared library...
+567 INFO: Using Python shared library: C:\Users\bi_2d_gzgh6n0\AppData\Local\Python\pythoncore-3.14-64\python314.dll
+567 INFO: Running Analysis Analysis-00.toc
+567 INFO: Target bytecode optimization level: 0
+567 INFO: Initializing module dependency graph...
+568 INFO: Initializing module graph hook caches...
+581 INFO: Analyzing modules for base_library.zip ...
+1577 INFO: Processing standard module hook 'hook-heapq.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+2246 INFO: Processing standard module hook 'hook-encodings.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+2656 INFO: Processing standard module hook 'hook-pickle.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+3000 INFO: Processing standard module hook 'hook-difflib.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks'
+5546 INFO: Caching module dependency graph...
+5575 INFO: Analyzing C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\atualizador\atualizador.py
+5599 INFO: Processing module hooks (post-graph stage)...
+5603 INFO: Performing binary vs. data reclassification (1 entries)
+5604 INFO: Looking for ctypes DLLs
+5609 INFO: Analyzing run-time hooks ...
+5610 INFO: Including run-time hook 'pyi_rth_inspect.py' from 'C:\\Users\\bi_2d_gzgh6n0\\AppData\\Local\\Python\\pythoncore-3.14-64\\Lib\\site-packages\\PyInstaller\\hooks\\rthooks'
+5615 INFO: Creating base_library.zip...
+5632 INFO: Looking for dynamic libraries
+5743 INFO: Extra DLL search directories (AddDllDirectory): []
+5743 INFO: Extra DLL search directories (PATH): []
+5938 INFO: Warnings written to C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\build_pyinstaller\atualizador\warn-atualizador.txt
+5950 INFO: Graph cross-reference written to C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\build_pyinstaller\atualizador\xref-atualizador.html
+5969 INFO: checking PYZ
+5987 INFO: checking PKG
+5999 INFO: Building because toc changed
+5999 INFO: Building PKG (CArchive) atualizador.pkg
+6695 INFO: Building PKG (CArchive) atualizador.pkg completed successfully.
+6697 INFO: Bootloader C:\Users\bi_2d_gzgh6n0\AppData\Local\Python\pythoncore-3.14-64\Lib\site-packages\PyInstaller\bootloader\Windows-64bit-intel\runw.exe
+6697 INFO: checking EXE
+6710 INFO: Building because toc changed
+6710 INFO: Building EXE from EXE-00.toc
+6710 INFO: Copying bootloader EXE to C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\dist_pyinstaller\atualizador.exe
+6770 INFO: Copying icon to EXE
+6813 INFO: Copying 0 resources to EXE
+6813 INFO: Embedding manifest in EXE
+6863 INFO: Appending PKG archive to EXE
+6897 INFO: Fixing EXE headers
+7440 INFO: Building EXE from EXE-00.toc completed successfully.
+7442 INFO: Build complete! The results are available in: C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\dist_pyinstaller
+Scan starting...
+Scan finished.
+Scanning C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\dist_pyinstaller\Prisma\Prisma.exe found no threats.
+Scan starting...
+Scan finished.
+Scanning C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\dist_pyinstaller\Prisma\atualizador.exe found no threats.
+Scan starting...
+Scan finished.
+Scanning C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\dist_release\Prisma-1.7.5.zip found no threats.
+Scan starting...
+Scan finished.
+Scanning C:\Users\bi_2d_gzgh6n0\Desktop\Yann\Projeto - Prisma\dist_release\Prisma-1.7.5-instalador.exe found no threats.

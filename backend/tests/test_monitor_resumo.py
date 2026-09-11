@@ -16,12 +16,18 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 import monitor_empresas as mon
 
 
-def _gravar_summary(pasta, receita=1000.0):
+def _gravar_summary(pasta, receita=1000.0, cmv=None, dias_com_venda=None):
     """Summary mínimo no formato que `_resumo_de_summary` consome."""
+    mes = {"pid": 202601, "name": "jan/26", "rev": receita}
+    if cmv is not None:
+        mes["cmv"] = cmv
+    if dias_com_venda is not None:
+        mes["dias_com_venda"] = dias_com_venda
     summary = {
-        "monthly": [{"p": 202601, "label": "jan/26", "rev": receita}],
+        "monthly": [mes],
         "maps": {"p": [202601], "s": ["Loja 1"], "c": [], "m": [], "d": []},
         "rows": [[0, 0, 0, 0, 0, 0, receita, 10]],
+        "kpis": {"rev": receita, "qty": 10, "cmv": cmv or 0.0},
     }
     caminho = mon.caminho_summary_dashboard_gz(pasta)
     with gzip.open(caminho, "wt", encoding="utf-8") as arquivo:
@@ -87,3 +93,48 @@ def test_cache_corrompido_nao_derruba_a_tela(tmp_path):
     mon.caminho_resumo_monitor(tmp_path).write_text("{ nao é json", encoding="utf-8")
 
     assert mon.obter_resumo_monitor(tmp_path) is not None
+
+
+def test_lucro_bruto_e_receita_menos_cmv(tmp_path):
+    _gravar_summary(tmp_path, receita=1000.0, cmv=400.0)
+
+    resumo = mon.obter_resumo_monitor(tmp_path)
+
+    assert resumo["tem_cmv"] is True
+    assert resumo["serie"][0]["cmv"] == 400.0
+    assert resumo["serie"][0]["lucro"] == 600.0
+    assert resumo["totais"]["cmv"] == 400.0
+    assert resumo["totais"]["lucro"] == 600.0
+
+
+def test_sem_cmv_na_fonte_marca_tem_cmv_falso(tmp_path):
+    _gravar_summary(tmp_path, receita=1000.0)
+
+    resumo = mon.obter_resumo_monitor(tmp_path)
+
+    assert resumo["tem_cmv"] is False
+    assert resumo["serie"][0]["lucro"] == 1000.0
+
+
+def test_montar_card_lucro_dia_usa_lucro_nao_receita(tmp_path):
+    _gravar_summary(tmp_path, receita=1000.0, cmv=400.0)
+    resumo = mon.obter_resumo_monitor(tmp_path)
+
+    card = mon.montar_card("Empresa", resumo, metrica="lucro_dia", meses=1)
+
+    dias_uteis = mon._dias_uteis_do_periodo(202601)
+    assert card["valores"][0] == round(600.0 / dias_uteis, 2)
+
+
+def test_montar_card_media_diaria_usa_dias_com_venda_quando_disponivel(tmp_path):
+    """Empresa com data diária na fonte divide pelos dias com venda real, não pelo calendário."""
+    _gravar_summary(tmp_path, receita=1000.0, dias_com_venda=10)
+    resumo = mon.obter_resumo_monitor(tmp_path)
+
+    assert resumo["serie"][0]["dias_venda"] == 10
+
+    card = mon.montar_card("Empresa", resumo, metrica="receita_dia", meses=1)
+
+    assert card["valores"][0] == round(1000.0 / 10, 2)
+    assert card["media"] == round(1000.0 / 10, 2)
+    assert card["dias_venda_janela"] == 10

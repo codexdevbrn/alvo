@@ -2,123 +2,27 @@
 normalizar_base.py
 ===================
 
-Script legado de normalização de dados de empresas. A fonte atual fornece a
-base pronta em Excel e o backend a lê diretamente; este módulo ainda mantém
-helpers de normalização usados por rotinas offline.
+Localiza os arquivos de origem de uma empresa na pasta fonte (somente
+leitura). O parsing/limpeza fica em `backend/engine/analise_funil.py`
+(`carregar_csv_base_empresa`) — este módulo só resolve caminhos.
 
-Dados Mais Atacado.xlsx       (arquivo base pronto para leitura)
-Dados_Estoque_<empresa>.*     (opcional, somente Liquidez)
-Dados_Vendas_<empresa>.*      (opcional, somente Liquidez)
+Layout da fonte (uma subpasta por empresa, direto nela, sem `BI/`):
 
-— e gera o `Base.csv` no schema que o motor de análise do projeto
-(`backend/engine/analise_funil.py`, função `carregar_csv`) já espera:
+    <pasta_fonte>/<empresa>/<empresa>_MOVIMENTO_ATUAL.csv   (obrigatório)
+    <pasta_fonte>/<empresa>/<empresa>_PRODUTO.csv           (obrigatório)
+    <pasta_fonte>/<empresa>/Dados_Estoque_<empresa>.*       (opcional, só Liquidez)
+    <pasta_fonte>/<empresa>/Dados_Vendas_<empresa>.*        (opcional, só Liquidez)
 
-    Loja;NOME_FABRICANTE;Cliente;descricao;Ano;Mês;Código Interno;
-    Código de referêcia;Receita Acumulada 11 Meses;QTD
-
-Layout de pastas — dois papéis (pastas distintas):
-
-    <pasta_fonte>/                         (somente leitura)
-        <pasta_fonte>/
-          <nome>/
-            Dados Mais Atacado.xlsx
-            Dados_Estoque_<nome>.<ext>  (opcional)
-            Dados_Vendas_<nome>.<ext>   (opcional)
-
-    <pasta_trabalho>/                      (escrita: Base.csv, harm, backups)
-        harm.xlsx                          (opcional, aplicado automaticamente)
-        Base.csv                           (gerado por este script)
-
-A fonte nunca recebe escrita. `--trabalho` é obrigatório no CLI.
-
-O arquivo principal tem nome fixo `Dados Mais Atacado.xlsx`. Estoque e Vendas
-continuam usando o nome da empresa e extensão definida pela exportação.
-
-A ordem das colunas em cada CSV pode variar de empresa para empresa — os
-nomes de coluna, não. A leitura é sempre por nome, nunca por posição.
-
-Uso via linha de comando:
-    python normalizar_base.py "C:/fonte/teste" --trabalho "C:/trabalho/teste"
-    python normalizar_base.py "C:/fonte/teste" --trabalho "C:/trabalho/teste" --sem-harmonizacao
-    python normalizar_base.py "C:/fonte/teste" --trabalho "C:/trabalho/teste" --sem-validacao
-
-Uso programático (ex.: backend/main.py, ao selecionar a empresa no dash):
-    from normalizar_base import normalizar_pasta_empresa
-    caminho_base_csv = normalizar_pasta_empresa(
-        Path("fonte/teste"), pasta_trabalho=Path("trabalho/teste"),
-    )
-
-DECISÕES DE NEGÓCIO ASSUMIDAS (revisar/ajustar se necessário)
----------------------------------------------------------------------------
-1. O arquivo Atacado já vem pré-agregado por (Loja, Fabricante, Cliente,
-   Produto, Ano, Mês) — diferente do antigo export bruto de movimento, não
-   há mais join com catálogo de produto nem filtro de tipo de movimento
-   (VENDA/DEVOLUCAO/MOV) a fazer aqui: é leitura + validação de colunas +
-   renomeação para o schema canônico.
-
-2. Números (Receita, QTD) podem vir em formato BR (vírgula decimal) ou com
-   ponto decimal — o formato exato ainda não estava confirmado quando este
-   script foi escrito, então o parser (`parse_numero_flexivel`) decide por
-   valor, olhando qual separador aparece mais à direita no texto.
-
-3. JANELA DE ANÁLISE: somente o ano ATUAL e o ano ANTERIOR (relativos ao
-   momento em que o script é executado) entram no CSV final — mesma regra
-   de negócio do formato antigo, mantida por consistência com o resto da
-   aplicação (filtros de período, etc.), não por limitação da fonte.
-
-4. Linhas cuja soma líquida de QTD e Receita, dentro do agrupamento final,
-   dá exatamente zero são DESCARTADAS do CSV final - só para não poluir a
-   base com ruído que não representa nem receita nem volume.
-
-5. HARMONIZAÇÃO AUTOMÁTICA: se existir `harm.xlsx` (ou `.xls`) na pasta de
-   trabalho, `normalizar_pasta_empresa` aplica `harmonizar_descricoes.py`
-   automaticamente sobre o Base.csv recém-gerado, substituindo a descrição
-   bruta do catálogo pela descrição harmonizada. Sem a planilha, a
-   `descricao` fica com o texto bruto vindo do arquivo Atacado. A planilha
-   e o backup `Base.antes-harm.csv` ficam sempre na pasta de trabalho.
+Movimento e Produto são CSV ';' com valores entre aspas duplas. A ordem das
+colunas pode variar de empresa para empresa — os nomes de coluna, não. A
+leitura é sempre por nome, nunca por posição (ver `analise_funil`).
 """
 
 from __future__ import annotations
 
-import argparse
-import os
-import sys
-import warnings
-from datetime import date
 from pathlib import Path
 
 import pandas as pd
-
-MESES_PT = {
-    1: "janeiro", 2: "fevereiro", 3: "março", 4: "abril", 5: "maio", 6: "junho",
-    7: "julho", 8: "agosto", 9: "setembro", 10: "outubro", 11: "novembro", 12: "dezembro",
-}
-
-COLUNAS_SAIDA = [
-    "Loja", "NOME_FABRICANTE", "Cliente", "descricao", "Ano", "Mês",
-    "Código Interno", "Código de referêcia", "Receita Acumulada 11 Meses", "QTD",
-]
-
-COLUNAS_GRUPO = [
-    "Loja", "NOME_FABRICANTE", "Cliente", "descricao", "Ano", "Mês",
-    "Código Interno", "Código de referêcia",
-]
-
-NOME_ARQUIVO_HARM_PADRAO = "harm.xlsx"
-NOME_ARQUIVO_BASE_EMPRESA = "Dados Mais Atacado.xlsx"
-
-# Colunas esperadas no layout intermediário das rotinas offline.
-COLUNAS_ATACADO_ESPERADAS = {
-    "Loja", "NOME_FABRICANTE", "NOME_CLIENTE", "descricao", "Ano", "Mês",
-    "CODIGO_INTERNO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO",
-    "Receita Acumulada 11 Meses", "QTD",
-}
-
-RENAME_ATACADO = {
-    "NOME_CLIENTE": "Cliente",
-    "CODIGO_INTERNO_PRODUTO": "Código Interno",
-    "CODIGO_REFERENCIA_PRODUTO": "Código de referêcia",
-}
 
 
 class ErroNormalizacao(Exception):
@@ -127,62 +31,17 @@ class ErroNormalizacao(Exception):
 
 
 def ler_csv_robusto(filepath_or_buffer, **kwargs):
-    """Tenta ler com utf-8-sig. Se der erro de Unicode, tenta com latin1."""
+    """Tenta ler com utf-8-sig. Se der erro de Unicode, tenta com latin1.
+
+    Usado hoje só pelo pipeline Liquidez (normalizar_liquidez.py) — o
+    movimento/produto da empresa é lido por `analise_funil.carregar_csv_base_empresa`.
+    """
     kwargs.pop("encoding", None)  # Remove se foi passado para forçar o nosso fallback
     try:
         return pd.read_csv(filepath_or_buffer, encoding="utf-8-sig", **kwargs)
     except UnicodeDecodeError:
         return pd.read_csv(filepath_or_buffer, encoding="latin1", **kwargs)
 
-
-# ---------------------------------------------------------------------------
-# Localização da base e dos arquivos opcionais de Liquidez
-# ---------------------------------------------------------------------------
-
-def resolver_arquivos_dados(pasta_empresa: Path) -> tuple[Path, Path | None, Path | None]:
-    """Localiza a base XLSX e, quando existirem, os arquivos de Liquidez.
-
-    A base da empresa tem nome fixo ``Dados Mais Atacado.xlsx``. Estoque e
-    Vendas continuam usando os nomes legados com o nome da empresa e extensão
-    livre. A comparação é case-insensitive para funcionar no Windows.
-    A base XLSX é obrigatória; Estoque e Vendas são opcionais e só são
-    necessários quando a análise de Liquidez for solicitada.
-    """
-    nome_empresa = pasta_empresa.name
-    alvos = {
-        f"dados_estoque_{nome_empresa}".lower(): "estoque",
-        f"dados_vendas_{nome_empresa}".lower(): "vendas",
-    }
-    encontrados: dict[str, Path] = {}
-    if pasta_empresa.is_dir():
-        for arquivo in pasta_empresa.iterdir():
-            if not arquivo.is_file():
-                continue
-            if arquivo.name.casefold() == NOME_ARQUIVO_BASE_EMPRESA.casefold():
-                papel = "atacado"
-            else:
-                papel = alvos.get(arquivo.stem.lower())
-            if papel is not None:
-                encontrados[papel] = arquivo
-
-    caminho_atacado = encontrados.get("atacado")
-    caminho_estoque = encontrados.get("estoque")
-    caminho_vendas = encontrados.get("vendas")
-
-    faltando = []
-    if caminho_atacado is None:
-        faltando.append(NOME_ARQUIVO_BASE_EMPRESA)
-    if faltando:
-        raise ErroNormalizacao(
-            f"Não foi possível localizar em {pasta_empresa}: " + ", ".join(faltando) + "."
-        )
-
-    return caminho_atacado, caminho_estoque, caminho_vendas
-
-
-# ---------------------------------------------------------------------------
-# Parsing numérico flexível (formato do CSV novo ainda não 100% confirmado)
-# ---------------------------------------------------------------------------
 
 def parse_numero_flexivel(serie: pd.Series) -> pd.Series:
     """Converte texto numérico para float, aceitando formato BR ('1.234,56')
@@ -215,9 +74,15 @@ def serie_texto_limpa(serie: pd.Series) -> pd.Series:
     return texto.mask(texto.str.lower().isin(("", "nan", "none", "<na>")), other=pd.NA)
 
 
+MESES_PT = {
+    1: "janeiro", 2: "fevereiro", 3: "março", 4: "abril", 5: "maio", 6: "junho",
+    7: "julho", 8: "agosto", 9: "setembro", 10: "outubro", 11: "novembro", 12: "dezembro",
+}
+
+
 def normalizar_mes(serie: pd.Series) -> pd.Series:
     """Aceita Mês como número (1-12) ou já por extenso em PT-BR; sempre
-    devolve o nome por extenso (o que `carregar_csv` espera)."""
+    devolve o nome por extenso (o que o pipeline Liquidez espera)."""
     texto = serie_texto_limpa(serie)
     numerico = pd.to_numeric(texto, errors="coerce")
     eh_numerico = numerico.notna()
@@ -237,13 +102,6 @@ def formatar_qtd(valor: float) -> str:
     return texto
 
 
-def formatar_receita(valor: float) -> str:
-    """Receita em formato BR (vírgula decimal), sem separador de milhar."""
-    if pd.isna(valor):
-        valor = 0.0
-    return f"{float(valor):.2f}".replace(".", ",")
-
-
 def validar_colunas(df: pd.DataFrame, esperadas: set[str], nome_arquivo: str) -> None:
     """Levanta ErroNormalizacao se alguma coluna de `esperadas` não estiver em `df`."""
     faltando = sorted(esperadas - set(df.columns))
@@ -251,273 +109,68 @@ def validar_colunas(df: pd.DataFrame, esperadas: set[str], nome_arquivo: str) ->
         raise ErroNormalizacao(f"Arquivo {nome_arquivo} sem colunas: {', '.join(faltando)}.")
 
 
-def _pct_vazio(serie: pd.Series) -> float:
-    if serie.empty:
-        return 100.0
-    texto = serie.astype(str).str.strip()
-    vazios = serie.isna() | texto.isin(("", "nan", "None", "<NA>"))
-    return float(vazios.mean() * 100)
+def resolver_arquivos_dados(pasta_empresa: Path) -> tuple[Path, Path, Path | None, Path | None]:
+    """Localiza os CSVs da empresa na fonte.
 
-
-# ---------------------------------------------------------------------------
-# Compatibilidade offline (o backend lê o XLSX diretamente)
-# ---------------------------------------------------------------------------
-
-def normalizar(caminho_atacado: Path) -> pd.DataFrame:
-    """Normaliza um arquivo intermediário usado somente por rotinas offline."""
-    ano_atual = date.today().year
-    anos_permitidos = (ano_atual - 1, ano_atual)
-
-    print(f"Lendo {caminho_atacado.name}...")
-    df = ler_csv_robusto(caminho_atacado, sep=";", quotechar='"', dtype=str)
-
-    validar_colunas(df, COLUNAS_ATACADO_ESPERADAS, caminho_atacado.name)
-
-    df = df.rename(columns=RENAME_ATACADO)
-
-    for col in ("Loja", "NOME_FABRICANTE", "Cliente", "descricao",
-                "Código Interno", "Código de referêcia"):
-        df[col] = serie_texto_limpa(df[col])
-
-    df["Ano"] = pd.to_numeric(serie_texto_limpa(df["Ano"]), errors="coerce")
-    df["Mês"] = normalizar_mes(df["Mês"])
-    df["Receita"] = parse_numero_flexivel(df["Receita Acumulada 11 Meses"]).fillna(0.0)
-    df["QTD"] = parse_numero_flexivel(df["QTD"]).fillna(0.0)
-
-    antes = len(df)
-    df = df.dropna(subset=["Ano", "Mês"])
-    if antes - len(df):
-        print(f"  [AVISO] {antes - len(df):,} linha(s) descartada(s) por Ano/Mês inválido.")
-
-    df["Ano"] = df["Ano"].astype(int)
-    df = df[df["Ano"].isin(anos_permitidos)]
-    if df.empty:
-        raise ErroNormalizacao(
-            f"Nenhuma linha para os anos {anos_permitidos[0]} ou {anos_permitidos[1]} "
-            f"em {caminho_atacado.name}."
-        )
-
-    agregado = (
-        df.groupby(COLUNAS_GRUPO, dropna=False, as_index=False)
-        .agg(Receita=("Receita", "sum"), QTD=("QTD", "sum"))
-    )
-
-    antes = len(agregado)
-    mascara_zero = (agregado["Receita"].round(2) == 0) & (agregado["QTD"].round(4) == 0)
-    agregado = agregado[~mascara_zero].copy()
-    descartadas = antes - len(agregado)
-    print(f"Agrupamentos: {antes:,} -> {len(agregado):,} "
-          f"({descartadas:,} descartados por receita e quantidade líquidas = 0).")
-
-    for col in ("Cliente", "NOME_FABRICANTE", "descricao", "Código de referêcia"):
-        pct = _pct_vazio(agregado[col])
-        nuniq = int(agregado[col].nunique(dropna=True))
-        marca = " [ATENÇÃO]" if pct >= 95 else ""
-        print(f"  {col}: {pct:.1f}% vazio | {nuniq:,} distintos{marca}")
-
-    agregado["QTD"] = agregado["QTD"].apply(formatar_qtd)
-    agregado["Receita Acumulada 11 Meses"] = agregado["Receita"].apply(formatar_receita)
-
-    return agregado[COLUNAS_SAIDA]
-
-
-MARCADOR_NAO_HARMONIZADO = "NÃO HARMONIZADO"
-
-
-def _eh_descricao_nao_harmonizada(serie_descricao: pd.Series) -> pd.Series:
-    """True onde `descricao` é o marcador "NÃO HARMONIZADO" da fonte (comparação
-    tolerante a maiúsculas/acentos/espaço nas pontas)."""
-    normalizado = (
-        serie_descricao.fillna("").astype(str).str.strip().str.upper()
-        .str.normalize("NFKD").str.encode("ascii", "ignore").str.decode("ascii")
-    )
-    return normalizado == "NAO HARMONIZADO"
-
-
-def aplicar_harmonizacao_em_memoria(df: pd.DataFrame, pasta_trabalho: Path) -> pd.DataFrame:
-    """Corrige, em memória, só as linhas marcadas como "NÃO HARMONIZADO" pela fonte.
-
-    A base já vem harmonizada por padrão (a fonte faz isso) — harm.xlsx aqui é só um
-    ajuste pontual por "Código Interno" para as linhas que a fonte não conseguiu
-    harmonizar sozinha. Sem harm.xlsx na pasta de trabalho, ou sem código com match na
-    planilha, a linha fica como veio (com o marcador). Nenhum CSV é lido/escrito em
-    disco — é o mesmo dicionário {codigo: descricao} de `harmonizar_descricoes`."""
-    caminho_harm = _localizar_planilha_harmonizacao(Path(pasta_trabalho))
-    if caminho_harm is None:
-        return df
-
-    alvo = _eh_descricao_nao_harmonizada(df["descricao"])
-    if not alvo.any():
-        return df
-
-    import harmonizar_descricoes
-
-    mapa = harmonizar_descricoes.carregar_harmonizacao(str(caminho_harm))
-    df = df.copy()
-    codigos = df.loc[alvo, "Código Interno"].astype(str).str.strip()
-    harmonizadas = codigos.map(mapa)
-    df.loc[alvo, "descricao"] = harmonizadas.where(harmonizadas.notna(), df.loc[alvo, "descricao"])
-    return df
-
-
-def validar(caminho_saida: Path, total_linhas_gravadas: int) -> None:
-    """Sanity check leve do resultado gravado: leitura de volta e tipos.
-
-    Não tenta importar backend/engine aqui (evita acoplamento de sys.path
-    quando chamado programaticamente pelo próprio backend, que já tem esse
-    módulo importado) - só confere se o CSV é reabrível e consistente.
+    Retorna `(caminho_movimento, caminho_produto, caminho_estoque, caminho_vendas)`.
+    Movimento e Produto têm nome fixo `{nome_empresa}_MOVIMENTO_ATUAL.csv` /
+    `{nome_empresa}_PRODUTO.csv` e são obrigatórios. Estoque e Vendas (Liquidez)
+    continuam usando os nomes legados com o nome da empresa e extensão livre, e
+    são opcionais — só necessários quando a análise de Liquidez for solicitada.
+    Comparação case-insensitive para funcionar no Windows.
     """
-    print("\n" + "=" * 70)
-    print("VALIDAÇÃO")
-    print("=" * 70)
+    nome_empresa = pasta_empresa.name
+    alvo_movimento = f"{nome_empresa}_MOVIMENTO_ATUAL.csv".casefold()
+    alvo_produto = f"{nome_empresa}_PRODUTO.csv".casefold()
+    alvos_opcionais = {
+        f"dados_estoque_{nome_empresa}".lower(): "estoque",
+        f"dados_vendas_{nome_empresa}".lower(): "vendas",
+    }
 
-    relido = ler_csv_robusto(caminho_saida, sep=";")
-    if list(relido.columns) != COLUNAS_SAIDA:
-        print("[AVISO] Cabeçalho lido não corresponde ao esperado!")
-        print(f"  Esperado: {COLUNAS_SAIDA}")
-        print(f"  Obtido:   {list(relido.columns)}")
-    else:
-        print("  Cabeçalho OK, corresponde exatamente ao esperado.")
-    print(f"  Linhas gravadas: {total_linhas_gravadas:,} | Linhas relidas: {len(relido):,}")
+    encontrados: dict[str, Path] = {}
+    if pasta_empresa.is_dir():
+        for arquivo in pasta_empresa.iterdir():
+            if not arquivo.is_file():
+                continue
+            nome = arquivo.name.casefold()
+            if nome == alvo_movimento:
+                encontrados["movimento"] = arquivo
+            elif nome == alvo_produto:
+                encontrados["produto"] = arquivo
+            else:
+                papel = alvos_opcionais.get(arquivo.stem.lower())
+                if papel is not None:
+                    encontrados[papel] = arquivo
 
-    ano_numerico = pd.to_numeric(relido["Ano"], errors="coerce")
-    qtd_numerico = pd.to_numeric(relido["QTD"], errors="coerce")
-    receita_numerico = pd.to_numeric(
-        relido["Receita Acumulada 11 Meses"].astype(str).str.replace(",", ".", regex=False),
-        errors="coerce",
+    faltando = []
+    if "movimento" not in encontrados:
+        faltando.append(f"{nome_empresa}_MOVIMENTO_ATUAL.csv")
+    if "produto" not in encontrados:
+        faltando.append(f"{nome_empresa}_PRODUTO.csv")
+    if faltando:
+        raise ErroNormalizacao(
+            f"Não foi possível localizar em {pasta_empresa}: " + ", ".join(faltando) + "."
+        )
+
+    return (
+        encontrados["movimento"],
+        encontrados["produto"],
+        encontrados.get("estoque"),
+        encontrados.get("vendas"),
     )
-    print(f"  Ano: {ano_numerico.isna().sum()} valor(es) não numérico(s) "
-          f"(min={ano_numerico.min()}, max={ano_numerico.max()})")
-    print(f"  QTD: {qtd_numerico.isna().sum()} valor(es) não numérico(s)")
-    print(f"  Receita: {receita_numerico.isna().sum()} valor(es) não parseável(is)")
-    for col in ("Cliente", "NOME_FABRICANTE", "descricao", "Código de referêcia"):
-        pct = _pct_vazio(relido[col])
-        print(f"  {col}: {pct:.1f}% vazio | {relido[col].nunique(dropna=True):,} distintos")
 
 
-# ---------------------------------------------------------------------------
-# Orquestração: pasta da empresa -> Base.csv (+ harmonização automática)
-# ---------------------------------------------------------------------------
+def resolver_caminho_controladoria(pasta_empresa: Path) -> Path | None:
+    """Localiza `{empresa}_CONTROLADORIA.csv` na fonte, se existir.
 
-def normalizar_pasta_empresa(
-    pasta_fonte: Path,
-    pasta_trabalho: Path | None = None,
-    aplicar_harmonizacao: bool = True,
-    validar_resultado: bool = True,
-) -> Path:
-    """Lê Dados Mais Atacado.xlsx em `pasta_fonte` e gera `Base.csv` no trabalho.
-
-    `pasta_trabalho` é obrigatória e deve ser distinta da fonte (e não pode
-    estar dentro dela). A fonte é somente leitura — este módulo nunca grava
-    sob `pasta_fonte`.
-
-    Se `aplicar_harmonizacao` for True e existir harm.xlsx/harm.xls na pasta
-    de trabalho, aplica `harmonizar_descricoes.harmonizar` sobre o Base.csv
-    (decisão de negócio 5). Backup e planilha ficam só no trabalho.
-
-    Retorna o caminho do Base.csv gerado.
+    Despesas (tela Controladoria) é opcional e independente de Movimento/Produto
+    — arquivo próprio, nome fixo, sem join. Empresa sem o arquivo simplesmente
+    não tem a tela; não é um `ErroNormalizacao` como movimento/produto.
     """
-    pasta_fonte = Path(pasta_fonte).resolve()
-    if pasta_trabalho is None:
-        raise ErroNormalizacao(
-            "pasta_trabalho é obrigatória. A pasta fonte é somente leitura — "
-            "informe uma pasta de trabalho distinta para gravar o Base.csv "
-            "(CLI: --trabalho <pasta>)."
-        )
-    pasta_trabalho = Path(pasta_trabalho).resolve()
-
-    # Comparar via realpath/resolve (já feito acima) + normcase para Windows.
-    fonte_s = os.path.normcase(os.path.realpath(str(pasta_fonte)))
-    trab_s = os.path.normcase(os.path.realpath(str(pasta_trabalho)))
-    if trab_s == fonte_s or trab_s.startswith(fonte_s + os.sep):
-        raise ErroNormalizacao(
-            f"Escrita proibida na pasta fonte. pasta_trabalho ({pasta_trabalho}) "
-            f"não pode ser igual a pasta_fonte nem estar dentro dela ({pasta_fonte})."
-        )
-
-    caminho_atacado, _caminho_estoque, _caminho_vendas = resolver_arquivos_dados(pasta_fonte)
-
-    # O XLSX já vem normalizado; apenas mapeia/valida colunas em memória.
-    from backend.engine.analise_funil import carregar_excel_base_empresa
-
-    df_saida = carregar_excel_base_empresa(caminho_atacado)
-
-    pasta_trabalho.mkdir(parents=True, exist_ok=True)
-    caminho_saida = pasta_trabalho / "Base.csv"
-    print(f"\nGravando {caminho_saida}...")
-    df_saida.to_csv(caminho_saida, sep=";", index=False, encoding="utf-8-sig")
-    print(f"Arquivo gravado: {caminho_saida} ({len(df_saida):,} linhas).")
-
-    if validar_resultado:
-        validar(caminho_saida, len(df_saida))
-
-    if aplicar_harmonizacao:
-        caminho_harm = _localizar_planilha_harmonizacao(pasta_trabalho)
-        if caminho_harm is not None:
-            print(f"\nPlanilha de harmonização encontrada: {caminho_harm.name} — aplicando...")
-            # Import tardio para não criar dependência circular quando este
-            # módulo é importado só para normalizar (sem harmonizar.py em uso).
-            import harmonizar_descricoes
-
-            harmonizar_descricoes.harmonizar(
-                str(pasta_trabalho), caminho_harm.name, caminho_saida.name, dry_run=False,
-            )
-        else:
-            print("\nNenhuma planilha de harmonização encontrada (harm.xlsx) - "
-                  "mantendo a descrição bruta do catálogo de produtos.")
-
-    # Bases do relatório Liquidez (estoque + vendas) — mesma fonte, pasta trabalho.
-    try:
-        from normalizar_liquidez import normalizar_liquidez_pasta
-        normalizar_liquidez_pasta(pasta_fonte, pasta_trabalho)
-    except Exception as exc:
-        # Não impede o Base.csv; Liquidez falha de forma explícita no log.
-        print(f"[AVISO] Falha ao gerar bases Liquidez: {exc}")
-
-    return caminho_saida
-
-
-def _localizar_planilha_harmonizacao(pasta_trabalho: Path) -> Path | None:
-    for nome in (NOME_ARQUIVO_HARM_PADRAO, "harm.xls"):
-        candidato = pasta_trabalho / nome
-        if candidato.exists():
-            return candidato
+    if not pasta_empresa.is_dir():
+        return None
+    alvo = f"{pasta_empresa.name}_CONTROLADORIA.csv".casefold()
+    for arquivo in pasta_empresa.iterdir():
+        if arquivo.is_file() and arquivo.name.casefold() == alvo:
+            return arquivo
     return None
-
-
-# ---------------------------------------------------------------------------
-# CLI
-# ---------------------------------------------------------------------------
-
-def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Lê Dados Mais Atacado.xlsx de uma empresa e gera Base.csv no trabalho."
-    )
-    parser.add_argument("pasta_fonte", help="Pasta da empresa com Dados Mais Atacado.xlsx (somente leitura)")
-    parser.add_argument(
-        "--trabalho",
-        required=True,
-        help="Pasta de escrita distinta da fonte (Base.csv, harm.xlsx). Obrigatória.",
-    )
-    parser.add_argument("--sem-harmonizacao", action="store_true",
-                        help="Não aplica harm.xlsx automaticamente, mesmo que exista")
-    parser.add_argument("--sem-validacao", action="store_true",
-                        help="Pula a validação do CSV gerado (leitura de volta)")
-    args = parser.parse_args()
-
-    try:
-        normalizar_pasta_empresa(
-            Path(args.pasta_fonte),
-            pasta_trabalho=Path(args.trabalho),
-            aplicar_harmonizacao=not args.sem_harmonizacao,
-            validar_resultado=not args.sem_validacao,
-        )
-    except ErroNormalizacao as exc:
-        print(f"ERRO: {exc}", file=sys.stderr)
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        main()

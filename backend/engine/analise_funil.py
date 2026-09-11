@@ -10,6 +10,7 @@ import math
 import os
 import time
 import unicodedata
+from pathlib import Path
 
 import pandas as pd
 import numpy as np
@@ -68,27 +69,62 @@ MAPA_COLUNAS_BASE_PADRAO = {
     "[QTD]": "QTD",
 }
 
-# O arquivo por empresa já chega pronto para leitura, mas usa nomes de
-# exportação próprios. O mapeamento acontece em memória; a fonte nunca recebe
-# escrita nem arquivo intermediário.
-MAPA_COLUNAS_BASE_EMPRESA = {
+# A fonte por empresa manda dois CSVs (MOVIMENTO_ATUAL + PRODUTO), ";" com
+# aspas duplas, direto na pasta da empresa (sem subpasta BI/). O mapeamento
+# acontece em memória; a fonte nunca recebe escrita nem arquivo intermediário.
+COLUNAS_MOVIMENTO_EMPRESA = [
+    "ID_LOJA", "CODIGO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO", "DESCRICAO_PRODUTO",
+    "NOME_FABRICANTE", "NOME_CLIENTE", "NOME_VENDEDOR", "DATA_MOVIMENTO",
+    "DIA", "MES", "ANO", "TOTAL", "QUANTIDADE", "CMV",
+]
+
+COLUNAS_PRODUTO_EMPRESA = [
+    "ID_LOJA", "CODIGO_INTERNO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO",
+    "DESCRICAO_PRODUTO", "DESCRICAO_HARMONIZADA", "QUANTIDADE_ESTOQUE",
+]
+
+COLUNAS_CONTROLADORIA_EMPRESA = [
+    "ID_LOJA", "DESCRICAO", "DESCRICAO_HARMONIZADA", "MES", "ANO", "VALOR",
+]
+
+MAPA_COLUNAS_MOVIMENTO_EMPRESA = {
     "ID_LOJA": "Loja",
     "NOME_CLIENTE": "Cliente",
-    "DESCRICAO_PRODUTO": "descricao",
-    "ANO": "Ano",
-    "MÊS": "Mês",
-    "CODIGO_INTERNO_PRODUTO": "Código Interno",
+    "CODIGO_PRODUTO": "Código Interno",
     "CODIGO_REFERENCIA_PRODUTO": "Código de referêcia",
     "NOME_FABRICANTE": "NOME_FABRICANTE",
-    "Receita Acumulada 11 Meses": "Receita Acumulada 11 Meses",
-    "QTD": "QTD",
+    "ANO": "Ano",
+    "MES": "Mês",
+    "TOTAL": "Receita Acumulada 11 Meses",
+    "QUANTIDADE": "QTD",
 }
 
 # Colunas opcionais aceitas para o ritmo diário de clientes. A primeira que
 # existir vira o campo canônico; bases mensais continuam funcionando normalmente.
 COLUNAS_DATA_DIARIA_EMPRESA = (
-    "DATA_VENDA", "Data_Venda", "DATA_PEDIDO", "Data_Pedido", "DATA", "Data",
+    "DATA_MOVIMENTO", "DATA_VENDA", "Data_Venda", "DATA_PEDIDO", "Data_Pedido", "DATA", "Data",
 )
+
+# Vendedor é opcional: a tela nova some com estado vazio enquanto a fonte
+# não trouxer o campo. A primeira coluna desta lista que existir vira o
+# nome canônico `Vendedor`. Não entra em MAPA_COLUNAS_MOVIMENTO_EMPRESA para
+# não quebrar as empresas que ainda não têm o dado.
+COLUNAS_VENDEDOR_FONTE = ("VENDEDOR", "NOME_VENDEDOR", "Nome_Vendedor")
+
+
+def mapear_coluna_vendedor(df):
+    """Renomeia a primeira coluna de vendedor da fonte para o nome canônico.
+
+    Não exige a coluna: empresas sem o campo seguem iguais. Se a base já
+    chegou com `Vendedor`, não toca.
+    """
+    if df is None or "Vendedor" in df.columns:
+        return df
+    for nome in COLUNAS_VENDEDOR_FONTE:
+        if nome in df.columns:
+            return df.rename(columns={nome: "Vendedor"})
+    return df
+
 
 GRANULARIDADES = ["Mensal", "Trimestral", "Semestral", "Anual"]
 
@@ -307,60 +343,198 @@ def _ler_excel_com_retry(caminho_arquivo, **kwargs):
     raise ultimo_erro
 
 
-def carregar_excel_base_empresa(caminho_arquivo):
-    """Lê ``Dados Mais Atacado.xlsx`` no schema pronto da empresa.
+def _parse_data_diaria(valores_data):
+    """Data diária a partir de uma coluna datetime, ISO ou BR (dayfirst)."""
+    if pd.api.types.is_datetime64_any_dtype(valores_data):
+        return pd.to_datetime(valores_data, errors="coerce")
+    # ISO deve ser separado do padrão brasileiro para não inverter mês/dia.
+    textos_data = valores_data.astype("string").str.strip()
+    mascara_iso = textos_data.str.match(r"^\d{4}-\d{2}-\d{2}(?:[ T].*)?$", na=False)
+    data_diaria = pd.Series(pd.NaT, index=valores_data.index, dtype="datetime64[ns]")
+    data_diaria.loc[mascara_iso] = pd.to_datetime(
+        textos_data.loc[mascara_iso], errors="coerce", yearfirst=True,
+    )
+    data_diaria.loc[~mascara_iso] = pd.to_datetime(
+        textos_data.loc[~mascara_iso], errors="coerce", dayfirst=True,
+    )
+    return data_diaria
 
-    Identificadores são lidos como texto para preservar zeros à esquerda.
-    Receita e QTD aceitam células numéricas do Excel e texto decimal BR.
-    Retorna o DataFrame bruto já com nomes canônicos; a validação final fica
-    em ``validar_e_limpar`` no backend.
-    """
-    tipos_texto = {
-        "ID_LOJA": str,
-        "NOME_CLIENTE": str,
-        "DESCRICAO_PRODUTO": str,
-        "CODIGO_INTERNO_PRODUTO": str,
-        "CODIGO_REFERENCIA_PRODUTO": str,
-        "NOME_FABRICANTE": str,
-    }
+
+def _ler_csv_empresa(caminho_arquivo, colunas_esperadas, tipos_texto):
+    """CSV ';' com aspas duplas da fonte por empresa (utf-8-sig, fallback latin1)."""
     try:
-        df = _ler_excel_com_retry(caminho_arquivo, dtype=tipos_texto)
-    except ErroCarregamentoCSV:
-        raise
+        df = pd.read_csv(
+            caminho_arquivo, sep=";", quotechar='"', encoding="utf-8-sig", dtype=tipos_texto,
+        )
+    except UnicodeDecodeError:
+        df = pd.read_csv(
+            caminho_arquivo, sep=";", quotechar='"', encoding="latin1", dtype=tipos_texto,
+        )
     except Exception as exc:
-        raise ErroCarregamentoCSV(
-            f"Não foi possível ler Dados Mais Atacado.xlsx: {exc}"
-        ) from exc
+        raise ErroCarregamentoCSV(f"Não foi possível ler {caminho_arquivo.name}: {exc}") from exc
 
-    colunas_faltando = [c for c in MAPA_COLUNAS_BASE_EMPRESA if c not in df.columns]
+    colunas_faltando = [c for c in colunas_esperadas if c not in df.columns]
     if colunas_faltando:
         raise ErroCarregamentoCSV(
-            "Dados Mais Atacado.xlsx sem colunas: " + ", ".join(colunas_faltando)
+            f"{caminho_arquivo.name} sem colunas: " + ", ".join(colunas_faltando)
         )
+    return df
+
+
+def _mapa_descricao_harmonizada(produto: pd.DataFrame) -> pd.Series:
+    """CODIGO_INTERNO_PRODUTO -> primeira DESCRICAO_HARMONIZADA não vazia.
+
+    O mesmo produto pode repetir uma linha por loja no PRODUTO; a descrição
+    harmonizada é do catálogo, não da loja, então a primeira ocorrência válida
+    já resolve todas.
+    """
+    codigo = produto["CODIGO_INTERNO_PRODUTO"].astype(str).str.strip()
+    harmonizada = produto["DESCRICAO_HARMONIZADA"].astype(str).str.strip()
+    vazio = harmonizada.str.lower().isin(("", "nan", "none", "<na>"))
+    validos = pd.DataFrame({"codigo": codigo, "harmonizada": harmonizada})[~vazio]
+    return validos.drop_duplicates(subset=["codigo"], keep="first").set_index("codigo")["harmonizada"]
+
+
+def carregar_csv_base_empresa(caminho_movimento, caminho_produto):
+    """Lê ``{empresa}_MOVIMENTO_ATUAL.csv`` + ``{empresa}_PRODUTO.csv`` da fonte.
+
+    Identificadores são lidos como texto para preservar zeros à esquerda.
+    `descricao` vem de DESCRICAO_HARMONIZADA (catálogo em PRODUTO); quando
+    vazia para o produto, cai para a DESCRICAO_PRODUTO bruta do movimento.
+    CMV e Vendedor entram como colunas adicionais — não são exigidas por
+    `validar_e_limpar`, então empresas sem esses dados continuam funcionando.
+    Retorna o DataFrame bruto já com nomes canônicos; a validação final fica
+    em ``validar_e_limpar``.
+    """
+    tipos_texto_movimento = {
+        coluna: str for coluna in (
+            "ID_LOJA", "CODIGO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO", "DESCRICAO_PRODUTO",
+            "NOME_FABRICANTE", "NOME_CLIENTE", "NOME_VENDEDOR", "DATA_MOVIMENTO",
+        )
+    }
+    tipos_texto_produto = {
+        coluna: str for coluna in (
+            "ID_LOJA", "CODIGO_INTERNO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO",
+            "DESCRICAO_PRODUTO", "DESCRICAO_HARMONIZADA",
+        )
+    }
+
+    movimento = _ler_csv_empresa(Path(caminho_movimento), COLUNAS_MOVIMENTO_EMPRESA, tipos_texto_movimento)
+    produto = _ler_csv_empresa(Path(caminho_produto), COLUNAS_PRODUTO_EMPRESA, tipos_texto_produto)
+
+    mapa_harmonizada = _mapa_descricao_harmonizada(produto)
+
+    df = movimento.rename(columns=MAPA_COLUNAS_MOVIMENTO_EMPRESA)
+    df = mapear_coluna_vendedor(df)
+
+    codigo_limpo = df["Código Interno"].astype(str).str.strip()
+    harmonizada = codigo_limpo.map(mapa_harmonizada)
+    df["descricao"] = harmonizada.where(harmonizada.notna(), df["DESCRICAO_PRODUTO"])
+    df = df.drop(columns=["DESCRICAO_PRODUTO"])
 
     coluna_data_diaria = next((coluna for coluna in COLUNAS_DATA_DIARIA_EMPRESA if coluna in df.columns), None)
-    df = df.rename(columns=MAPA_COLUNAS_BASE_EMPRESA)
     if coluna_data_diaria:
-        valores_data = df[coluna_data_diaria]
-        if pd.api.types.is_datetime64_any_dtype(valores_data):
-            data_diaria = pd.to_datetime(valores_data, errors="coerce")
-        else:
-            # ISO deve ser separado do padrão brasileiro para não inverter mês/dia.
-            textos_data = valores_data.astype("string").str.strip()
-            mascara_iso = textos_data.str.match(r"^\d{4}-\d{2}-\d{2}(?:[ T].*)?$", na=False)
-            data_diaria = pd.Series(pd.NaT, index=df.index, dtype="datetime64[ns]")
-            data_diaria.loc[mascara_iso] = pd.to_datetime(
-                textos_data.loc[mascara_iso], errors="coerce", yearfirst=True,
-            )
-            data_diaria.loc[~mascara_iso] = pd.to_datetime(
-                textos_data.loc[~mascara_iso], errors="coerce", dayfirst=True,
-            )
-        df["Data_Venda_Diaria"] = data_diaria
-    df["Receita Acumulada 11 Meses"] = _normalizar_numero_excel(
-        df["Receita Acumulada 11 Meses"]
-    )
+        df["Data_Venda_Diaria"] = _parse_data_diaria(df[coluna_data_diaria])
+
+    df["Receita Acumulada 11 Meses"] = _normalizar_numero_excel(df["Receita Acumulada 11 Meses"])
     df["QTD"] = _normalizar_numero_excel(df["QTD"])
+    df["CMV"] = _normalizar_numero_excel(df["CMV"])
     return df
+
+
+def carregar_csv_despesas(caminho_controladoria):
+    """Lê ``{empresa}_CONTROLADORIA.csv``: despesas por loja/categoria/competência.
+
+    Arquivo independente da fonte, sem join com movimento/produto — uma linha
+    por lançamento. Categoria vem de DESCRICAO_HARMONIZADA, com fallback para a
+    DESCRICAO bruta quando não harmonizada, mesmo critério do catálogo de
+    produtos. Competência usa MES/ANO (não DATA_VENC, que mistura data e hora
+    e varia de formato entre fontes).
+    """
+    tipos_texto = {
+        coluna: str for coluna in ("ID_LOJA", "DESCRICAO", "DESCRICAO_HARMONIZADA")
+    }
+    df = _ler_csv_empresa(Path(caminho_controladoria), COLUNAS_CONTROLADORIA_EMPRESA, tipos_texto)
+
+    harmonizada = df["DESCRICAO_HARMONIZADA"].astype(str).str.strip()
+    bruta = df["DESCRICAO"].astype(str).str.strip()
+    vazio = harmonizada.str.lower().isin(("", "nan", "none", "<na>"))
+    categoria = harmonizada.where(~vazio, bruta)
+
+    return pd.DataFrame({
+        "Loja": df["ID_LOJA"].astype(str).str.strip(),
+        "categoria": categoria,
+        "Ano": pd.to_numeric(df["ANO"], errors="coerce"),
+        "Mês": pd.to_numeric(df["MES"], errors="coerce"),
+        "Valor": _normalizar_numero_excel(df["VALOR"]).fillna(0.0),
+    })
+
+
+def montar_estoque_e_vendas(df_base, caminho_produto):
+    """Estoque (a partir do PRODUTO.csv) e vendas (a partir da base já carregada),
+    no schema que `estoque_cobertura.py` espera — substitui o pipeline Liquidez
+    (Dados_Estoque_*/Dados_Vendas_* legados) pelas colunas que a fonte por
+    empresa já traz.
+
+    Custo unitário = CMV total do produto / QTD total do produto no período
+    carregado (média ponderada, não a média simples das linhas do movimento) —
+    vai na coluna `Preço_médio_cmv`, que `estoque_cobertura._combinar_estoque_vendas`
+    já usa como segunda opção de custo (`Último_custo`, que não existe mais como
+    fonte própria, fica 0 e cede a vez).
+    """
+    tipos_texto_produto = {
+        coluna: str for coluna in (
+            "ID_LOJA", "CODIGO_INTERNO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO",
+            "DESCRICAO_PRODUTO", "DESCRICAO_HARMONIZADA",
+        )
+    }
+    produto = _ler_csv_empresa(Path(caminho_produto), COLUNAS_PRODUTO_EMPRESA, tipos_texto_produto)
+    mapa_harmonizada = _mapa_descricao_harmonizada(produto)
+
+    codigo = produto["CODIGO_INTERNO_PRODUTO"].astype(str).str.strip()
+    harmonizada = codigo.map(mapa_harmonizada)
+    descricao = harmonizada.where(harmonizada.notna(), produto["DESCRICAO_PRODUTO"])
+
+    estoque = pd.DataFrame({
+        "Loja": produto["ID_LOJA"].astype(str).str.strip(),
+        "CODIGO_INTERNO_PRODUTO": codigo,
+        "CODIGO_REFERENCIA_PRODUTO": produto["CODIGO_REFERENCIA_PRODUTO"].astype(str).str.strip(),
+        "descricao": descricao,
+        "Qtd_estoque": _normalizar_numero_excel(produto["QUANTIDADE_ESTOQUE"]).fillna(0.0),
+    })
+
+    custo_produto = pd.Series(dtype=float)
+    fabricante_produto = pd.Series(dtype=str)
+    vendas = pd.DataFrame(columns=[
+        "Nome_Loja", "CODIGO_INTERNO_PRODUTO", "Ano", "Mês", "QTD",
+    ])
+    if df_base is not None and not df_base.empty:
+        if "CMV" in df_base.columns:
+            soma_cmv = df_base.groupby("Código Interno")["CMV"].sum()
+            soma_qtd = df_base.groupby("Código Interno")["QTD"].sum().replace(0, np.nan)
+            custo_produto = soma_cmv / soma_qtd
+        fabricante_produto = df_base.groupby("Código Interno")["NOME_FABRICANTE"].first()
+        vendas = (
+            df_base.groupby(["Loja", "Código Interno", "Ano", "Mês"], as_index=False)
+            .agg(QTD=("QTD", "sum"))
+            .rename(columns={"Loja": "Nome_Loja", "Código Interno": "CODIGO_INTERNO_PRODUTO"})
+        )
+
+    estoque["NOME_FABRICANTE"] = estoque["CODIGO_INTERNO_PRODUTO"].map(fabricante_produto).fillna("Não informado")
+    estoque["Preço_médio_cmv"] = estoque["CODIGO_INTERNO_PRODUTO"].map(custo_produto).fillna(0.0)
+    estoque["Preço_médio_de_venda"] = 0.0
+    estoque["Último_custo"] = 0.0
+    estoque = estoque.groupby(["Loja", "CODIGO_INTERNO_PRODUTO"], as_index=False).agg({
+        "CODIGO_REFERENCIA_PRODUTO": "first",
+        "descricao": "first",
+        "NOME_FABRICANTE": "first",
+        "Qtd_estoque": "sum",
+        "Preço_médio_cmv": "first",
+        "Preço_médio_de_venda": "first",
+        "Último_custo": "first",
+    })
+
+    return estoque, vendas
 
 
 def validar_e_limpar(df, receita_em_texto_br):
@@ -394,6 +568,9 @@ def validar_e_limpar(df, receita_em_texto_br):
     df["Código de referêcia"] = df["Código de referêcia"].fillna("").astype(str).str.strip()
     df.loc[df["Cliente"] == "", "Cliente"] = "Não informado"
     df.loc[df["descricao"] == "", "descricao"] = DESCRICAO_NAO_HARMONIZADA
+    if "Vendedor" in df.columns:
+        df["Vendedor"] = df["Vendedor"].fillna("").astype(str).str.strip()
+        df.loc[df["Vendedor"].str.lower().isin(("", "nan", "none", "<na>")), "Vendedor"] = ""
 
     if receita_em_texto_br:
         # Conversão da receita: formato BR com vírgula decimal.
@@ -418,12 +595,17 @@ def validar_e_limpar(df, receita_em_texto_br):
             "Valores de Ano não reconhecidos: " + ", ".join(map(str, anos_invalidos))
         )
 
-    # Construção da Data_Venda a partir de Ano + Mês (nome por extenso em PT-BR)
+    # Construção da Data_Venda a partir de Ano + Mês. Mês aceita número (1-12,
+    # como vem do MOVIMENTO_ATUAL da empresa) ou nome por extenso em PT-BR
+    # (como vem do base_de_dados.xlsx/Power BI) — o primeiro que validar vence.
+    mes_numerico_direto = pd.to_numeric(df["Mês"], errors="coerce")
     mes_normalizado = (
         df["Mês"].astype(str).str.strip().str.lower()
         .str.replace("é", "e").str.replace("ê", "e")
     )
-    df["_mes_num"] = mes_normalizado.map(MESES_PT)
+    mes_por_nome = mes_normalizado.map(MESES_PT)
+    mes_numerico_valido = mes_numerico_direto.between(1, 12)
+    df["_mes_num"] = mes_numerico_direto.where(mes_numerico_valido, mes_por_nome)
     if df["_mes_num"].isnull().any():
         meses_invalidos = df.loc[df["_mes_num"].isnull(), "Mês"].unique()
         raise ErroCarregamentoCSV(

@@ -6,7 +6,9 @@ import ConfiguracoesPage from './pages/ConfiguracoesPage';
 import MonitorPage from './pages/MonitorPage';
 import MercadologicoPage from './pages/MercadologicoPage';
 import ClientesPage from './pages/ClientesPage';
+import VendedoresPage from './pages/VendedoresPage';
 import EstoquePage from './pages/EstoquePage';
+import DespesasPage from './pages/DespesasPage';
 import AssistenteIAPage from './pages/AssistenteIAPage';
 
 // Login desativado: o Analisador é aberto, como o Dashboard. A tela de login
@@ -22,7 +24,9 @@ export default function App() {
         <Route path="/monitor" element={<MonitorPage />} />
         <Route path="/analisador" element={<AnalisadorPage />} />
         <Route path="/clientes" element={<ClientesPage />} />
+        <Route path="/vendedores" element={<VendedoresPage />} />
         <Route path="/estoque" element={<EstoquePage />} />
+        <Route path="/despesas" element={<DespesasPage />} />
         <Route path="/assistente" element={<AssistenteIAPage />} />
         <Route path="/mercadologico" element={<MercadologicoPage />} />
       </Routes>

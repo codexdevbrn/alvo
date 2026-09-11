@@ -22,11 +22,11 @@ const MESES_PADRAO = 12;
 type OrdenacaoMonitor = 'nome' | 'valor' | 'variacao';
 type EscopoMonitor = 'favoritas' | 'todas';
 
+const METRICAS_VALIDAS: MetricaMonitor[] = ['receita', 'qtd', 'clientes', 'receita_dia', 'lucro', 'lucro_dia'];
+
 function lerMetrica(): MetricaMonitor {
   const valor = localStorage.getItem(LS_METRICA);
-  return valor === 'qtd' || valor === 'clientes' || valor === 'receita_dia'
-    ? valor
-    : 'receita';
+  return (METRICAS_VALIDAS as string[]).includes(valor ?? '') ? (valor as MetricaMonitor) : 'receita';
 }
 
 function lerMeses(): number {
@@ -44,7 +44,7 @@ function normalizarBusca(valor: string): string {
 }
 
 function valorPrincipal(item: EmpresaMonitor, metrica: MetricaMonitor): number {
-  return metrica === 'receita_dia' ? (item.media ?? 0) : (item.total ?? 0);
+  return metrica === 'receita_dia' || metrica === 'lucro_dia' ? (item.media ?? 0) : (item.total ?? 0);
 }
 
 export default function MonitorPage() {
@@ -188,9 +188,11 @@ export default function MonitorPage() {
               onChange={(evento) => setMetrica(evento.target.value as MetricaMonitor)}
             >
               <option value="receita">Receita</option>
-              <option value="receita_dia">Média de receita por dia útil</option>
+              <option value="receita_dia">Média de receita por dia com venda</option>
               <option value="qtd">Quantidade</option>
               <option value="clientes">Clientes</option>
+              <option value="lucro">Lucro bruto</option>
+              <option value="lucro_dia">Média de lucro bruto por dia com venda</option>
             </select>
           </label>
 
@@ -244,10 +246,19 @@ export default function MonitorPage() {
           </div>
         </section>
 
-        {metrica === 'receita_dia' && (
+        {(metrica === 'receita_dia' || metrica === 'lucro_dia') && (
           <p className="monitor-nota">
-            Receita mensal ÷ dias úteis do mês. Sábados e domingos são excluídos;
-            feriados não. Último período pode estar incompleto.
+            {metrica === 'receita_dia' ? 'Receita' : 'Lucro bruto'} mensal ÷ dias com
+            venda real no mês (dias distintos com movimento na base). Empresa sem data
+            diária na fonte usa dias úteis do calendário como estimativa. Último período
+            pode estar incompleto.
+          </p>
+        )}
+
+        {(metrica === 'lucro' || metrica === 'lucro_dia') && (
+          <p className="monitor-nota">
+            Lucro bruto = receita − CMV. Empresas sem CMV cadastrado na fonte não
+            aparecem nesta métrica.
           </p>
         )}
 

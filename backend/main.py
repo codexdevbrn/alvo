@@ -53,7 +53,7 @@ from engine import analise_funil as af
 from engine.recursos import pasta_base_execucao, pasta_web
 from engine.exportadores_pdf_word import exportar_relatorio_pdf
 from exportar_html import exportar_relatorio_html
-from monitor_empresas import METRICAS_MONITOR, montar_card, obter_resumo_monitor
+from monitor_empresas import METRICAS_COM_CMV, METRICAS_MONITOR, montar_card, obter_resumo_monitor
 from relatorio_cliente import (
     ErroPainelCliente,
     gerar_painel_cliente_pdf,
@@ -67,8 +67,8 @@ from exportar_excel import (
 )
 
 # Raiz do projeto, um nível acima de backend/. base_de_dados.xlsx e os
-# scripts generalistas de normalização/harmonização (normalizar_base.py,
-# harmonizar_descricoes.py) ficam lá.
+# scripts generalistas de normalização (normalizar_base.py, normalizar_liquidez.py)
+# ficam lá.
 #
 # Congelado, `__file__` aponta para dentro do bundle (`_internal/`), que é
 # somente leitura e é substituído a cada atualização — não serve para achar
@@ -87,9 +87,19 @@ from normalizar_base import (  # noqa: E402
     ErroNormalizacao,
     parse_numero_flexivel,
     resolver_arquivos_dados,
+    resolver_caminho_controladoria,
 )
 from normalizar_liquidez import normalizar_estoque, normalizar_vendas  # noqa: E402
-from estoque_cobertura import montar_cobertura_estoque  # noqa: E402
+from analise_vendedores import (  # noqa: E402
+    ErroFichaVendedor,
+    coluna_vendedor_preenchida,
+    montar_ficha_vendedor,
+    montar_ranking_vendedores,
+    preencher_vendedores_demo,
+)
+from analise_clientes import montar_painel_clientes  # noqa: E402
+from estoque_cobertura import montar_cobertura_estoque, montar_resumo_estoque  # noqa: E402
+from despesas import montar_detalhe_despesas, montar_resumo_despesas  # noqa: E402
 
 CAMINHO_BASE_PADRAO = os.path.join(RAIZ_PROJETO, "base_de_dados.xlsx")
 
@@ -274,7 +284,8 @@ def obter_catalogo(usuario: str = Depends(exigir_login)):
 # ---------------------------------------------------------------------------
 # Dois caminhos compartilhados (Dashboard + Analisador)
 #
-# caminho_fonte_dados  — somente leitura: /{empresa}/Dados Mais Atacado.xlsx
+# caminho_fonte_dados  — somente leitura: /{empresa}/{empresa}_MOVIMENTO_ATUAL.csv
+#                         + /{empresa}/{empresa}_PRODUTO.csv
 #                         + Estoque/Vendas legados opcionais, na mesma pasta
 # caminho_trabalho     — escrita: /{cliente}/summary_dashboard.json, config.json, harm.xlsx, tags
 #
@@ -306,6 +317,11 @@ CHAVE_CAMINHO_ATUALIZACOES = "caminho_atualizacoes"
 #:
 #: É guarda contra acidente, não controle de acesso — quem tem a tela pode ligar.
 CHAVE_REGENERACAO_PERMITIDA = "regeneracao_permitida"
+#: "1" = a tela de Vendedores aparece na barra e a API responde.
+#:
+#: A coluna ainda não veio na base de todas as empresas. Padrão desligado pra
+#: poder publicar a tela sem ela aparecer até alguém marcar em Configurações.
+CHAVE_TELA_VENDEDORES = "tela_vendedores"
 # Legadas — só leitura de fallback / aliases de rota
 CHAVE_CAMINHO_DADOS_DASHBOARD = "caminho_dados_dashboard"
 CHAVE_CAMINHO_EMPRESAS = "caminho_empresas"
@@ -314,6 +330,7 @@ NOME_PASTA_INVALIDO = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 CAMINHO_BASE_CLIENTES_PADRAO = os.path.join(RAIZ_PROJETO, "base-clientes")
 NOME_ARQUIVO_TAGS_CLIENTES = "clientes_tags.json"
 NOME_ARQUIVO_CONFIG = "config.json"
+CAMINHO_BANCO_CENTRALIZADO_TAGS = r"C:\Users\bi_2d_gzgh6n0\OneDrive - 2dconsultores.com.br\01 - Marco + Monitores\Ecossistema-Monitoria\Bancos\tags.json"
 # Escopo "" = "Todas as lojas"; demais chaves = nome da loja.
 FORMATO_POR_LOJA = "por_loja"
 CHAVE_FORMATO = "_formato"
@@ -494,7 +511,7 @@ def _validar_nome_empresa(nome: str) -> str:
 
 
 def _listar_empresas_fonte() -> list[str]:
-    """Lista subpastas com Dados Mais Atacado.xlsx diretamente dentro, somente leitura."""
+    """Lista subpastas com MOVIMENTO_ATUAL.csv + PRODUTO.csv diretamente dentro, somente leitura."""
     caminho = _resolver_caminho_fonte()
     if not caminho or not os.path.isdir(caminho):
         return []
@@ -595,6 +612,26 @@ def _gravar_json_trabalho(caminho: str, payload: dict) -> None:
             json.dump(payload, arquivo, ensure_ascii=False, indent=2)
     except OSError as exc:
         raise HTTPException(status_code=400, detail=f"Não foi possível gravar {os.path.basename(caminho)}: {exc}")
+
+
+def _ler_catalogo_centralizado() -> list[dict]:
+    if not os.path.isfile(CAMINHO_BANCO_CENTRALIZADO_TAGS):
+        return _garantir_tag_alerta([dict(item) for item in TAGS_CATALOGO_PADRAO])
+    try:
+        with open(CAMINHO_BANCO_CENTRALIZADO_TAGS, "r", encoding="utf-8") as arquivo:
+            bruto = json.load(arquivo)
+            return _normalizar_catalogo_tags(bruto)
+    except (OSError, json.JSONDecodeError):
+        return _garantir_tag_alerta([dict(item) for item in TAGS_CATALOGO_PADRAO])
+
+
+def _gravar_catalogo_centralizado(catalogo: list[dict]) -> None:
+    try:
+        os.makedirs(os.path.dirname(CAMINHO_BANCO_CENTRALIZADO_TAGS), exist_ok=True)
+        with open(CAMINHO_BANCO_CENTRALIZADO_TAGS, "w", encoding="utf-8") as arquivo:
+            json.dump(catalogo, arquivo, ensure_ascii=False, indent=2)
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Não foi possível gravar catálogo centralizado: {exc}")
 
 
 def _ler_scopes_config(empresa: str) -> dict[str, dict]:
@@ -829,17 +866,11 @@ def _slice_tags_do_escopo(empresa: str, loja: Optional[str] = None) -> dict:
 
 
 def _catalogo_tags_da_empresa(empresa: str, loja: Optional[str], bruto_escopo: dict) -> list[dict]:
-    """Retorna catálogo global da empresa, com fallback para legado por loja.
-
-    Tags são cadastradas em Configurações no escopo global. As marcações de
-    clientes continuam separadas por loja, mas precisam reconhecer catálogo
-    global para uma tag nova aparecer ao abrir qualquer cliente.
+    """Retorna o catálogo do banco centralizado no OneDrive. Ignora o legado por loja ou global da empresa.
+    
+    As tags editadas e cadastradas passam a refletir para todas as empresas.
     """
-    bruto_global = _slice_tags_do_escopo(empresa, None)
-    catalogo_global = bruto_global.get("catalogo") if isinstance(bruto_global, dict) else None
-    if isinstance(catalogo_global, list) and catalogo_global:
-        return _normalizar_catalogo_tags(catalogo_global)
-    return _normalizar_catalogo_tags(bruto_escopo.get("catalogo"))
+    return _ler_catalogo_centralizado()
 
 
 def _gravar_arquivo_tags_clientes(
@@ -894,9 +925,61 @@ def _gravar_tags_clientes(
     )
 
 
-def _gravar_catalogo_tags(empresa: str, catalogo_bruto, loja: Optional[str] = None) -> dict:
+def _mesclar_catalogo_centralizado(
+    central: list[dict], base: list[dict], novo: list[dict],
+) -> list[dict]:
+    """3-way merge do catálogo centralizado.
+
+    `base` é o catálogo como a sessão o carregou; `novo` é o estado editado
+    localmente (criação/edição/remoção); `central` é o estado vigente no
+    arquivo no momento do salvar, que pode já ter mudado por outra sessão.
+    Sem isso, salvar sempre sobrescrevia `central` inteiro pelo array em
+    memória da sessão — uma tag criada por outra aba entre o load e o save
+    desta sumia (era exatamente o caso: duas sessões salvando em sequência
+    apagaram `balcao`/`interno` uma da outra).
+    """
+    ids_base = {item["id"]: item for item in base}
+    ids_novo = {item["id"]: item for item in novo}
+    removidos = set(ids_base) - set(ids_novo)
+
+    resultado: list[dict] = []
+    vistos: set[str] = set()
+    for item in central:
+        tag_id = item.get("id")
+        if tag_id in removidos:
+            continue
+        resultado.append(ids_novo.get(tag_id, item))
+        vistos.add(tag_id)
+    for tag_id, item in ids_novo.items():
+        if tag_id not in vistos:
+            resultado.append(item)
+    return resultado
+
+
+def _gravar_catalogo_tags(
+    empresa: str,
+    catalogo_bruto,
+    loja: Optional[str] = None,
+    catalogo_base_bruto=None,
+) -> dict:
     bruto = _slice_tags_do_escopo(empresa, loja)
-    catalogo = _normalizar_catalogo_tags(catalogo_bruto)
+    novo = _normalizar_catalogo_tags(catalogo_bruto)
+
+    if catalogo_base_bruto is not None:
+        central_atual = _ler_catalogo_centralizado()
+        base = _normalizar_catalogo_tags(catalogo_base_bruto)
+        catalogo = _garantir_tag_alerta(
+            _mesclar_catalogo_centralizado(central_atual, base, novo)
+        )
+    else:
+        # Compat: cliente antigo que não manda o snapshot de base — mantém o
+        # comportamento anterior (sobrescreve), único caminho possível sem saber
+        # o que a sessão realmente editou.
+        catalogo = novo
+
+    # Salva no banco centralizado (afeta todas as empresas simultaneamente)
+    _gravar_catalogo_centralizado(catalogo)
+
     ids_catalogo = _ids_do_catalogo(catalogo)
     tags = _normalizar_mapa_tags(bruto.get("tags") if bruto else {}, ids_catalogo)
     return _gravar_arquivo_tags_clientes(
@@ -976,6 +1059,12 @@ _CACHE_ESTOQUE_MAX = 8
 _cache_estoque_cobertura: OrderedDict[tuple, dict] = OrderedDict()
 _cache_estoque_cobertura_lock = threading.Lock()
 
+# DataFrame de despesas (CONTROLADORIA.csv) por empresa, cacheado por mtime do
+# arquivo. Sem cache do resultado calculado: o groupby é leve (arquivo bem
+# menor que MOVIMENTO_ATUAL), não justifica o segundo nível do Estoque.
+_CACHE_DESPESAS_MAX = 3
+_cache_despesas_df: OrderedDict[str, dict] = OrderedDict()
+
 # Uma mesma empresa pode ser solicitada várias vezes em paralelo (F5, StrictMode,
 # vários clientes na LAN). Sem single-flight, cada request relê o XLSX e gera o
 # mesmo summary, multiplicando CPU/RAM e deixando até o seletor sem resposta.
@@ -1007,16 +1096,30 @@ def _lru_set(cache: OrderedDict, key: str, value: dict, max_size: int = _CACHE_E
         cache.popitem(last=False)
 
 
-def _data_ultimo_movimento_bi(pasta_fonte: str) -> Optional[date]:
-    """Data de modificação da base XLSX na fonte (somente leitura).
+def _caminho_referencia_fonte(caminho_movimento: Path, caminho_produto: Path) -> Path:
+    """Arquivo com a mtime mais recente entre MOVIMENTO_ATUAL e PRODUTO.
 
-    O arquivo novo só tem Ano/Mês (sem dia) — usa-se a data de última escrita
-    do arquivo como proxy de "última atualização" em vez de tentar extrair
-    um dia exato dos dados.
+    A fonte por empresa hoje é dois CSVs, não um único arquivo — este é o
+    substituto de "o mtime do arquivo fonte" usado em cache/frescor.
+    """
+    caminho_movimento = Path(caminho_movimento)
+    caminho_produto = Path(caminho_produto)
+    if os.path.getmtime(caminho_produto) > os.path.getmtime(caminho_movimento):
+        return caminho_produto
+    return caminho_movimento
+
+
+def _data_ultimo_movimento_bi(pasta_fonte: str) -> Optional[date]:
+    """Data de modificação dos CSVs na fonte (somente leitura).
+
+    O MOVIMENTO_ATUAL traz DATA_MOVIMENTO real, mas por ora usa-se a data de
+    última escrita dos arquivos como proxy de "última atualização" (mesmo
+    critério de antes, quando a fonte era um único XLSX mensal).
     """
     try:
-        caminho_atacado, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
-        return date.fromtimestamp(os.path.getmtime(caminho_atacado))
+        caminho_movimento, caminho_produto, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
+        caminho_referencia = _caminho_referencia_fonte(caminho_movimento, caminho_produto)
+        return date.fromtimestamp(os.path.getmtime(caminho_referencia))
     except ErroNormalizacao as exc:
         logger.warning("Dados indisponíveis para data de atualização em %s: %s", pasta_fonte, exc)
         return None
@@ -1026,12 +1129,13 @@ def _data_ultimo_movimento_bi(pasta_fonte: str) -> Optional[date]:
 
 
 def _carregar_atacado_df(pasta_fonte: str) -> pd.DataFrame:
-    """Lê a base XLSX da empresa direto da fonte.
+    """Lê MOVIMENTO_ATUAL + PRODUTO da empresa direto da fonte.
 
-    O arquivo já chega normalizado. Este fluxo só lê, mapeia colunas em memória
-    e nunca cria Base.csv, harm.xlsx ou qualquer outro arquivo na fonte."""
-    caminho_atacado, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
-    return af.carregar_excel_base_empresa(caminho_atacado)
+    Os arquivos já chegam prontos para leitura. Este fluxo só lê, junta e mapeia
+    colunas em memória — nunca cria Base.csv, harm.xlsx ou qualquer outro
+    arquivo na fonte."""
+    caminho_movimento, caminho_produto, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
+    return af.carregar_csv_base_empresa(caminho_movimento, caminho_produto)
 
 
 def _garantir_summary_dashboard_arquivo(
@@ -1184,9 +1288,10 @@ def _regenerar_base_empresa(empresa: str) -> dict:
     """Limpa caches (RAM + summary em disco) e força reprocessamento direto da fonte."""
     pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
     try:
-        caminho_atacado, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
+        caminho_movimento, caminho_produto, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
     except ErroNormalizacao as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    caminho_referencia = _caminho_referencia_fonte(caminho_movimento, caminho_produto)
 
     # A trava também cobre invalidação; evita apagar arquivo enquanto outra
     # request ainda o lê. É RLock porque a função garantir reutiliza a mesma trava.
@@ -1196,7 +1301,7 @@ def _regenerar_base_empresa(empresa: str) -> dict:
         invalidar_summary_dashboard(pasta_trabalho)
 
         caminho_summary = _garantir_summary_dashboard_arquivo(
-            empresa, pasta_fonte, pasta_trabalho, str(caminho_atacado),
+            empresa, pasta_fonte, pasta_trabalho, str(caminho_referencia),
         )
     return {
         "ok": True,
@@ -1234,19 +1339,20 @@ def _carregar_base_empresa(empresa: str) -> tuple[pd.DataFrame, int]:
 
 
 def _carregar_base_empresa_sem_trava(empresa: str) -> tuple[pd.DataFrame, int]:
-    """Lê Dados Mais Atacado.xlsx direto da fonte (sem arquivo intermediário).
+    """Lê MOVIMENTO_ATUAL + PRODUTO direto da fonte (sem arquivo intermediário).
 
-    Cache LRU em RAM chaveado no mtime do XLSX na fonte e no da regra de
-    harmonização de clientes (que reescreve nomes antes de o DF entrar no cache).
+    Cache LRU em RAM chaveado no mtime mais recente dos dois CSVs na fonte e no
+    da regra de harmonização de clientes (que reescreve nomes antes de o DF
+    entrar no cache).
     """
     pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
     try:
-        caminho_atacado, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
+        caminho_movimento, caminho_produto, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
     except ErroNormalizacao as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
     mtime = (
-        os.path.getmtime(caminho_atacado),
+        os.path.getmtime(_caminho_referencia_fonte(caminho_movimento, caminho_produto)),
         harmonizar_clientes.mtime_regra(pasta_trabalho),
     )
     em_cache = _cache_base_empresa.get(empresa)
@@ -1272,6 +1378,7 @@ def _carregar_base_empresa_sem_trava(empresa: str) -> tuple[pd.DataFrame, int]:
     df = harmonizar_clientes.aplicar_em_cliente(
         df, harmonizar_clientes.carregar_regra(pasta_trabalho),
     )
+    df = _aplicar_vendedores_demo_se_preciso(df, empresa)
     # Master DF no cache. Callers mutáveis recebem cópia por padrão; as rotas
     # explicitamente somente-leitura podem compartilhar este objeto.
     _lru_set(
@@ -1319,6 +1426,24 @@ def _normalizar_loja(loja: Optional[str]) -> Optional[str]:
     return PREFIXO_ESCOPO_MULTILOJAS + json.dumps(
         nomes, ensure_ascii=False, separators=(",", ":"),
     )
+
+
+def _eh_dados_mockados(empresa: str) -> bool:
+    """Empresa de demonstração: pasta `Dados Mockados` na fonte."""
+    return (empresa or "").strip().casefold() == "dados mockados"
+
+
+def _aplicar_vendedores_demo_se_preciso(df: pd.DataFrame, empresa: str) -> pd.DataFrame:
+    """Preenche vendedores fictícios só na mockada, e só se a fonte ainda não tiver o campo.
+
+    Não grava na pasta fonte. A atribuição é estável por cliente (hash), para o
+    ranking não mudar a cada reload enquanto a coluna real não chegar.
+    """
+    if df is None or df.empty or not _eh_dados_mockados(empresa):
+        return df
+    if coluna_vendedor_preenchida(df):
+        return df
+    return preencher_vendedores_demo(df)
 
 
 def _normalizar_coluna_loja_inplace(df: pd.DataFrame) -> pd.DataFrame:
@@ -2009,11 +2134,11 @@ def _exigir_origem_local(request: Request) -> None:
 
     Aplicar uma atualização troca os arquivos do disco onde este processo roda e
     reinicia o serviço — é uma ação de máquina local, não de rede. O uvicorn
-    escutar em 127.0.0.1 não basta como fronteira: em produção o Apache do XAMPP
-    escuta na porta 80 de todas as interfaces e faz `ProxyPass /api` para
-    127.0.0.1:8003, então qualquer PC da rede alcança a API — e o login está
-    desativado (ver auth.LOGIN_DESATIVADO). Sem esta checagem, um curl de
-    qualquer máquina derrubaria e substituiria a instalação no meio do dia.
+    escutar em 127.0.0.1 não basta sozinho como fronteira: qualquer reverse
+    proxy que um dia reexponha `/api` numa interface de rede tornaria a API
+    alcançável por qualquer PC — e o login está desativado (ver
+    auth.LOGIN_DESATIVADO). Sem esta checagem, um curl de qualquer máquina
+    derrubaria e substituiria a instalação no meio do dia.
 
     Preferido a exigir token porque não depende de trocar a senha padrão
     (admin/admin123 vai embutida no pacote) nem de um fluxo de login que a
@@ -2021,8 +2146,8 @@ def _exigir_origem_local(request: Request) -> None:
     """
     # Não é o peer TCP puro: o ProxyHeadersMiddleware do uvicorn já pode ter
     # substituído isto pelo IP de um X-Forwarded-For confiável. Para o propósito
-    # aqui isso ajuda — um pedido repassado pelo Apache chega com o IP real do PC
-    # da rede, e é exatamente o que se quer rejeitar.
+    # aqui isso ajuda — um pedido repassado por um reverse proxy chega com o IP
+    # real do PC da rede, e é exatamente o que se quer rejeitar.
     cliente = request.client.host if request.client else None
     if cliente not in ("127.0.0.1", "::1"):
         raise HTTPException(
@@ -2095,7 +2220,7 @@ def definir_inicio_automatico(
     """Liga/desliga o início com o Windows e o agendamento diário.
 
     Com o gate de origem local, como /aplicar: isto altera o que roda no logon
-    desta máquina, e o Apache do XAMPP expõe a API para a rede inteira.
+    desta máquina, ação local que não deveria ser acionável pela rede.
     """
     _exigir_origem_local(request)
 
@@ -2121,6 +2246,18 @@ def definir_inicio_automatico(
 
 def regeneracao_permitida() -> bool:
     return db.obter_config_app(CHAVE_REGENERACAO_PERMITIDA, "0") == "1"
+
+
+def tela_vendedores_visivel() -> bool:
+    return db.obter_config_app(CHAVE_TELA_VENDEDORES, "0") == "1"
+
+
+def _exigir_tela_vendedores() -> None:
+    if not tela_vendedores_visivel():
+        raise HTTPException(
+            status_code=404,
+            detail="A tela de vendedores está desligada em Configurações.",
+        )
 
 
 def _exigir_regeneracao_permitida() -> None:
@@ -2160,6 +2297,24 @@ def definir_regeneracao(
     _exigir_origem_local(request)
     db.definir_config_app(CHAVE_REGENERACAO_PERMITIDA, "1" if corpo.permitida else "0")
     return {"permitida": regeneracao_permitida()}
+
+
+class TelaVendedoresBody(BaseModel):
+    visivel: bool
+
+
+@app.get("/api/config/tela-vendedores")
+def obter_tela_vendedores(usuario: str = Depends(exigir_login)):
+    return {"visivel": tela_vendedores_visivel()}
+
+
+@app.post("/api/config/tela-vendedores")
+def definir_tela_vendedores(
+    corpo: TelaVendedoresBody,
+    usuario: str = Depends(exigir_login),
+):
+    db.definir_config_app(CHAVE_TELA_VENDEDORES, "1" if corpo.visivel else "0")
+    return {"visivel": tela_vendedores_visivel()}
 
 
 def _caminho_atualizador() -> Optional[str]:
@@ -2328,18 +2483,54 @@ def _assinatura_arquivo(caminho: Path) -> tuple[int, int]:
     return stat.st_mtime_ns, stat.st_size
 
 
+def _caminho_produto_empresa(empresa: str) -> tuple[Path, Path]:
+    """Caminhos de MOVIMENTO_ATUAL e PRODUTO — fonte do estoque hoje é o PRODUTO."""
+    pasta_fonte, _pasta_trabalho = _pastas_empresa(empresa)
+    try:
+        caminho_movimento, caminho_produto, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
+    except ErroNormalizacao as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return caminho_movimento, caminho_produto
+
+
+def _ler_estoque_vendas(
+    empresa: str,
+    caminho_produto: Path,
+    loja_norm: Optional[str],
+) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
+    """Estoque (QUANTIDADE_ESTOQUE do PRODUTO) e vendas (base já carregada),
+    recortadas pela loja. Devolve também as lojas da base — a lista sai antes
+    do recorte, senão o seletor sumiria assim que uma loja fosse escolhida.
+    """
+    df_base, _linhas_vazias = _carregar_base_empresa(empresa)
+    try:
+        estoque, vendas = af.montar_estoque_e_vendas(df_base, caminho_produto)
+    except af.ErroCarregamentoCSV as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    lojas = sorted(
+        nome for nome in estoque.get("Loja", pd.Series(dtype=str)).fillna("").astype(str).str.strip().unique()
+        if nome
+    )
+    estoque = _filtrar_loja_coluna(estoque, loja_norm, "Loja", caminho_produto.name)
+    vendas = _filtrar_loja_coluna(vendas, loja_norm, "Nome_Loja", caminho_produto.name)
+    return estoque, vendas, lojas
+
+
 @app.get("/api/estoque/cobertura/{empresa}")
 def obter_cobertura_estoque(
     empresa: str,
     loja: Optional[str] = None,
     meses: int = 6,
     limite: int = 800,
+    usar_mes_fechado: bool = True,
     usuario: str = Depends(exigir_login),
 ):
     """Mapa de estoque atual × velocidade média de venda por produto.
 
-    Lê os mesmos arquivos opcionais da Liquidez, sempre em modo somente leitura.
-    O frontend recebe pontos já calculados e nunca conhece caminhos locais.
+    Estoque vem do QUANTIDADE_ESTOQUE do PRODUTO.csv; vendas, da base já
+    carregada (MOVIMENTO_ATUAL). O frontend recebe pontos já calculados e
+    nunca conhece caminhos locais.
     """
     if meses < 1 or meses > 24:
         raise HTTPException(status_code=400, detail="meses deve ficar entre 1 e 24.")
@@ -2347,64 +2538,27 @@ def obter_cobertura_estoque(
         raise HTTPException(status_code=400, detail="limite deve ficar entre 1 e 2000.")
 
     empresa = _validar_nome_empresa(empresa)
-    pasta_fonte, _pasta_trabalho = _pastas_empresa(empresa)
-    try:
-        _atacado, caminho_estoque, caminho_vendas = resolver_arquivos_dados(Path(pasta_fonte))
-    except ErroNormalizacao as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    if caminho_estoque is None or caminho_vendas is None:
-        # A tela pode ser liberada antes de a empresa receber as colunas/arquivos
-        # de estoque. Ausência de dados é estado de negócio, não falha técnica.
-        return {
-            "disponivel": False,
-            "mensagem": "Dados de estoque e vendas ainda não disponíveis para esta empresa.",
-            "empresa": empresa,
-            "loja": None,
-            "lojas": [],
-            "periodo_inicio": None,
-            "periodo_fim": None,
-            "meses": meses,
-            "itens": [],
-            "itens_exibidos": 0,
-            "limitado": False,
-            "resumo": {
-                "produtos": 0,
-                "valor_estoque": 0,
-                "ruptura": 0,
-                "excesso": 0,
-                "sem_giro": 0,
-            },
-        }
+    caminho_movimento, caminho_produto = _caminho_produto_empresa(empresa)
 
     loja_norm = _normalizar_loja(loja)
     try:
-        assinatura = (_assinatura_arquivo(caminho_estoque), _assinatura_arquivo(caminho_vendas))
+        assinatura = (_assinatura_arquivo(caminho_produto), _assinatura_arquivo(caminho_movimento))
     except OSError as exc:
         raise HTTPException(status_code=400, detail=f"Não foi possível ler arquivos de estoque: {exc}") from exc
-    chave_cache = (empresa, loja_norm or "", meses, limite, assinatura, date.today().year)
+    chave_cache = (
+        empresa, loja_norm or "", meses, limite, usar_mes_fechado, assinatura, date.today(),
+    )
     with _cache_estoque_cobertura_lock:
         cacheado = _cache_estoque_cobertura.get(chave_cache)
         if cacheado is not None:
             _cache_estoque_cobertura.move_to_end(chave_cache)
             return cacheado
 
-    try:
-        estoque = normalizar_estoque(caminho_estoque)
-        vendas = normalizar_vendas(caminho_vendas)
-    except (ErroNormalizacao, OSError, ValueError) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    estoque, vendas, lojas = _ler_estoque_vendas(empresa, caminho_produto, loja_norm)
 
-    lojas = sorted(
-        nome for nome in estoque.get("Loja", pd.Series(dtype=str)).fillna("").astype(str).str.strip().unique()
-        if nome
+    resultado = montar_cobertura_estoque(
+        estoque, vendas, meses=meses, limite=limite, usar_mes_fechado=usar_mes_fechado,
     )
-    estoque = _filtrar_loja_coluna(estoque, loja_norm, "Loja", caminho_estoque.name)
-    vendas = _filtrar_loja_coluna(vendas, loja_norm, "Nome_Loja", caminho_vendas.name)
-    for coluna in ("Qtd_estoque", "Preço_médio_de_venda", "Preço_médio_cmv", "Último_custo"):
-        estoque[coluna] = parse_numero_flexivel(estoque[coluna])
-    vendas["QTD"] = parse_numero_flexivel(vendas["QTD"])
-
-    resultado = montar_cobertura_estoque(estoque, vendas, meses=meses, limite=limite)
     resultado.update({
         "disponivel": True,
         "mensagem": None,
@@ -2419,6 +2573,178 @@ def obter_cobertura_estoque(
         _cache_estoque_cobertura.move_to_end(chave_cache)
         while len(_cache_estoque_cobertura) > _CACHE_ESTOQUE_MAX:
             _cache_estoque_cobertura.popitem(last=False)
+    return resultado
+
+
+@app.get("/api/estoque/resumo/{empresa}")
+def obter_resumo_estoque(
+    empresa: str,
+    loja: Optional[str] = None,
+    meses: int = 6,
+    usar_mes_fechado: bool = True,
+    usuario: str = Depends(exigir_login),
+):
+    """Agregados da visão geral de estoque, calculados sobre a base inteira.
+
+    Rota separada da de cobertura porque o recorte é outro: lá vão até 2.000
+    produtos para o mapa, aqui vão poucos KB de totais e pontas. Mesma leitura
+    de arquivos, mesmo cache e a mesma régua de situação.
+    """
+    if meses < 1 or meses > 24:
+        raise HTTPException(status_code=400, detail="meses deve ficar entre 1 e 24.")
+
+    empresa = _validar_nome_empresa(empresa)
+    caminho_movimento, caminho_produto = _caminho_produto_empresa(empresa)
+
+    loja_norm = _normalizar_loja(loja)
+    try:
+        assinatura = (_assinatura_arquivo(caminho_produto), _assinatura_arquivo(caminho_movimento))
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Não foi possível ler arquivos de estoque: {exc}") from exc
+    chave_cache = (
+        "resumo", empresa, loja_norm or "", meses, usar_mes_fechado, assinatura, date.today(),
+    )
+    with _cache_estoque_cobertura_lock:
+        cacheado = _cache_estoque_cobertura.get(chave_cache)
+        if cacheado is not None:
+            _cache_estoque_cobertura.move_to_end(chave_cache)
+            return cacheado
+
+    estoque, vendas, lojas = _ler_estoque_vendas(empresa, caminho_produto, loja_norm)
+
+    resultado = montar_resumo_estoque(estoque, vendas, meses=meses, usar_mes_fechado=usar_mes_fechado)
+    resultado.update({
+        "disponivel": True,
+        "mensagem": None,
+        "empresa": empresa,
+        "loja": loja_norm,
+        "lojas": lojas,
+    })
+    with _cache_estoque_cobertura_lock:
+        _cache_estoque_cobertura[chave_cache] = resultado
+        _cache_estoque_cobertura.move_to_end(chave_cache)
+        while len(_cache_estoque_cobertura) > _CACHE_ESTOQUE_MAX:
+            _cache_estoque_cobertura.popitem(last=False)
+    return resultado
+
+
+@app.get("/api/vendedores/{empresa}")
+def listar_vendedores(
+    empresa: str,
+    loja: Optional[str] = None,
+    modo_periodo: str = "fechados",
+    usuario: str = Depends(exigir_login),
+):
+    """Ranking do último mês contra a média dos 6 anteriores."""
+    _exigir_tela_vendedores()
+    empresa = _validar_nome_empresa(empresa)
+    df, _linhas_vazias = _carregar_base(empresa, loja=loja)
+    resultado = montar_ranking_vendedores(df, modo_periodo=modo_periodo)
+    resultado["empresa"] = empresa
+    resultado["loja"] = _chave_escopo_loja(loja) or None
+    return resultado
+
+
+def _caminho_controladoria_empresa(empresa: str) -> Path:
+    pasta_fonte, _pasta_trabalho = _pastas_empresa(empresa)
+    caminho = resolver_caminho_controladoria(Path(pasta_fonte))
+    if caminho is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Empresa '{empresa}' não tem arquivo de despesas ({empresa}_CONTROLADORIA.csv).",
+        )
+    return caminho
+
+
+def _carregar_despesas_df(empresa: str) -> pd.DataFrame:
+    """DataFrame de despesas da empresa, cacheado em memória por mtime do CSV."""
+    caminho = _caminho_controladoria_empresa(empresa)
+    try:
+        assinatura = _assinatura_arquivo(caminho)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Não foi possível ler o arquivo de despesas: {exc}"
+        ) from exc
+
+    cacheado = _cache_despesas_df.get(empresa)
+    if cacheado is not None and cacheado["assinatura"] == assinatura:
+        _cache_despesas_df.move_to_end(empresa)
+        return cacheado["df"]
+
+    df = af.carregar_csv_despesas(caminho)
+    _cache_despesas_df[empresa] = {"assinatura": assinatura, "df": df}
+    _cache_despesas_df.move_to_end(empresa)
+    while len(_cache_despesas_df) > _CACHE_DESPESAS_MAX:
+        _cache_despesas_df.popitem(last=False)
+    return df
+
+
+@app.get("/api/despesas/{empresa}")
+def obter_resumo_despesas(
+    empresa: str,
+    loja: Optional[str] = None,
+    meses: int = 12,
+    usar_mes_fechado: bool = True,
+    usuario: str = Depends(exigir_login),
+):
+    """Total, série mês a mês e rankings de categoria/loja das despesas (Controladoria)."""
+    if meses < 1 or meses > 36:
+        raise HTTPException(status_code=400, detail="meses deve ficar entre 1 e 36.")
+
+    empresa = _validar_nome_empresa(empresa)
+    df = _carregar_despesas_df(empresa)
+
+    lojas = sorted(
+        nome for nome in df.get("Loja", pd.Series(dtype=str)).fillna("").astype(str).str.strip().unique()
+        if nome
+    )
+    loja_norm = _normalizar_loja(loja)
+    df_filtrado = _filtrar_loja_coluna(df, loja, "Loja", "CONTROLADORIA.csv")
+
+    resultado = montar_resumo_despesas(df_filtrado, meses=meses, usar_mes_fechado=usar_mes_fechado)
+    resultado.update({"empresa": empresa, "loja": loja_norm, "lojas": lojas})
+    return resultado
+
+
+@app.get("/api/despesas/{empresa}/detalhe")
+def obter_detalhe_despesas(
+    empresa: str,
+    loja: Optional[str] = None,
+    periodo: Optional[str] = None,
+    categoria: Optional[str] = None,
+    limite: int = 500,
+    usuario: str = Depends(exigir_login),
+):
+    """Lançamentos individuais de despesas, para a tabela de detalhe."""
+    empresa = _validar_nome_empresa(empresa)
+    df = _carregar_despesas_df(empresa)
+    df_filtrado = _filtrar_loja_coluna(df, loja, "Loja", "CONTROLADORIA.csv")
+
+    resultado = montar_detalhe_despesas(
+        df_filtrado, periodo=periodo, categoria=categoria, limite=limite,
+    )
+    resultado.update({"empresa": empresa, "loja": _normalizar_loja(loja)})
+    return resultado
+
+
+@app.get("/api/vendedores/{empresa}/ficha")
+def obter_ficha_vendedor(
+    empresa: str,
+    vendedor: str,
+    loja: Optional[str] = None,
+    modo_periodo: str = "fechados",
+    usuario: str = Depends(exigir_login),
+):
+    """Ficha de um vendedor: clientes, mix e alertas de queda."""
+    _exigir_tela_vendedores()
+    empresa = _validar_nome_empresa(empresa)
+    df, _linhas_vazias = _carregar_base(empresa, loja=loja)
+    try:
+        resultado = montar_ficha_vendedor(df, vendedor, modo_periodo=modo_periodo)
+    except ErroFichaVendedor as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    resultado["empresa"] = empresa
+    resultado["loja"] = _chave_escopo_loja(loja) or None
     return resultado
 
 
@@ -2476,6 +2802,11 @@ class TagClienteBody(BaseModel):
 
 class TagsCatalogoBody(BaseModel):
     catalogo: list
+    # Snapshot do catálogo no momento em que a sessão carregou a tela — usado
+    # para calcular o diff (criação/edição/remoção) e mesclar com o estado
+    # vigente no arquivo em vez de sobrescrevê-lo. Opcional para compatibilidade
+    # com clientes antigos que ainda não mandam esse campo.
+    catalogo_base: Optional[list] = None
 
 
 @app.get("/api/empresas/{nome}/clientes-tags")
@@ -2498,6 +2829,7 @@ def salvar_catalogo_tags(
         nome,
         corpo.catalogo if isinstance(corpo.catalogo, list) else [],
         loja=loja,
+        catalogo_base_bruto=corpo.catalogo_base if isinstance(corpo.catalogo_base, list) else None,
     )
 
 
@@ -2555,6 +2887,35 @@ def obter_alertas_clientes(
         estado_tags.get("regras_alerta") or [],
     )
     resultado["regras"] = estado_tags.get("regras_alerta") or []
+    resultado["loja"] = _chave_escopo_loja(loja) or None
+    return resultado
+
+
+@app.get("/api/clientes/{empresa}/painel")
+def obter_painel_clientes(
+    empresa: str,
+    loja: Optional[str] = None,
+    modo_periodo: str = "fechados",
+    usuario: str = Depends(exigir_login),
+):
+    """Visão geral da carteira: KPIs, curva ABC, movimento mensal, top e tags.
+
+    Os cortes da curva saem do `config.json` do escopo, os mesmos do Analisador
+    — dashboard e relatório precisam classificar o cliente na mesma faixa.
+    """
+    empresa = _validar_nome_empresa(empresa)
+    estado_tags = _ler_tags_clientes(empresa, loja=loja)
+    config = _ler_config_escopo(empresa, loja) or {}
+    df, _linhas_vazias = _carregar_base(empresa, loja=loja)
+    resultado = montar_painel_clientes(
+        df,
+        tags=estado_tags.get("tags") or {},
+        catalogo=estado_tags.get("catalogo") or [],
+        cortes=config.get("cortes_clientes"),
+        clientes_balcao=estado_tags.get("clientes_balcao") or [],
+        modo_periodo=modo_periodo,
+    )
+    resultado["empresa"] = empresa
     resultado["loja"] = _chave_escopo_loja(loja) or None
     return resultado
 
@@ -2722,6 +3083,18 @@ def definir_aguardando_base_dados_dashboard(corpo: AguardandoBaseDadosBody):
     return {"aguardando": corpo.aguardando}
 
 
+@app.get("/api/dashboard/tela-vendedores")
+def obter_tela_vendedores_dashboard():
+    """Público — a barra lateral some o item sem exigir login."""
+    return {"visivel": tela_vendedores_visivel()}
+
+
+@app.post("/api/dashboard/tela-vendedores")
+def definir_tela_vendedores_dashboard(corpo: TelaVendedoresBody):
+    db.definir_config_app(CHAVE_TELA_VENDEDORES, "1" if corpo.visivel else "0")
+    return {"visivel": tela_vendedores_visivel()}
+
+
 @app.get("/api/dashboard/empresas")
 def listar_empresas_dashboard():
     return _listar_empresas_fonte()
@@ -2791,6 +3164,11 @@ def monitor_empresas(
                 "estado": "sem_base",
                 "detalhe": "Base ainda não gerada para esta empresa.",
             })
+            continue
+
+        # Empresa sem CMV na fonte não entra nas métricas de lucro — mostrar
+        # lucro == receita seria dado errado disfarçado de dado certo.
+        if metrica in METRICAS_COM_CMV and not resumo.get("tem_cmv"):
             continue
 
         cards.append(montar_card(empresa, resumo, metrica=metrica, meses=meses))
@@ -2865,13 +3243,14 @@ def obter_summary_dashboard(empresa: str):
     """Serve summary_dashboard.json(.gz) em disco/RAM. Regenera só se a fonte for mais nova."""
     pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
     try:
-        caminho_atacado, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
+        caminho_movimento, caminho_produto, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
     except ErroNormalizacao as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    caminho_referencia = str(_caminho_referencia_fonte(caminho_movimento, caminho_produto))
     caminho_summary = _garantir_summary_dashboard_arquivo(
-        empresa, pasta_fonte, pasta_trabalho, str(caminho_atacado),
+        empresa, pasta_fonte, pasta_trabalho, caminho_referencia,
     )
-    return _resposta_summary_arquivo(empresa, caminho_summary, pasta_fonte, str(caminho_atacado))
+    return _resposta_summary_arquivo(empresa, caminho_summary, pasta_fonte, caminho_referencia)
 
 
 # ---------------------------------------------------------------------------
@@ -3729,17 +4108,17 @@ def _analises_alvos(
         )
     pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
     try:
-        caminho_atacado, caminho_estoque, caminho_vendas = resolver_arquivos_dados(Path(pasta_fonte))
+        _movimento, _produto, caminho_estoque, caminho_vendas = resolver_arquivos_dados(Path(pasta_fonte))
     except ErroNormalizacao as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
     analises: dict[str, pd.DataFrame] = {}
 
     if "mais_atacado" in chaves:
-        # Reutiliza XLSX já validado e normalizado no cache; antes esta análise
+        # Reutiliza a base já validada e normalizada no cache; antes esta análise
         # relia dezenas de MB mesmo após Dashboard/Analisador carregarem a base.
         df, _linhas_vazias = _carregar_base_empresa(empresa)
-        df = _filtrar_loja_coluna(df, loja, "Loja", "Dados Mais Atacado.xlsx")
+        df = _filtrar_loja_coluna(df, loja, "Loja", "MOVIMENTO_ATUAL.csv")
         colunas_origem = [
             "Loja", "NOME_FABRICANTE", "Cliente", "descricao", "Ano", "Mês",
             "Código Interno", "Código de referêcia", "Receita Acumulada 11 Meses", "QTD",
@@ -3929,9 +4308,9 @@ def exportar(
 # Frontend (SPA)
 #
 # Quando existe um build do dashboard, o próprio backend o serve — é o que
-# permite distribuir o Prisma como um executável único, sem depender de Apache/
-# XAMPP na máquina do usuário. Em desenvolvimento (sem `npm run build`) nada é
-# montado e o Vite continua servindo o front na 5173 com proxy para /api.
+# permite distribuir o Prisma como um executável único, sem depender de servidor
+# web externo na máquina do usuário. Em desenvolvimento (sem `npm run build`)
+# nada é montado e o Vite continua servindo o front na 5173 com proxy para /api.
 #
 # Este bloco precisa ficar no FIM do arquivo: a rota curinga abaixo casa com
 # qualquer GET, então qualquer rota declarada depois dela nunca seria alcançada.

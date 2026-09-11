@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Gera o pacote distribuível do Prisma e os arquivos que vão para o canal de
     atualização.

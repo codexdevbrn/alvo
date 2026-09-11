@@ -1,4 +1,6 @@
 import type { DashboardData } from '../types/dashboard';
+import type { ModoPeriodo } from '../utils/mesesFechados';
+import { comCache } from '../utils/cacheRequisicoes';
 
 const TOKEN_KEY = 'prisma_analisador_token';
 
@@ -521,24 +523,25 @@ export async function obterTagsClientes(
   empresa: string,
   loja?: string | null,
 ): Promise<TagsClientesResposta> {
-  const res = await chamar(
-    `/api/empresas/${encodeURIComponent(empresa)}/clientes-tags${queryLoja(loja)}`,
-    { headers: authHeaders() },
-  );
-  return tratarResposta(res);
+  const url = `/api/empresas/${encodeURIComponent(empresa)}/clientes-tags${queryLoja(loja)}`;
+  return comCache(`tags_${empresa}_${loja || ''}`, async () => {
+    const res = await chamar(url, { headers: authHeaders() });
+    return tratarResposta(res);
+  });
 }
 
 export async function salvarCatalogoTags(
   empresa: string,
   catalogo: TagCatalogoItem[],
   loja?: string | null,
+  catalogoBase?: TagCatalogoItem[],
 ): Promise<TagsClientesResposta> {
   const res = await chamar(
     `/api/empresas/${encodeURIComponent(empresa)}/clientes-tags/catalogo${queryLoja(loja)}`,
     {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json', ...authHeaders() },
-      body: JSON.stringify({ catalogo }),
+      body: JSON.stringify({ catalogo, catalogo_base: catalogoBase ?? null }),
     },
   );
   return tratarResposta(res);
@@ -700,13 +703,15 @@ export async function obterBaseClientes(
 ): Promise<ClientesBuscaResposta> {
   const params = new URLSearchParams({ empresa, limite: '5000' });
   if (loja) params.set('loja', loja);
-  const res = await chamar(`/api/clientes/buscar?${params}`, { headers: authHeaders() });
-  const dados = await tratarResposta<ClientesBuscaResposta>(res);
-  return {
-    itens: Array.isArray(dados.itens) ? dados.itens : [],
-    total: Number(dados.total) || 0,
-    limitado: Boolean(dados.limitado),
-  };
+  return comCache(`base_clientes_${empresa}_${loja || ''}`, async () => {
+    const res = await chamar(`/api/clientes/buscar?${params}`, { headers: authHeaders() });
+    const dados = await tratarResposta<ClientesBuscaResposta>(res);
+    return {
+      itens: Array.isArray(dados.itens) ? dados.itens : [],
+      total: Number(dados.total) || 0,
+      limitado: Boolean(dados.limitado),
+    };
+  });
 }
 
 export async function salvarTagsUmCliente(
@@ -879,6 +884,29 @@ export async function definirRegeneracao(permitida: boolean): Promise<boolean> {
   });
   const dados = await tratarResposta<{ permitida: boolean }>(res);
   return dados.permitida;
+}
+
+/** Público — a barra some o item Vendedores sem exigir login. */
+export async function obterTelaVendedores(auth = false): Promise<boolean> {
+  const res = await chamar(
+    auth ? '/api/config/tela-vendedores' : '/api/dashboard/tela-vendedores',
+    { headers: auth ? authHeaders() : {} },
+  );
+  const dados = await tratarResposta<{ visivel: boolean }>(res);
+  return dados.visivel;
+}
+
+export async function definirTelaVendedores(visivel: boolean, auth = false): Promise<boolean> {
+  const res = await chamar(
+    auth ? '/api/config/tela-vendedores' : '/api/dashboard/tela-vendedores',
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(auth ? authHeaders() : {}) },
+      body: JSON.stringify({ visivel }),
+    },
+  );
+  const dados = await tratarResposta<{ visivel: boolean }>(res);
+  return dados.visivel;
 }
 
 export interface EstadoPasta {
@@ -1091,16 +1119,197 @@ export type CoberturaEstoqueResposta = {
 
 export async function obterCoberturaEstoque(
   empresa: string,
-  parametros: { loja?: string | null; meses?: number; limite?: number } = {},
+  parametros: { loja?: string | null; meses?: number; limite?: number; usarMesesFechados?: boolean } = {},
   signal?: AbortSignal,
 ): Promise<CoberturaEstoqueResposta> {
   const query = new URLSearchParams();
   if (parametros.loja) query.set('loja', parametros.loja);
   if (parametros.meses) query.set('meses', String(parametros.meses));
   if (parametros.limite) query.set('limite', String(parametros.limite));
+  if (parametros.usarMesesFechados === false) query.set('usar_mes_fechado', 'false');
+  const qs = query.toString() ? `?${query}` : '';
+  const url = `/api/estoque/cobertura/${encodeURIComponent(empresa)}${qs}`;
+  
+  return comCache(`cobertura_${empresa}_${qs}`, async () => {
+    const res = await chamar(url, { headers: authHeaders(), signal });
+    return tratarResposta(res);
+  });
+}
+
+/** Produto nas listas da visão geral: o mesmo item, sem os campos que só o mapa usa. */
+export type ItemResumoEstoque = {
+  sku: string;
+  codigo_interno: string;
+  nome: string;
+  fabricante: string;
+  estoque: number;
+  venda_media: number;
+  cobertura: number | null;
+  valor_estoque: number;
+  /** Meses desde a última saída no histórico inteiro; null = nunca vendeu. */
+  meses_sem_venda: number | null;
+  status: StatusCoberturaEstoque;
+};
+
+export type ResumoEstoqueResposta = {
+  disponivel: boolean;
+  mensagem: string | null;
+  empresa: string;
+  loja: string | null;
+  lojas: string[];
+  periodo_inicio: string | null;
+  periodo_fim: string | null;
+  meses: number;
+  resumo: {
+    produtos: number;
+    valor_estoque: number;
+    ruptura: number;
+    excesso: number;
+    sem_giro: number;
+    valor_parado: number;
+    /** Meses de estoque em dinheiro: capital ÷ saída mensal a custo. */
+    cobertura_media: number | null;
+  };
+  por_situacao: { status: StatusCoberturaEstoque; produtos: number; valor_estoque: number }[];
+  ruptura_iminente: ItemResumoEstoque[];
+  capital_parado_fabricante: { fabricante: string; valor_estoque: number; produtos: number }[];
+  dinheiro_dormindo: ItemResumoEstoque[];
+};
+
+export async function obterResumoEstoque(
+  empresa: string,
+  parametros: { loja?: string | null; meses?: number; usarMesesFechados?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<ResumoEstoqueResposta> {
+  const query = new URLSearchParams();
+  if (parametros.loja) query.set('loja', parametros.loja);
+  if (parametros.meses) query.set('meses', String(parametros.meses));
+  if (parametros.usarMesesFechados === false) query.set('usar_mes_fechado', 'false');
+  const qs = query.toString() ? `?${query}` : '';
+  const url = `/api/estoque/resumo/${encodeURIComponent(empresa)}${qs}`;
+  
+  return comCache(`resumo_estoque_${empresa}_${qs}`, async () => {
+    const res = await chamar(url, { headers: authHeaders(), signal });
+    return tratarResposta(res);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Despesas (Controladoria)
+// ---------------------------------------------------------------------------
+
+export type PontoDespesaMensal = {
+  periodo: string;
+  rotulo: string;
+  valor: number;
+};
+
+export type ItemDespesaCategoria = {
+  categoria: string;
+  valor: number;
+  pct: number;
+  grupo_abc: string | null;
+  tendencia_pct: number | null;
+};
+
+export type ItemDespesaLoja = {
+  loja: string;
+  valor: number;
+};
+
+export type PontoDespesaMensalCategoria = {
+  periodo: string;
+  rotulo: string;
+  valores: Record<string, number>;
+};
+
+export type SerieMensalCategorias = {
+  categorias: string[];
+  pontos: PontoDespesaMensalCategoria[];
+};
+
+export type GrupoAbcDespesa = {
+  grupo: string;
+  quantidade: number;
+  valor: number;
+  pct: number;
+};
+
+export type CurvaAbcCategorias = {
+  cortes: number[];
+  grupos: GrupoAbcDespesa[];
+};
+
+export type ResumoDespesasResposta = {
+  empresa: string;
+  loja: string | null;
+  lojas: string[];
+  periodo_inicio: string | null;
+  periodo_fim: string | null;
+  meses: number;
+  resumo: {
+    total: number;
+    media_mensal: number;
+    mes_atual: number;
+    mes_anterior: number;
+    variacao_pct: number | null;
+    mes_mesmo_periodo_ano_anterior: number | null;
+    variacao_anual_pct: number | null;
+  };
+  serie_mensal: PontoDespesaMensal[];
+  serie_mensal_categorias: SerieMensalCategorias;
+  por_categoria: ItemDespesaCategoria[];
+  por_loja: ItemDespesaLoja[];
+  curva_abc_categorias: CurvaAbcCategorias;
+};
+
+export async function obterResumoDespesas(
+  empresa: string,
+  parametros: { loja?: string | null; meses?: number; usarMesesFechados?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<ResumoDespesasResposta> {
+  const query = new URLSearchParams();
+  if (parametros.loja) query.set('loja', parametros.loja);
+  if (parametros.meses) query.set('meses', String(parametros.meses));
+  if (parametros.usarMesesFechados === false) query.set('usar_mes_fechado', 'false');
+  const qs = query.toString() ? `?${query}` : '';
+  const url = `/api/despesas/${encodeURIComponent(empresa)}${qs}`;
+  
+  return comCache(`resumo_despesas_${empresa}_${qs}`, async () => {
+    const res = await chamar(url, { headers: authHeaders(), signal });
+    return tratarResposta(res);
+  });
+}
+
+export type ItemDetalheDespesa = {
+  loja: string;
+  categoria: string;
+  ano: number;
+  mes: number;
+  valor: number;
+};
+
+export type DetalheDespesasResposta = {
+  empresa: string;
+  loja: string | null;
+  itens: ItemDetalheDespesa[];
+  total_itens: number;
+  limitado: boolean;
+};
+
+export async function obterDetalheDespesas(
+  empresa: string,
+  parametros: { loja?: string | null; periodo?: string | null; categoria?: string | null; limite?: number } = {},
+  signal?: AbortSignal,
+): Promise<DetalheDespesasResposta> {
+  const query = new URLSearchParams();
+  if (parametros.loja) query.set('loja', parametros.loja);
+  if (parametros.periodo) query.set('periodo', parametros.periodo);
+  if (parametros.categoria) query.set('categoria', parametros.categoria);
+  if (parametros.limite) query.set('limite', String(parametros.limite));
   const qs = query.toString() ? `?${query}` : '';
   const res = await chamar(
-    `/api/estoque/cobertura/${encodeURIComponent(empresa)}${qs}`,
+    `/api/despesas/${encodeURIComponent(empresa)}/detalhe${qs}`,
     { headers: authHeaders(), signal },
   );
   return tratarResposta(res);
@@ -1110,7 +1319,7 @@ export async function obterCoberturaEstoque(
 // Monitoramento de empresas
 // ---------------------------------------------------------------------------
 
-export type MetricaMonitor = 'receita' | 'qtd' | 'clientes' | 'receita_dia';
+export type MetricaMonitor = 'receita' | 'qtd' | 'clientes' | 'receita_dia' | 'lucro' | 'lucro_dia';
 
 /** Um card da tela de monitoramento. `estado` diferente de 'ok' vem sem serie:
  *  empresa sem base gerada ou com summary ilegivel entra na lista mesmo assim,
@@ -1135,7 +1344,7 @@ export type EmpresaMonitor = {
   updated_at?: string | null;
   ultimo_periodo?: number | null;
   ultimo_periodo_parcial?: boolean;
-  dias_uteis_janela?: number | null;
+  dias_venda_janela?: number | null;
   meses_serie?: number;
 };
 
@@ -1154,8 +1363,18 @@ export async function obterMonitorEmpresas(
   if (parametros.metrica) query.set('metrica', parametros.metrica);
   if (parametros.meses) query.set('meses', String(parametros.meses));
   if (parametros.forcar) query.set('forcar', 'true');
-  const res = await chamar(`/api/monitor/empresas?${query}`, { headers: authHeaders(), signal });
-  return tratarResposta(res);
+  const qs = query.toString();
+  
+  // Se forçado (atualizar tudo), não usa cache (na verdade comCache(..., forcar) resolveria, mas como não temos forcar no hook das páginas, ignoramos o cache manual aqui)
+  if (parametros.forcar) {
+    const res = await chamar(`/api/monitor/empresas?${qs}`, { headers: authHeaders(), signal });
+    return tratarResposta(res);
+  }
+  
+  return comCache(`monitor_${qs}`, async () => {
+    const res = await chamar(`/api/monitor/empresas?${qs}`, { headers: authHeaders(), signal });
+    return tratarResposta(res);
+  });
 }
 
 export async function salvarFavoritas(empresas: string[]): Promise<{ empresas: string[] }> {
@@ -1165,4 +1384,218 @@ export async function salvarFavoritas(empresas: string[]): Promise<{ empresas: s
     body: JSON.stringify({ empresas }),
   });
   return tratarResposta(res);
+}
+
+// ---------------------------------------------------------------------------
+// Vendedores — último mês vs média dos 6 anteriores
+// ---------------------------------------------------------------------------
+
+export type ItemRankingVendedor = {
+  vendedor: string;
+  receita_atual: number;
+  receita_media: number;
+  variacao: number | null;
+  qtd_atual: number;
+  clientes_atual: number;
+  alerta: boolean;
+};
+
+export type ItemFichaVendedor = {
+  nome?: string;
+  cliente?: string;
+  produto?: string;
+  fabricante?: string;
+  receita_atual: number;
+  receita_media: number;
+  variacao: number | null;
+  qtd_atual: number;
+  clientes_atual: number;
+  alerta: boolean;
+};
+
+export type RankingVendedoresResposta = {
+  disponivel: boolean;
+  mensagem: string | null;
+  empresa?: string;
+  loja?: string | null;
+  periodo_atual: string | null;
+  rotulo_periodo: string | null;
+  meses_media: number;
+  periodo_media_inicio: string | null;
+  periodo_media_fim: string | null;
+  itens: ItemRankingVendedor[];
+  resumo: {
+    vendedores: number;
+    receita_atual: number;
+    maior_alta: { vendedor: string; variacao: number } | null;
+    maior_queda: { vendedor: string; variacao: number } | null;
+  };
+};
+
+export type FichaVendedorResposta = {
+  disponivel: boolean;
+  vendedor: string;
+  periodo_atual: string;
+  rotulo_periodo: string;
+  meses_media: number;
+  periodo_media_inicio: string | null;
+  periodo_media_fim: string | null;
+  receita_atual: number;
+  receita_media: number;
+  variacao: number | null;
+  qtd_atual: number;
+  clientes_atual: number;
+  clientes: ItemFichaVendedor[];
+  produtos: ItemFichaVendedor[];
+  fabricantes: ItemFichaVendedor[];
+  alertas: {
+    clientes: ItemFichaVendedor[];
+    produtos: ItemFichaVendedor[];
+    clientes_total?: number;
+    produtos_total?: number;
+  };
+};
+
+export async function obterRankingVendedores(
+  empresa: string,
+  loja?: string | null,
+  signal?: AbortSignal,
+  modoPeriodo: ModoPeriodo = 'fechados',
+): Promise<RankingVendedoresResposta> {
+  const query = new URLSearchParams();
+  if (loja) query.set('loja', loja);
+  if (modoPeriodo !== 'fechados') query.set('modo_periodo', modoPeriodo);
+  const qs = query.toString() ? `?${query}` : '';
+  const url = `/api/vendedores/${encodeURIComponent(empresa)}${qs}`;
+  
+  return comCache(`ranking_vendedores_${empresa}_${qs}`, async () => {
+    const res = await chamar(url, { headers: authHeaders(), signal });
+    return tratarResposta(res);
+  });
+}
+
+export async function obterFichaVendedor(
+  empresa: string,
+  vendedor: string,
+  loja?: string | null,
+  signal?: AbortSignal,
+  modoPeriodo: ModoPeriodo = 'fechados',
+): Promise<FichaVendedorResposta> {
+  const query = new URLSearchParams({ vendedor });
+  if (loja) query.set('loja', loja);
+  if (modoPeriodo !== 'fechados') query.set('modo_periodo', modoPeriodo);
+  const res = await chamar(
+    `/api/vendedores/${encodeURIComponent(empresa)}/ficha?${query}`,
+    { headers: authHeaders(), signal },
+  );
+  return tratarResposta(res);
+}
+
+export type FaixaCurvaClientes = {
+  nome: string;
+  clientes: number;
+  receita: number;
+  participacao: number;
+};
+
+export type MovimentoCarteiraMes = {
+  periodo: string;
+  rotulo: string;
+  ativos: number;
+  novos: number;
+  recuperados: number;
+  perdidos: number;
+  saldo: number;
+  receita: number;
+};
+
+export type EventoCarteira = {
+  cliente: string;
+  receita: number;
+  /** Só em `perdidos`: mês da última compra. */
+  ultimo_mes: string | null;
+};
+
+export type TopClientePainel = {
+  cliente: string;
+  receita_atual: number;
+  receita_media: number;
+  variacao: number | null;
+  qtd_atual: number;
+  alerta: boolean;
+};
+
+export type TagResumoPainel = {
+  id: string;
+  rotulo: string;
+  cor: string | null;
+  clientes: number;
+  receita: number;
+  participacao: number;
+};
+
+export type PainelClientesResposta = {
+  disponivel: boolean;
+  mensagem: string | null;
+  empresa?: string;
+  loja?: string | null;
+  periodo_atual: string | null;
+  rotulo_periodo: string | null;
+  meses_media: number;
+  periodo_media_inicio: string | null;
+  periodo_media_fim: string | null;
+  janela_inatividade_meses: number;
+  janela_abc_meses: number;
+  balcao_excluidos: number;
+  resumo: {
+    clientes_ativos: number;
+    clientes_media: number;
+    variacao_clientes: number | null;
+    receita_atual: number;
+    receita_media: number;
+    variacao_receita: number | null;
+    ticket_medio: number;
+    ticket_medio_media: number;
+    variacao_ticket: number | null;
+    novos: number;
+    recuperados: number;
+    perdidos: number;
+    saldo: number;
+  };
+  concentracao: {
+    clientes: number;
+    receita: number;
+    clientes_80: number;
+    participacao_clientes_80: number;
+    faixas: FaixaCurvaClientes[];
+  };
+  movimento: MovimentoCarteiraMes[];
+  eventos: {
+    novos: EventoCarteira[];
+    recuperados: EventoCarteira[];
+    perdidos: EventoCarteira[];
+  };
+  top_clientes: TopClientePainel[];
+  tags: TagResumoPainel[];
+};
+
+/** Visão geral da carteira (aba 1 da tela de Clientes), calculada no backend. */
+export async function obterPainelClientes(
+  empresa: string,
+  loja?: string | null,
+  signal?: AbortSignal,
+  modoPeriodo: ModoPeriodo = 'fechados',
+): Promise<PainelClientesResposta> {
+  const query = new URLSearchParams();
+  const loja_ = queryLoja(loja);
+  if (modoPeriodo !== 'fechados') query.set('modo_periodo', modoPeriodo);
+  const extra = query.toString();
+  const url = loja_
+    ? `/api/clientes/${encodeURIComponent(empresa)}/painel${loja_}${extra ? `&${extra}` : ''}`
+    : `/api/clientes/${encodeURIComponent(empresa)}/painel${extra ? `?${extra}` : ''}`;
+    
+  return comCache(`painel_clientes_${empresa}_${loja || ''}_${modoPeriodo}`, async () => {
+    const res = await chamar(url, { headers: authHeaders(), signal });
+    return tratarResposta(res);
+  });
 }

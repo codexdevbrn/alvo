@@ -4,27 +4,18 @@ normalizar_todas_empresas.py
 
 Pré-gera, de madrugada, o summary_dashboard.json(.gz) de cada empresa na pasta de
 trabalho. É a única tarefa que ainda precisa rodar em lote, e a razão é o custo:
-ler o xlsx de uma empresa grande leva de 13 a 30 segundos e é 94% do tempo de
-gerar um summary. Sem este lote, o primeiro usuário que abrir cada empresa no
-horário comercial paga essa espera — foi o que provocou o erro de timeout de 45s
-relatado no Dashboard.
+ler os CSVs de uma empresa grande é 94% do tempo de gerar um summary. Sem este
+lote, o primeiro usuário que abrir cada empresa no horário comercial paga essa
+espera — foi o que provocou o erro de timeout de 45s relatado no Dashboard.
 
-Por que NÃO gera mais Base.csv por padrão: o app não o usa. Lê o xlsx da fonte
-direto em memória (ver `main._carregar_atacado_df`, e o comentário em main.py
-sobre "não há mais Base.csv persistido"). Gravá-lo custaria ~90 MB por empresa
-numa pasta sincronizada pelo OneDrive, algo como 4 GB por noite, para ninguém
-ler. Use `--com-base-csv` quando precisar dele para harmonizar_descricoes.py,
-que é o último consumidor.
-
-Liquidez_*.csv também sai por consequência: exigem Dados_Estoque_<empresa> e
-Dados_Vendas_<empresa> na fonte, que a fonte atual não traz, e só eram geradas no
-mesmo passo do Base.csv.
+Não grava mais nenhum arquivo intermediário na pasta de trabalho (nem Base.csv,
+nem Liquidez_*.csv): o app lê MOVIMENTO_ATUAL.csv + PRODUTO.csv da fonte direto
+em memória (ver `main._carregar_atacado_df`).
 
 Uso:
     python normalizar_todas_empresas.py
     python normalizar_todas_empresas.py --fonte "..." --trabalho "..."
     python normalizar_todas_empresas.py --so Frandiesel
-    python normalizar_todas_empresas.py --com-base-csv
 
 Exit code: 0 se todas ok; 1 se alguma falhou; 2 se erro de configuração.
 """
@@ -40,7 +31,7 @@ import warnings
 from datetime import datetime
 from pathlib import Path
 
-from normalizar_base import ErroNormalizacao, normalizar_pasta_empresa, resolver_arquivos_dados
+from normalizar_base import ErroNormalizacao, resolver_arquivos_dados
 
 # backend/ no path para gerar summary_dashboard.json (mesmo módulo do FastAPI).
 _BACKEND = Path(__file__).resolve().parent / "backend"
@@ -57,10 +48,10 @@ from engine import analise_funil as af  # noqa: E402
 # do OneDrive contém o nome do usuário do Windows, então um caminho fixo aqui só
 # funciona na máquina de quem o escreveu.
 #
-# Era o caso até agora — e apontava para a fonte antiga (DB\DW, com os .dw_2d).
-# Quando a coleta migrou para "Dados Mais Atacado.xlsx", o lote passou a falhar
-# toda noite com "Nenhuma empresa com os 3 CSVs", sem ninguém notar, e os
-# summaries pararam de ser atualizados.
+# Trocar o formato da fonte sem atualizar este caminho quebra o lote em
+# silêncio — já aconteceu antes (fonte antiga -> "Dados Mais Atacado.xlsx" ->
+# MOVIMENTO_ATUAL.csv/PRODUTO.csv) e os summaries pararam de ser atualizados
+# sem ninguém notar até o timeout de 45s aparecer no Dashboard.
 FONTE_PADRAO = caminhos_padrao.fonte_dados()
 TRABALHO_PADRAO = caminhos_padrao.trabalho()
 
@@ -103,21 +94,15 @@ def _harmonizar_clientes(trab_emp: Path, df):
     )
 
 
-def _gerar_summary_do_csv(trab_emp: Path, caminho_base: Path) -> Path:
-    """Summary a partir do Base.csv recém-gravado (modo --com-base-csv)."""
-    df, _linhas_vazias = af.carregar_csv(str(caminho_base))
-    return gerar_e_gravar_summary_dashboard(trab_emp, _harmonizar_clientes(trab_emp, df))
-
-
-def _gerar_summary_do_xlsx(fonte_emp: Path, trab_emp: Path) -> Path:
-    """Summary lendo o xlsx da fonte direto, sem arquivo intermediário.
+def _gerar_summary(fonte_emp: Path, trab_emp: Path) -> Path:
+    """Summary lendo MOVIMENTO_ATUAL + PRODUTO da fonte direto, sem arquivo intermediário.
 
     Mesmo caminho que o app usa em runtime, o que garante que o arquivo pré-gerado
     aqui é idêntico ao que ele produziria sozinho: o único jeito de o lote não
     virar uma segunda implementação que divirja com o tempo.
     """
-    caminho_atacado, _estoque, _vendas = resolver_arquivos_dados(fonte_emp)
-    df_bruto = af.carregar_excel_base_empresa(caminho_atacado)
+    caminho_movimento, caminho_produto, _estoque, _vendas = resolver_arquivos_dados(fonte_emp)
+    df_bruto = af.carregar_csv_base_empresa(caminho_movimento, caminho_produto)
     df, _linhas_vazias = af.validar_e_limpar(df_bruto, receita_em_texto_br=False)
     return gerar_e_gravar_summary_dashboard(trab_emp, _harmonizar_clientes(trab_emp, df))
 
@@ -127,9 +112,6 @@ def normalizar_lote(
     pasta_trabalho: Path,
     *,
     so: list[str] | None = None,
-    aplicar_harmonizacao: bool = True,
-    validar_resultado: bool = True,
-    com_base_csv: bool = False,
     log_path: Path | None = None,
 ) -> tuple[int, int]:
     """Retorna (ok, falhas)."""
@@ -139,13 +121,13 @@ def normalizar_lote(
         desconhecidas = sorted(filtro - set(empresas))
         if desconhecidas:
             raise ErroNormalizacao(
-                "Empresa(s) sem 'Dados Mais Atacado.xlsx' na fonte: " + ", ".join(desconhecidas)
+                "Empresa(s) sem MOVIMENTO_ATUAL.csv/PRODUTO.csv na fonte: " + ", ".join(desconhecidas)
             )
         empresas = [n for n in empresas if n in filtro]
 
     if not empresas:
         raise ErroNormalizacao(
-            f"Nenhuma empresa com 'Dados Mais Atacado.xlsx' em {pasta_fonte}"
+            f"Nenhuma empresa com MOVIMENTO_ATUAL.csv/PRODUTO.csv em {pasta_fonte}"
         )
 
     log_linhas: list[str] = []
@@ -155,7 +137,6 @@ def normalizar_lote(
         f"Fonte:    {pasta_fonte}\n"
         f"Trabalho: {pasta_trabalho}\n"
         f"Empresas: {len(empresas)}\n"
-        f"Base.csv: {'sim' if com_base_csv else 'não (o app não usa)'}\n"
     )
     print(cabecalho)
     log_linhas.append(cabecalho)
@@ -171,18 +152,8 @@ def normalizar_lote(
         print("=" * 70)
         t0 = time.time()
         try:
-            if com_base_csv:
-                caminho = normalizar_pasta_empresa(
-                    fonte_emp,
-                    pasta_trabalho=trab_emp,
-                    aplicar_harmonizacao=aplicar_harmonizacao,
-                    validar_resultado=validar_resultado,
-                )
-                caminho_summary = _gerar_summary_do_csv(trab_emp, Path(caminho))
-                destino = str(caminho)
-            else:
-                caminho_summary = _gerar_summary_do_xlsx(fonte_emp, trab_emp)
-                destino = str(caminho_summary)
+            caminho_summary = _gerar_summary(fonte_emp, trab_emp)
+            destino = str(caminho_summary)
             # O resumo do Monitoramento é DERIVADO do summary, e o cache dele é
             # invalidado pelo mtime do summary que acabou de ser reescrito. Sem
             # regerar aqui, todo dia o primeiro usuário a abrir a tela pagava a
@@ -236,7 +207,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Pré-gera summary_dashboard.json(.gz) de todas as empresas na pasta "
-            "de trabalho, lendo o xlsx da fonte."
+            "de trabalho, lendo MOVIMENTO_ATUAL.csv + PRODUTO.csv da fonte."
         )
     )
     parser.add_argument(
@@ -256,18 +227,6 @@ def main() -> None:
         nargs="+",
         metavar="EMPRESA",
         help="Normaliza só estas empresas (nomes das pastas)",
-    )
-    parser.add_argument("--sem-harmonizacao", action="store_true",
-                        help="Só com --com-base-csv: não aplica harm.xlsx.")
-    parser.add_argument("--sem-validacao", action="store_true",
-                        help="Só com --com-base-csv: não valida o CSV gravado.")
-    parser.add_argument(
-        "--com-base-csv",
-        action="store_true",
-        help=(
-            "Também grava Base.csv (e tenta Liquidez_*.csv) na pasta de trabalho. "
-            "O app não os usa; só precisa para harmonizar_descricoes.py."
-        ),
     )
     parser.add_argument(
         "--log",
@@ -298,9 +257,6 @@ def main() -> None:
             fonte,
             trabalho,
             so=args.so,
-            aplicar_harmonizacao=not args.sem_harmonizacao,
-            validar_resultado=not args.sem_validacao,
-            com_base_csv=args.com_base_csv,
             log_path=log_path,
         )
     except ErroNormalizacao as exc:

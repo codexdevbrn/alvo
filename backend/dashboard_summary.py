@@ -8,11 +8,17 @@ dashboard/src/types/dashboard.ts e DashboardPage.tsx):
     {
       "maps": {"s": [...], "c": [...], "m": [...], "d": [...], "r": [...], "p": [...]},
       "rows": [[p, s, c, m, d, r, rev, qty], ...],   # índices nos maps + valores
-      "monthly": [{"name": "jan/24", "rev": ..., "pid": 202401, "year": 2024}, ...],
+      "monthly": [{"name": "jan/24", "rev": ..., "cmv": ..., "pid": 202401, "year": 2024}, ...],
       "yoy": {"2024": ..., "2025": ...},
       "updated_at": "dd/mm/aaaa hh:mm",
-      "kpis": {"rev": ..., "qty": ..., "avg": ..., "cnt": ...}
+      "kpis": {"rev": ..., "qty": ..., "avg": ..., "cnt": ..., "cmv": ...}
     }
+
+`cmv` em `monthly`/`kpis` é o Custo da Mercadoria Vendida somado no período — base
+para "Lucro bruto" (receita - CMV) na tela de Monitoramento. Empresa cuja fonte
+não preenche a coluna chega com `cmv` zerado; `kpis.cmv == 0` sinaliza "sem CMV"
+para quem consome o summary (`monitor_empresas.py` usa isso para esconder a
+métrica de lucro dessa empresa, em vez de mostrar lucro == receita).
 
 A diferença em relação a process_data.py é a origem dos dados: aqui o
 DataFrame vem de engine.analise_funil.carregar_csv() (Base.csv por empresa,
@@ -177,8 +183,7 @@ def gerar_summary(
     (colunas Loja, Cliente, NOME_FABRICANTE, descricao, Código de referêcia,
     Receita, QTD, Data_Venda).
     """
-    base = pd.DataFrame(
-        {
+    colunas_base: dict = {
             "store": df["Loja"].astype(str),
             "client": df["Cliente"].astype(str),
             "mfr": df["NOME_FABRICANTE"].astype(str),
@@ -190,9 +195,30 @@ def gerar_summary(
             "m_num": df["Data_Venda"].dt.month,
             "rev": df["Receita"].astype(float),
             "qty": df["QTD"].astype(int),
-        }
-    )
+            "cmv": df["CMV"].astype(float).fillna(0.0) if "CMV" in df.columns else 0.0,
+    }
+
+    # Data diária real (quando a fonte tem coluna de dia) — usada para contar
+    # quantos dias distintos tiveram venda em cada período. Permite calcular
+    # média diária dividindo pela realidade da base em vez dos dias úteis do
+    # calendário (que superestima quando a empresa não vende todo dia útil).
+    tem_data_diaria = "Data_Venda_Diaria" in df.columns and df["Data_Venda_Diaria"].notna().any()
+    if tem_data_diaria:
+        colunas_base["data_diaria"] = pd.to_datetime(df["Data_Venda_Diaria"], errors="coerce")
+
+    base = pd.DataFrame(colunas_base)
     base["p_p_id"] = base["year"] * 100 + base["m_num"]
+
+    # Dias distintos com venda por período — só quando a fonte informa o dia.
+    dias_com_venda_por_periodo: dict[int, int] = {}
+    if tem_data_diaria:
+        _datas_validas = base.dropna(subset=["data_diaria"])
+        if len(_datas_validas):
+            dias_com_venda_por_periodo = (
+                _datas_validas.groupby("p_p_id")["data_diaria"]
+                .apply(lambda s: s.dt.date.nunique())
+                .to_dict()
+            )
 
     agg = (
         base.groupby(["p_p_id", "store", "client", "mfr", "desc", "ref"], sort=False)
@@ -229,17 +255,24 @@ def gerar_summary(
     ]
 
     mensal = (
-        base.groupby(["p_p_id", "year", "m_num"])["rev"].sum().reset_index().sort_values("p_p_id")
+        base.groupby(["p_p_id", "year", "m_num"])[["rev", "cmv"]]
+        .sum()
+        .reset_index()
+        .sort_values("p_p_id")
     )
-    monthly = [
-        {
+    monthly = []
+    for linha in mensal.itertuples():
+        entrada: dict = {
             "name": f"{MESES_ABREV[int(linha.m_num)]}/{str(int(linha.year))[2:]}",
             "rev": round(float(linha.rev), 2),
+            "cmv": round(float(linha.cmv), 2),
             "pid": int(linha.p_p_id),
             "year": int(linha.year),
         }
-        for linha in mensal.itertuples()
-    ]
+        dias = dias_com_venda_por_periodo.get(int(linha.p_p_id))
+        if dias is not None:
+            entrada["dias_com_venda"] = int(dias)
+        monthly.append(entrada)
 
     yoy = {str(int(ano)): round(float(total), 2) for ano, total in base.groupby("year")["rev"].sum().items()}
 
@@ -259,5 +292,6 @@ def gerar_summary(
             "qty": int(base["qty"].sum()),
             "avg": round(float(base["rev"].mean()), 2) if len(base) else 0.0,
             "cnt": int(len(base)),
+            "cmv": round(float(base["cmv"].sum()), 2),
         },
     }

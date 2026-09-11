@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { AlertTriangle, Search, Tag, UsersRound } from 'lucide-react';
+import { AlertTriangle, Loader2, Search, Tag, UsersRound } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
 import { ClientesAlertaCard } from '../components/analisador/ClientesAlertaCard';
 import { ClientesRitmoAlertas } from '../components/clientes/ClientesRitmoAlertas';
+import { ClientesVisaoGeral } from '../components/clientes/ClientesVisaoGeral';
 import {
 
   obterBaseClientes,
@@ -15,6 +16,13 @@ import {
 } from '../api/client';
 import { formatCurrency } from '../utils/formatters';
 import { useEscopoAtual } from '../hooks/useEscopoAtual';
+
+type AbaClientes = 'visao' | 'base';
+
+const ABAS: { id: AbaClientes; rotulo: string }[] = [
+  { id: 'visao', rotulo: 'Visão geral' },
+  { id: 'base', rotulo: 'Base e tags' },
+];
 
 function normalizarBusca(valor: string): string {
   return valor.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
@@ -35,6 +43,8 @@ export default function ClientesPage() {
   const [carregando, setCarregando] = useState(false);
   const [salvandoCliente, setSalvandoCliente] = useState<string | null>(null);
   const [erro, setErro] = useState<string | null>(null);
+  const [aba, setAba] = useState<AbaClientes>('visao');
+  const [carregandoVisao, setCarregandoVisao] = useState(false);
 
   useEffect(() => {
     if (!empresa) {
@@ -123,7 +133,7 @@ export default function ClientesPage() {
         <header className="app-page-header clientes-page-header">
           <div>
             <h1>Clientes{empresa && <span className="analisador-header-empresa"> · {empresa}</span>}</h1>
-            <p>Acompanhamento de atenção, inadimplência e demais tags comerciais.</p>
+            <p>Visão geral da carteira e acompanhamento individual por tag comercial.</p>
           </div>
           {/* A loja é escolhida na barra lateral e vale para todas as telas. */}
         </header>
@@ -139,59 +149,87 @@ export default function ClientesPage() {
 
         {empresa && (
           <>
-            <section className="clientes-tag-resumo" aria-label="Resumo por tag">
-              <button type="button" className={`glass-card clientes-tag-card${tagFiltro === '' ? ' is-ativo' : ''}`} onClick={() => setTagFiltro('')}>
-                <UsersRound size={18} /><span>Base de clientes</span><strong>{totalClientes.toLocaleString('pt-BR')}</strong>
-              </button>
-              {tagsAtivas.map((tag) => (
-                <button key={tag.id} type="button" className={`glass-card clientes-tag-card${tagFiltro === tag.id ? ' is-ativo' : ''}`} style={{ '--tag-cor': tag.cor } as CSSProperties} onClick={() => setTagFiltro((atual) => atual === tag.id ? '' : tag.id)}>
-                  <Tag size={17} /><span>{tag.rotulo}</span><strong>{totaisTags[tag.id] ?? 0}</strong>
+            <div className="analisador-tabs custom-scrollbar" role="tablist" aria-label="Áreas da tela de clientes">
+              {ABAS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={aba === item.id}
+                  className={`analisador-tab${aba === item.id ? ' is-ativa' : ''}`}
+                  onClick={() => setAba(item.id)}
+                >
+                  {item.rotulo}
                 </button>
               ))}
-            </section>
-
-            <ClientesRitmoAlertas empresa={empresa} loja={loja} catalogo={catalogo} />
-
-            <ClientesAlertaCard empresa={empresa} loja={loja} itensClientes={clientesCompletos} tagsPorCliente={tagsPorCliente} tagsCatalogo={catalogo} clientesBalcao={clientesBalcao} />
-
-            <section className="glass-card glass-card-flat clientes-base-card">
-              <div className="clientes-base-topo">
-                <div><h2>Base de clientes</h2><p>Busque cliente e clique nas tags para marcar ou desmarcar.</p></div>
-                <label className="analisador-campo clientes-busca">
-                  <span>Buscar cliente</span>
-                  <span className="monitor-input-icon-wrap"><Search size={15} /><input className="analisador-input" type="search" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Nome do cliente" /></span>
-                </label>
-              </div>
-
-              {carregando ? <p className="analisador-hint">Carregando base de clientes…</p> : (
-                <div className="clientes-tabela-wrap custom-scrollbar">
-                  <table className="analisador-tabela clientes-tabela">
-                    <thead><tr><th>Cliente</th><th>Tags de acompanhamento</th><th className="col-num">Receita</th></tr></thead>
-                    <tbody>
-                      {clientesVisiveis.length === 0 && <tr><td colSpan={3} className="analisador-tabela-vazia">Nenhum cliente encontrado.</td></tr>}
-                      {clientesVisiveis.map((item) => {
-                        const chave = item.cliente.trim();
-                        const tagsCliente = tagsPorCliente[chave] ?? [];
-                        return (
-                          <tr key={chave}>
-                            <td className="col-nome" title={chave}>{chave}</td>
-                            <td><div className="clientes-tags-acoes">{tagsAtivas.map((tag) => {
-                              const ativa = tagsCliente.includes(tag.id);
-                              return <button key={tag.id} type="button" className={`clientes-tag-toggle${ativa ? ' is-ativo' : ''}`} style={{ '--tag-cor': tag.cor } as CSSProperties} aria-pressed={ativa} disabled={salvandoCliente === chave} onClick={() => void alternarTag(chave, tag.id)}>{tag.rotulo}</button>;
-                            })}</div></td>
-                            <td className="col-num">{formatCurrency(item.receita)}</td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
+              {carregandoVisao && (
+                <span className="dashboard-header-filter-loading" aria-live="polite" aria-busy="true">
+                  <Loader2 size={14} className="dashboard-filter-spinner" /> Atualizando…
+                </span>
               )}
-              <p className="analisador-hint clientes-base-rodape">
-                {clientesVisiveis.length.toLocaleString('pt-BR')} exibido(s) · {totalClientes.toLocaleString('pt-BR')} na base
-                {baseLimitada && ' · limite operacional de 5.000; use busca para refinar'}
-              </p>
-            </section>
+            </div>
+
+            {aba === 'visao' && (
+              <>
+                <ClientesVisaoGeral empresa={empresa} loja={loja} onCarregandoChange={setCarregandoVisao} />
+                <ClientesRitmoAlertas empresa={empresa} loja={loja} catalogo={catalogo} />
+                <ClientesAlertaCard empresa={empresa} loja={loja} itensClientes={clientesCompletos} tagsPorCliente={tagsPorCliente} tagsCatalogo={catalogo} clientesBalcao={clientesBalcao} />
+              </>
+            )}
+
+            {aba === 'base' && (
+              <>
+                <section className="clientes-tag-resumo" aria-label="Resumo por tag">
+                  <button type="button" className={`glass-card clientes-tag-card${tagFiltro === '' ? ' is-ativo' : ''}`} onClick={() => setTagFiltro('')}>
+                    <UsersRound size={18} /><span>Base de clientes</span><strong>{totalClientes.toLocaleString('pt-BR')}</strong>
+                  </button>
+                  {tagsAtivas.map((tag) => (
+                    <button key={tag.id} type="button" className={`glass-card clientes-tag-card${tagFiltro === tag.id ? ' is-ativo' : ''}`} style={{ '--tag-cor': tag.cor } as CSSProperties} onClick={() => setTagFiltro((atual) => atual === tag.id ? '' : tag.id)}>
+                      <Tag size={17} /><span>{tag.rotulo}</span><strong>{totaisTags[tag.id] ?? 0}</strong>
+                    </button>
+                  ))}
+                </section>
+
+                <section className="glass-card glass-card-flat clientes-base-card">
+                  <div className="clientes-base-topo">
+                    <div><h2>Base de clientes</h2><p>Busque cliente e clique nas tags para marcar ou desmarcar.</p></div>
+                    <label className="analisador-campo clientes-busca">
+                      <span>Buscar cliente</span>
+                      <span className="monitor-input-icon-wrap"><Search size={15} /><input className="analisador-input" type="search" value={busca} onChange={(e) => setBusca(e.target.value)} placeholder="Nome do cliente" /></span>
+                    </label>
+                  </div>
+
+                  {carregando ? <p className="analisador-hint">Carregando base de clientes…</p> : (
+                    <div className="clientes-tabela-wrap custom-scrollbar">
+                      <table className="analisador-tabela clientes-tabela">
+                        <thead><tr><th>Cliente</th><th>Tags de acompanhamento</th><th className="col-num">Receita</th></tr></thead>
+                        <tbody>
+                          {clientesVisiveis.length === 0 && <tr><td colSpan={3} className="analisador-tabela-vazia">Nenhum cliente encontrado.</td></tr>}
+                          {clientesVisiveis.map((item) => {
+                            const chave = item.cliente.trim();
+                            const tagsCliente = tagsPorCliente[chave] ?? [];
+                            return (
+                              <tr key={chave}>
+                                <td className="col-nome" title={chave}>{chave}</td>
+                                <td><div className="clientes-tags-acoes">{tagsAtivas.map((tag) => {
+                                  const ativa = tagsCliente.includes(tag.id);
+                                  return <button key={tag.id} type="button" className={`clientes-tag-toggle${ativa ? ' is-ativo' : ''}`} style={{ '--tag-cor': tag.cor } as CSSProperties} aria-pressed={ativa} disabled={salvandoCliente === chave} onClick={() => void alternarTag(chave, tag.id)}>{tag.rotulo}</button>;
+                                })}</div></td>
+                                <td className="col-num">{formatCurrency(item.receita)}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                  <p className="analisador-hint clientes-base-rodape">
+                    {clientesVisiveis.length.toLocaleString('pt-BR')} exibido(s) · {totalClientes.toLocaleString('pt-BR')} na base
+                    {baseLimitada && ' · limite operacional de 5.000; use busca para refinar'}
+                  </p>
+                </section>
+              </>
+            )}
           </>
         )}
       </div>

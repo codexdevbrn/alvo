@@ -527,7 +527,7 @@ export function ClientesAlertaCard({
     return (
       <div className="glass-card glass-card-flat analisador-alerta-card">
         <h2 className="analisador-titulo">
-          <AlertTriangle size={18} style={{ color: '#f59e0b' }} /> Clientes em alerta
+          <AlertTriangle size={18} style={{ color: 'var(--accent)' }} /> Clientes em alerta
         </h2>
         <p className="analisador-hint" style={{ margin: 0 }}>
           Crie uma tag chamada <strong style={{ color: 'var(--text-primary)' }}>Alerta</strong> em Configurações
@@ -539,13 +539,27 @@ export function ClientesAlertaCard({
 
   const tituloFiltro = avaliarTodas ? 'Todas as tags' : (tagEmFoco?.rotulo ?? 'Clientes');
   const tituloCard = avaliarTodas ? 'Clientes com tags' : `Clientes em ${tituloFiltro.toLowerCase()}`;
-  const corBorda = cor.startsWith('var(') ? 'var(--border)' : `${cor}55`;
 
   return (
-    <div
-      className="glass-card glass-card-flat analisador-alerta-card"
-      style={{ borderColor: corBorda }}
-    >
+    <div className="glass-card glass-card-flat analisador-alerta-card">
+      <header className="analisador-alerta-header">
+        <h2 className="analisador-titulo">
+          {tagEmFoco?.id === 'alerta'
+            ? <AlertTriangle size={18} style={{ color: cor, flexShrink: 0 }} />
+            : <Tag size={18} style={{ color: cor, flexShrink: 0 }} />}
+          {tituloCard}
+          <span className="analisador-tag-chip" style={{ borderColor: cor, color: cor }}>
+            {tituloFiltro}
+          </span>
+          {clientesAlerta.length > 0 && (
+            <span className="analisador-alerta-count">{clientesAlerta.length}</span>
+          )}
+        </h2>
+        <p className="analisador-hint">
+          Um bloco por cliente — últimos 6 meses. Ordenados pela maior perda de receita em R$
+          (mês atual vs anterior).
+        </p>
+      </header>
       <div className="analisador-alerta-filtros" aria-label="Filtrar avaliação por tag">
         <span className="analisador-alerta-filtros-label">
           <Filter size={14} aria-hidden="true" /> Avaliar por tag
@@ -579,24 +593,6 @@ export function ClientesAlertaCard({
           })}
         </div>
       </div>
-      <header className="analisador-alerta-header">
-        <h2 className="analisador-titulo">
-          {tagEmFoco?.id === 'alerta'
-            ? <AlertTriangle size={18} style={{ color: cor, flexShrink: 0 }} />
-            : <Tag size={18} style={{ color: cor, flexShrink: 0 }} />}
-          {tituloCard}
-          <span className="analisador-tag-chip" style={{ borderColor: cor, color: cor }}>
-            {tituloFiltro}
-          </span>
-          {clientesAlerta.length > 0 && (
-            <span className="analisador-alerta-count">{clientesAlerta.length}</span>
-          )}
-        </h2>
-        <p className="analisador-hint">
-          Um bloco por cliente — últimos 6 meses. Ordenados pela maior perda de receita em R$
-          (mês atual vs anterior).
-        </p>
-      </header>
 
       {clientesAlerta.length === 0 ? (
         <p className="analisador-lista-vazia" role="status">
@@ -612,7 +608,7 @@ export function ClientesAlertaCard({
             </p>
           )}
           {erro && (
-            <p className="analisador-alerta-status" style={{ color: '#f43f5e' }} role="alert">
+            <p className="analisador-alerta-status analisador-alerta-status-erro" role="alert">
               {erro}
             </p>
           )}

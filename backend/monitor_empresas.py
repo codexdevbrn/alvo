@@ -38,22 +38,32 @@ NOME_RESUMO_MONITOR = "resumo_monitor.json"
 #: vez de ser lido torto.
 #: Bumpar invalida todo `resumo_monitor.json` já gravado, que é regerado do
 #: summary na primeira leitura. 2: passou a carregar a lista de lojas.
-VERSAO_RESUMO = 2
+#: 3: passou a carregar CMV/lucro bruto por período. 4: passou a carregar dias
+#: com venda real por período (`dias_venda`).
+VERSAO_RESUMO = 4
 
 #: Métricas oferecidas pela tela. A chave é o que vem do filtro; o valor é o campo
-#: correspondente na série do resumo. `receita_dia` é DERIVADA (receita ÷ dias úteis
-#: do mês): fica fora do cache de propósito, porque depende só do calendário — assim
-#: os resumos já gravados continuam valendo sem bump de versão.
+#: correspondente na série do resumo. `receita_dia`/`lucro_dia` são DERIVADAS
+#: (valor ÷ dias com venda real no período, ver `_dias_venda_do_ponto`): ficam
+#: fora do cache de propósito, o cálculo é feito na hora a partir de `rev`/`lucro`
+#: e `dias_venda`, ambos já presentes na série cacheada.
 METRICAS_MONITOR = {
     "receita": "rev",
     "qtd": "qty",
     "clientes": "clientes",
     "receita_dia": "rev",
+    "lucro": "lucro",
+    "lucro_dia": "lucro",
 }
 
 #: Métricas cuja soma não faz sentido (média não se soma) — o card mostra a média
 #: ponderada da janela em vez do total.
-METRICAS_MEDIA = {"receita_dia"}
+METRICAS_MEDIA = {"receita_dia", "lucro_dia"}
+
+#: Métricas que exigem CMV na base — empresa sem a coluna some do card em vez de
+#: mostrar lucro == receita (CMV ausente vira 0 no summary, o que mascararia o
+#: dado em vez de sinalizar a ausência).
+METRICAS_COM_CMV = {"lucro", "lucro_dia"}
 
 
 def dias_uteis_do_mes(ano: int, mes: int) -> int:
@@ -87,6 +97,20 @@ def _dias_uteis_do_periodo(periodo: int | None) -> int:
     if not 1 <= mes <= 12 or ano < 1900:
         return 0
     return dias_uteis_do_mes(ano, mes)
+
+
+def _dias_venda_do_ponto(ponto: dict) -> int:
+    """Dias com venda real no período; cai para dias úteis do mês na ausência.
+
+    O fallback só é acionado quando a fonte não tem coluna de data diária
+    (`dashboard_summary.gerar_summary` não populou `dias_venda`) — empresa sem
+    essa granularidade continua com a estimativa por calendário em vez de ficar
+    sem a métrica.
+    """
+    dias_venda = ponto.get("dias_venda")
+    if dias_venda:
+        return int(dias_venda)
+    return _dias_uteis_do_periodo(ponto.get("periodo"))
 
 
 def caminho_resumo_monitor(pasta_trabalho: str | Path) -> Path:
@@ -134,13 +158,21 @@ def _resumo_de_summary(summary: dict) -> dict:
     serie = []
     for mes in monthly:
         periodo = mes.get("pid")
-        serie.append({
+        rev = round(float(mes.get("rev") or 0.0), 2)
+        cmv = round(float(mes.get("cmv") or 0.0), 2)
+        entrada = {
             "periodo": periodo,
             "rotulo": mes.get("name"),
-            "rev": round(float(mes.get("rev") or 0.0), 2),
+            "rev": rev,
             "qty": int(qtd_por_periodo.get(periodo, 0)),
             "clientes": len(clientes_por_periodo.get(periodo, ())),
-        })
+            "cmv": cmv,
+            "lucro": round(rev - cmv, 2),
+        }
+        dias_venda = mes.get("dias_com_venda")
+        if dias_venda is not None:
+            entrada["dias_venda"] = int(dias_venda)
+        serie.append(entrada)
     serie.sort(key=lambda item: item["periodo"] or 0)
 
     kpis = summary.get("kpis") or {}
@@ -149,15 +181,23 @@ def _resumo_de_summary(summary: dict) -> dict:
     # público: tirar a lista da base carregaria o XLSX inteiro só para preencher
     # um combobox, e é justamente isso que o summary pré-gerado evita.
     lojas = [str(nome) for nome in (summary.get("maps", {}).get("s") or [])]
+    cmv_total = round(float(kpis.get("cmv") or 0.0), 2)
+    rev_total = round(float(kpis.get("rev") or 0.0), 2)
     return {
         "versao": VERSAO_RESUMO,
         "updated_at": summary.get("updated_at"),
         "lojas": lojas,
         "serie": serie,
+        # Empresa sem coluna CMV no CSV chega com cmv == 0 em todo período (ver
+        # dashboard_summary.py) — sem essa flag, lucro apareceria == receita, o
+        # que é dado errado apresentado como se fosse certo.
+        "tem_cmv": cmv_total > 0,
         "totais": {
-            "rev": round(float(kpis.get("rev") or 0.0), 2),
+            "rev": rev_total,
             "qty": int(kpis.get("qty") or 0),
             "clientes": len(set().union(*clientes_por_periodo.values())) if clientes_por_periodo else 0,
+            "cmv": cmv_total,
+            "lucro": round(rev_total - cmv_total, 2),
         },
     }
 
@@ -245,23 +285,21 @@ def montar_card(
 
     def valor(ponto: dict) -> float | int:
         bruto = ponto.get(campo) or 0
-        if metrica == "receita_dia":
-            dias_uteis = _dias_uteis_do_periodo(ponto.get("periodo"))
-            return round(float(bruto) / dias_uteis, 2) if dias_uteis else 0.0
+        if eh_media:
+            dias_venda = _dias_venda_do_ponto(ponto)
+            return round(float(bruto) / dias_venda, 2) if dias_venda else 0.0
         return int(bruto) if inteiro else round(float(bruto), 2)
 
     valores = [valor(ponto) for ponto in janela]
     rotulos = [ponto.get("rotulo") for ponto in janela]
-    dias_uteis_janela = sum(
-        _dias_uteis_do_periodo(ponto.get("periodo")) for ponto in janela
-    )
-    receita_janela = sum(float(ponto.get("rev") or 0) for ponto in janela)
+    dias_venda_janela = sum(_dias_venda_do_ponto(ponto) for ponto in janela)
+    bruto_janela = sum(float(ponto.get(campo) or 0) for ponto in janela)
     total = None if eh_media else (
         sum(valores) if inteiro else round(sum(valores), 2)
     )
     media = (
-        round(receita_janela / dias_uteis_janela, 2)
-        if eh_media and dias_uteis_janela
+        round(bruto_janela / dias_venda_janela, 2)
+        if eh_media and dias_venda_janela
         else round(float(total) / len(valores), 2) if valores and total is not None
         else 0
     )
@@ -290,11 +328,11 @@ def montar_card(
                 tem_anterior = True
 
     def agregar_comparacao(pontos: list[dict]) -> float:
-        if metrica != "receita_dia":
+        if not eh_media:
             return sum(float(ponto.get(campo) or 0) for ponto in pontos)
-        dias = sum(_dias_uteis_do_periodo(ponto.get("periodo")) for ponto in pontos)
-        receita = sum(float(ponto.get("rev") or 0) for ponto in pontos)
-        return receita / dias if dias else 0.0
+        dias = sum(_dias_venda_do_ponto(ponto) for ponto in pontos)
+        bruto = sum(float(ponto.get(campo) or 0) for ponto in pontos)
+        return bruto / dias if dias else 0.0
 
     total_atual = agregar_comparacao(pontos_atuais)
     total_anterior = agregar_comparacao(pontos_anteriores)
@@ -335,12 +373,11 @@ def montar_card(
         "ultimo_periodo": janela[-1].get("periodo") if janela else None,
         # Parcial = o último período da janela é o mês corrente, que ainda não
         # fechou. Vale para qualquer métrica (o total do mês em curso também está
-        # incompleto), mas pesa mais na média por dia útil: o summary só informa
-        # mês/ano de atualização, sem o dia, então não há como dividir apenas
-        # pelos dias úteis já transcorridos.
+        # incompleto), mas pesa mais na média por dia: o mês em curso conta só os
+        # dias com venda já ocorridos, então a média tende a subir ao longo do mês.
         "ultimo_periodo_parcial": _eh_mes_corrente(
             janela[-1].get("periodo") if janela else None, hoje
         ),
-        "dias_uteis_janela": dias_uteis_janela if metrica == "receita_dia" else None,
+        "dias_venda_janela": dias_venda_janela if eh_media else None,
         "meses_serie": len(serie),
     }

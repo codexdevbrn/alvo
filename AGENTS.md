@@ -39,8 +39,7 @@ npm run build       # tsc -b && vite build
 npm run lint         # eslint .
 npm run preview
 ```
-**Deploy (XAMPP):**
-Ao alterar o frontend, além de rodar `npm run build`, é necessário copiar os arquivos de `dashboard/dist` para o diretório do Apache: `c:\xampp\monitoria\htdocs`. (Ex: `Copy-Item -Path ".\dist\*" -Destination "c:\xampp\monitoria\htdocs" -Recurse -Force`)
+**Deploy**: executável Windows (`.\build.ps1`) — o próprio FastAPI serve o `dashboard/dist`, XAMPP/Apache não é mais usado. Detalhes em `CLAUDE.md`, seção "Empacotamento e atualização".
 
 Vite tem proxy de `/api` → `http://localhost:8000` (`dashboard/vite.config.ts`), então em dev o frontend chama `/api` relativo.
 

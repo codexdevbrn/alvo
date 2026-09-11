@@ -1,0 +1,20 @@
+{
+  "services": [
+    {
+      "id": "api",
+      "name": "Backend (FastAPI)",
+      "cmd": "python -m uvicorn main:app --reload --host 127.0.0.1 --port 8004",
+      "cwd": "backend",
+      "url": "http://127.0.0.1:8004/docs",
+      "autostart": true
+    },
+    {
+      "id": "web",
+      "name": "Frontend (Vite)",
+      "cmd": "npm run dev",
+      "cwd": "dashboard",
+      "url": "http://localhost:5173",
+      "autostart": true
+    }
+  ]
+}

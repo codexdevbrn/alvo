@@ -3,6 +3,8 @@ import { Download, FolderOpen, Loader2, Pencil, Plus, RefreshCw, Save, Trash2 } 
 import { AppShell } from '../components/AppShell';
 import { NumberStepper } from '../components/analisador/NumberStepper';
 import { PastaPickerModal } from '../components/PastaPickerModal';
+import { RegrasRitmoAlertasEditor } from '../components/clientes/RegrasRitmoAlertasEditor';
+import { useEscopoAtual } from '../hooks/useEscopoAtual';
 import { EVENTO_EMPRESA } from '../utils/empresaSelecionada';
 import {
   definirAguardandoBaseDados,
@@ -17,9 +19,11 @@ import {
   definirDadosNoDisco,
   definirRegeneracao,
   definirInicioAutomatico,
+  definirTelaVendedores,
   obterCaminhoAtualizacoes,
   obterDadosNoDisco,
   obterRegeneracao,
+  obterTelaVendedores,
   obterInicioAutomatico,
   obterStatusAtualizacao,
   obterTagsClientes,
@@ -36,6 +40,7 @@ import {
   type TagCatalogoItem,
 } from '../api/client';
 import { invalidarSummary } from '../utils/cacheSummary';
+import { avisarTelaVendedores } from '../utils/telaVendedores';
 
 const LS_CAMINHO_FONTE = 'prisma_caminho_fonte';
 const LS_CAMINHO_TRABALHO = 'prisma_caminho_trabalho';
@@ -99,6 +104,9 @@ function formatarDadosDisco(dados: DadosNoDisco): string {
 export default function ConfiguracoesPage() {
   const [, setEmpresas] = useState<string[]>([]);
   const [empresa, setEmpresa] = useState(() => lerLocal(LS_EMPRESA));
+  // As regras de ritmo são gravadas por escopo (empresa + lojas), então
+  // precisam da loja da barra lateral — o resto desta tela é por empresa.
+  const { loja: escopoLoja } = useEscopoAtual();
   const [caminhoFonte, setCaminhoFonte] = useState(() => lerLocal(LS_CAMINHO_FONTE));
   const [caminhoTrabalho, setCaminhoTrabalho] = useState(() => lerLocal(LS_CAMINHO_TRABALHO));
   const [sincronizando, setSincronizando] = useState(false);
@@ -114,6 +122,8 @@ export default function ConfiguracoesPage() {
   const [dadosDisco, setDadosDisco] = useState<DadosNoDisco | null>(null);
   const [salvandoDisco, setSalvandoDisco] = useState(false);
   const [podeRegenerar, setPodeRegenerar] = useState(false);
+  const [mostrarVendedores, setMostrarVendedores] = useState(false);
+  const [salvandoTelaVendedores, setSalvandoTelaVendedores] = useState(false);
   const [salvandoRegen, setSalvandoRegen] = useState(false);
   const [horarioInicio, setHorarioInicio] = useState('08:00');
   const [comHorario, setComHorario] = useState(false);
@@ -125,6 +135,9 @@ export default function ConfiguracoesPage() {
   const [salvandoFlag, setSalvandoFlag] = useState(false);
 
   const [tagsCatalogo, setTagsCatalogo] = useState<TagCatalogoItem[]>(TAGS_CATALOGO_PADRAO);
+  // Snapshot do catálogo no momento do load — usado para o merge no save,
+  // sem ele qualquer tag criada por outra sessão entre o load e o save some.
+  const [tagsCatalogoBase, setTagsCatalogoBase] = useState<TagCatalogoItem[]>(TAGS_CATALOGO_PADRAO);
   const [novoTagNome, setNovoTagNome] = useState('');
   const [novaTagEntraNaAnalise, setNovaTagEntraNaAnalise] = useState(true);
   const [editandoTagId, setEditandoTagId] = useState<string | null>(null);
@@ -176,6 +189,22 @@ export default function ConfiguracoesPage() {
     }
   };
 
+  const alternarTelaVendedores = async (visivel: boolean) => {
+    setMostrarVendedores(visivel);
+    setFeedbackDados(null);
+    setSalvandoTelaVendedores(true);
+    try {
+      const gravada = await definirTelaVendedores(visivel);
+      setMostrarVendedores(gravada);
+      avisarTelaVendedores(gravada);
+    } catch (e) {
+      setMostrarVendedores(!visivel);
+      setFeedbackDados({ tipo: 'erro', texto: e instanceof Error ? e.message : 'Falha ao salvar a tela de vendedores.' });
+    } finally {
+      setSalvandoTelaVendedores(false);
+    }
+  };
+
   useEffect(() => {
     // Versão é informativa: se a chamada falhar, o rodapé simplesmente não
     // aparece — nada aqui depende dela.
@@ -198,6 +227,7 @@ export default function ConfiguracoesPage() {
   useEffect(() => {
     void obterDadosNoDisco().then(setDadosDisco).catch(() => setDadosDisco(null));
     void obterRegeneracao().then(setPodeRegenerar).catch(() => setPodeRegenerar(false));
+    void obterTelaVendedores().then(setMostrarVendedores).catch(() => setMostrarVendedores(false));
   }, []);
 
   const alternarRegeneracao = async (permitida: boolean) => {
@@ -278,6 +308,7 @@ export default function ConfiguracoesPage() {
   useEffect(() => {
     if (!empresa) {
       setTagsCatalogo(TAGS_CATALOGO_PADRAO);
+      setTagsCatalogoBase(TAGS_CATALOGO_PADRAO);
       setEditandoTagId(null);
       setConfigBase(null);
       return;
@@ -291,7 +322,9 @@ export default function ConfiguracoesPage() {
         ]);
         if (cancelado) return;
         setEditandoTagId(null);
-        setTagsCatalogo(tags.catalogo?.length ? tags.catalogo : TAGS_CATALOGO_PADRAO);
+        const catalogoCarregado = tags.catalogo?.length ? tags.catalogo : TAGS_CATALOGO_PADRAO;
+        setTagsCatalogo(catalogoCarregado);
+        setTagsCatalogoBase(catalogoCarregado);
         if (cfg) {
           setConfigBase(cfg);
           setPeriodosQueda(cfg.periodosQueda ?? 2);
@@ -471,8 +504,10 @@ export default function ConfiguracoesPage() {
     setFeedbackTags(null);
     setSalvandoTags(true);
     try {
-      const dados = await salvarCatalogoTags(empresa, tagsCatalogo, null);
-      setTagsCatalogo(dados.catalogo ?? tagsCatalogo);
+      const dados = await salvarCatalogoTags(empresa, tagsCatalogo, null, tagsCatalogoBase);
+      const catalogoSalvo = dados.catalogo ?? tagsCatalogo;
+      setTagsCatalogo(catalogoSalvo);
+      setTagsCatalogoBase(catalogoSalvo);
       setFeedbackTags({ tipo: 'ok', texto: 'Catálogo de tags salvo.' });
     } catch (e) {
       setFeedbackTags({ tipo: 'erro', texto: e instanceof Error ? e.message : 'Falha ao salvar tags.' });
@@ -625,6 +660,20 @@ export default function ConfiguracoesPage() {
               />
               Aguardando montagem da base de dados (mostra aviso no Dashboard público)
             </label>
+
+            <label className="analisador-check-linha">
+              <input
+                type="checkbox"
+                checked={mostrarVendedores}
+                onChange={(e) => void alternarTelaVendedores(e.target.checked)}
+                disabled={salvandoTelaVendedores}
+              />
+              Mostrar a tela de Vendedores
+            </label>
+            <p className="analisador-hint">
+              A coluna ainda não veio na base de todas as empresas. Desmarcado, some da
+              barra lateral e quem abrir a rota volta ao Dashboard.
+            </p>
 
             {feedbackDados && (
               <p
@@ -938,6 +987,20 @@ export default function ConfiguracoesPage() {
                   </button>
                 </div>
               </>
+            )}
+          </section>
+
+          <section className="glass-card glass-card-flat config-page-card" aria-labelledby="setor-ritmo">
+            <h2 id="setor-ritmo" className="config-page-card-titulo">Alertas de ritmo do mês</h2>
+            <p className="config-page-card-desc">
+              Regras diárias, semanais ou mensais por tag{empresa ? ` — ${empresa}` : ''}. Todas as
+              janelas respeitam os dias úteis e os limites do mês. Os alertas disparados aparecem na
+              tela de Clientes.
+            </p>
+            {!empresa ? (
+              <p className="analisador-hint">Selecione uma empresa na sidebar.</p>
+            ) : (
+              <RegrasRitmoAlertasEditor empresa={empresa} loja={escopoLoja} catalogo={tagsCatalogo} />
             )}
           </section>
 

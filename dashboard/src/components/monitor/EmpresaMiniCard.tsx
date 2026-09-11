@@ -9,11 +9,15 @@ const ROTULOS_METRICA: Record<MetricaMonitor, string> = {
   receita: 'Receita',
   qtd: 'Quantidade',
   clientes: 'Clientes',
-  receita_dia: 'Receita / dia útil',
+  receita_dia: 'Receita / dia com venda',
+  lucro: 'Lucro bruto',
+  lucro_dia: 'Lucro bruto / dia com venda',
 };
 
+const METRICAS_MOEDA: MetricaMonitor[] = ['receita', 'receita_dia', 'lucro', 'lucro_dia'];
+
 function ehMoeda(metrica: MetricaMonitor): boolean {
-  return metrica === 'receita' || metrica === 'receita_dia';
+  return METRICAS_MOEDA.includes(metrica);
 }
 
 type PontoSparkline = { rotulo: string; valor: number };
@@ -272,7 +276,7 @@ function EmpresaMiniCardInterno({
           <>
             <div className="monitor-kpi">
               <span>
-                {ROTULOS_METRICA[metrica]} · {ehMedia ? 'média por dia útil' : 'total do período'}
+                {ROTULOS_METRICA[metrica]} · {ehMedia ? 'média por dia com venda' : 'total do período'}
               </span>
               {/* Variação ao lado do valor, e não no rodapé: é o par que o usuário
                   lê junto — quanto foi e se subiu ou caiu. */}

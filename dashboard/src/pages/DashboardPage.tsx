@@ -16,6 +16,8 @@ import { AppShell } from '../components/AppShell';
 import { EVENTO_EMPRESA } from '../utils/empresaSelecionada';
 import { EVENTO_LOJA, lerLojas } from '../utils/lojaSelecionada';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import { useMesesFechados } from '../hooks/useMesesFechados';
+import { modoParaBooleano } from '../utils/mesesFechados';
 import { obterAguardandoBaseDados, obterSummaryEmpresa } from '../api/client';
 import { formatCurrency, formatNumber } from '../utils/formatters';
 import { COR_ANO_ANTERIOR, COR_ANO_RECENTE, corDoAno } from '../utils/coresAno';
@@ -199,10 +201,15 @@ export default function DashboardPage() {
   const [severity, setSeverity] = useState<number[]>(() => lerIdsFiltro('alvo_severity'));
   const [period, setPeriod] = useState<number[]>(() => JSON.parse(localStorage.getItem('alvo_period') || '[]'));
   const [modalPeriod, setModalPeriod] = useState<number[]>(() => JSON.parse(localStorage.getItem('alvo_period_modal') || '[]'));
-  const [usarMesesFechados, setUsarMesesFechados] = useState(() => {
-    const v = localStorage.getItem('alvo_meses_fechados');
-    return v === null ? true : v === 'true';
-  });
+  // Preferência global (sidebar) — compartilhada com Clientes/Vendedores/Estoque.
+  // Dashboard não tem o modo "mesmo período" (não compara 1 mês vs média): só
+  // "fechados" exclui o mês corrente, qualquer outro modo vira "completo".
+  const [modoPeriodo, setModoPeriodo] = useMesesFechados();
+  const usarMesesFechados = modoParaBooleano(modoPeriodo);
+  const setUsarMesesFechados = useCallback(
+    (v: boolean) => setModoPeriodo(v ? 'fechados' : 'completo'),
+    [setModoPeriodo],
+  );
   const [granularidade, setGranularidade] = useState<GranularidadeDash>(() =>
     parseGranularidade(localStorage.getItem('alvo_granularidade')),
   );
@@ -298,7 +305,6 @@ export default function DashboardPage() {
     localStorage.setItem('alvo_severity', JSON.stringify(severity));
     localStorage.setItem('alvo_period', JSON.stringify(period));
     localStorage.setItem('alvo_period_modal', JSON.stringify(modalPeriod));
-    localStorage.setItem('alvo_meses_fechados', String(usarMesesFechados));
     localStorage.setItem('alvo_granularidade', granularidade);
     localStorage.setItem('alvo_visao_detalhada', String(visaoDetalhada));
   }, [client, mfr, desc, severity, period, modalPeriod, usarMesesFechados, granularidade, visaoDetalhada]);

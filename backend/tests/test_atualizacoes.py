@@ -356,8 +356,8 @@ def test_recusa_requisicao_sem_cliente_identificado():
 
 @pytest.mark.parametrize("cabecalho", main.CABECALHOS_DE_PROXY)
 def test_recusa_loopback_repassado_por_proxy(cabecalho):
-    """O caso que motiva o gate: o Apache do XAMPP escuta na LAN e faz
-    ProxyPass /api para 127.0.0.1, então o IP chega como loopback."""
+    """O caso que motiva o gate: um reverse proxy na LAN repassando /api
+    para 127.0.0.1 faz o IP chegar como loopback."""
     with pytest.raises(HTTPException) as excecao:
         main._exigir_origem_local(
             _RequisicaoFalsa("127.0.0.1", {cabecalho: "192.168.1.50"})

@@ -319,10 +319,21 @@ h3 {
 .app-sidebar-empresa {
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0;
   padding: 0 0.15rem;
   min-width: 0;
   transition: opacity 0.14s ease, visibility 0.14s ease;
+}
+
+/* Rótulo (Empresa/Loja/Período) colado no seu próprio controle — a versão
+   padrão de `.app-sidebar-nav-label` tem padding pensado pra separar título
+   de GRUPO de nav do primeiro item, gap grande demais aqui. */
+.app-sidebar-empresa .app-sidebar-nav-label {
+  padding: 0 0.15rem 0.1rem;
+}
+
+.app-sidebar-empresa + .app-sidebar-empresa {
+  margin-top: -1rem;
 }
 
 .app-sidebar.is-collapsed .app-sidebar-empresa {
@@ -341,9 +352,9 @@ h3 {
 
 .app-sidebar-empresa .custom-select-trigger {
   width: 100%;
-  min-height: 2.15rem;
-  padding: 0.4rem 0.55rem;
-  font-size: 0.78rem;
+  min-height: 1.8rem;
+  padding: 0.3rem 0.5rem;
+  font-size: 0.76rem;
   background: var(--surface-1);
   border: 1px solid var(--border);
   border-radius: var(--raio-controle);
@@ -353,6 +364,49 @@ h3 {
 .app-sidebar-empresa .custom-select-trigger:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+/* Segmentado compacto do filtro de período — menor que os combobox de
+   Empresa/Loja, porque tem só 2-3 opções fixas, não uma lista que cresce. */
+.periodo-segmented {
+  display: flex;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  overflow: hidden;
+  background: var(--surface-1);
+}
+
+.periodo-segmented-btn {
+  flex: 1;
+  min-width: 0;
+  padding: 0.3rem 0.2rem;
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 0.62rem;
+  font-weight: 600;
+  font-family: inherit;
+  line-height: 1.2;
+  cursor: pointer;
+  white-space: normal;
+  text-align: center;
+  word-break: break-word;
+  transition: background 0.15s, color 0.15s;
+}
+
+.periodo-segmented-btn + .periodo-segmented-btn {
+  border-left: 1px solid var(--border);
+}
+
+.periodo-segmented-btn.is-active {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.periodo-segmented-btn:hover:not(.is-active) {
+  background: var(--surface-2);
+  color: var(--text-primary);
 }
 
 .app-sidebar-nav {
@@ -2169,6 +2223,8 @@ h3 {
   cursor: pointer;
   transition: all 0.2s ease;
   font-family: inherit;
+  /* A classe também veste <Link>, que sem isto viria sublinhado. */
+  text-decoration: none;
 }
 
 .analisador-btn:disabled {
@@ -4274,7 +4330,7 @@ h3 {
   gap: 0.65rem 0.85rem;
   padding: 0.65rem 0.75rem;
   border: 1px solid var(--border);
-  border-radius: var(--raio-card);
+  border-radius: var(--raio-controle);
   background: var(--surface-1);
 }
 
@@ -4341,6 +4397,7 @@ h3 {
   flex-wrap: wrap;
   gap: 0.45rem;
   margin: 0;
+  font-size: 1.05rem;
 }
 
 .analisador-alerta-count {
@@ -4362,6 +4419,10 @@ h3 {
   align-items: center;
   gap: 0.5rem;
   margin: 0;
+}
+
+.analisador-alerta-status-erro {
+  color: var(--danger);
 }
 
 .analisador-alerta-clientes {
@@ -5114,6 +5175,13 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   max-width: 1540px;
 }
 
+/* A barra de abas e um bloco solto no fluxo: sem margem propria ela encosta
+   na primeira linha do conteudo. Escopo na tela para nao mexer no Analisador,
+   que espaca pelo gap do container. */
+.clientes-page .analisador-tabs {
+  margin-bottom: 1rem;
+}
+
 .clientes-page-header {
   display: flex;
   align-items: flex-end;
@@ -5177,7 +5245,6 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 
 .clientes-base-card {
   margin-top: 1rem;
-  padding: 1rem;
 }
 
 .clientes-base-topo {
@@ -5254,7 +5321,6 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 /* Alertas operacionais por tag — acumulado mensal + recorte semanal flexível. */
 .clientes-ritmo-card {
   margin-bottom: 1rem;
-  padding: 1rem;
 }
 
 .clientes-ritmo-topo,
@@ -6242,7 +6308,6 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 
 .estoque-page-header p,
 .estoque-grafico-topo p,
-.estoque-tabela-card > div:first-child p,
 .estoque-vazio p {
   margin: 0.25rem 0 0;
   color: var(--text-muted);
@@ -6276,62 +6341,193 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   color: var(--danger);
 }
 
-.estoque-kpis {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.75rem;
-  margin-bottom: 0.85rem;
+/* A barra de abas é um bloco solto no fluxo: sem margem própria ela encosta
+   na primeira linha do conteúdo. */
+.estoque-page .analisador-tabs {
+  margin-bottom: 1rem;
 }
 
-.estoque-kpi {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  column-gap: 0.55rem;
-  row-gap: 0.16rem;
-  padding: 0.9rem 1rem;
+.estoque-visao,
+.estoque-escopo {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 
-.estoque-kpi > svg {
-  grid-row: 1 / 3;
-  color: var(--accent);
-}
-
-.estoque-kpi > span,
-.estoque-kpi > small {
+.estoque-visao-referencia {
+  margin: 0;
   color: var(--text-muted);
   font-size: 0.75rem;
 }
 
-.estoque-kpi > strong {
+.estoque-visao-referencia strong {
+  color: var(--text-secondary);
+}
+
+.estoque-visao-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.estoque-visao-grade {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.estoque-visao-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.estoque-card-topo {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.estoque-card-topo h2 {
+  margin: 0;
   color: var(--text-primary);
-  font-size: 1.14rem;
-  line-height: 1.1;
+  font-size: 1.05rem;
 }
 
-.estoque-kpi > small {
-  grid-column: 1 / -1;
-  margin-top: 0.2rem;
+.estoque-card-topo p {
+  margin: 0.2rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
 }
 
-.estoque-kpi.is-perigo > svg { color: var(--danger); }
-.estoque-kpi.is-atencao > svg { color: #e2913f; }
+.estoque-card-nota {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex: none;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+/* Listas de produto: nome + detalhe à esquerda, situação e capital ancorados à
+   direita. Colunas fixas para o valor não dançar entre as linhas. */
+.estoque-lista {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 17rem;
+  overflow-y: auto;
+}
+
+.estoque-lista li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+}
+
+.estoque-lista-nome {
+  display: grid;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.estoque-lista-nome strong {
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.estoque-lista-nome span {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.estoque-lista em {
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+}
+
+/* Barras por fabricante: trilho na coluna elástica, números em colunas
+   próprias — assim os valores alinham em vez de seguir o fim da barra. */
+.estoque-barras {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.estoque-barras li {
+  display: grid;
+  grid-template-columns: minmax(6rem, 0.9fr) minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.76rem;
+}
+
+.estoque-barras span {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.estoque-barras i {
+  height: 0.4rem;
+  border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.estoque-barras i b {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.estoque-barras strong {
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.estoque-barras em {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-style: normal;
+  white-space: nowrap;
+}
 
 .estoque-grafico-card,
 .estoque-tabela-card {
   min-width: 0;
-  padding: 1rem;
 }
 
-.estoque-grafico-card {
-  margin-bottom: 0.85rem;
-}
-
-.estoque-grafico-topo h2,
-.estoque-tabela-card h2 {
+.estoque-grafico-topo h2 {
   margin: 0;
   color: var(--text-primary);
-  font-size: 1rem;
+  font-size: 1.05rem;
 }
 
 .estoque-grafico-filtros {
@@ -6428,10 +6624,6 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 .estoque-chart-legenda i.is-atencao { background: #e2913f; }
 .estoque-chart-vazio { padding: 4rem 1rem; color: var(--text-muted); text-align: center; }
 .estoque-limite { margin: 0.4rem 0 0; }
-
-.estoque-tabela-card > div:first-child {
-  margin-bottom: 0.75rem;
-}
 
 .estoque-tabela-wrap {
   max-width: 100%;
@@ -6969,4 +7161,807 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   .chat-ia-spin {
     animation-duration: 1.8s;
   }
+}
+
+/* ==========================================================================
+   Vendedores — ranking do último mês vs média dos 6 anteriores
+   ========================================================================== */
+
+.vendedores-page {
+  max-width: 1540px;
+}
+
+.vendedores-page-header p,
+.vendedores-tabela-topo p,
+.vendedores-vazio p,
+.vendedores-ficha-cabeca p,
+.vendedores-alertas-card p {
+  margin: 0.35rem 0 0;
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+}
+
+.vendedores-vazio,
+.vendedores-aviso,
+.vendedores-carregando {
+  display: flex;
+  align-items: center;
+  gap: 0.9rem;
+  min-height: 5rem;
+  padding: 1.15rem;
+  color: var(--text-secondary);
+}
+
+.vendedores-vazio strong {
+  color: var(--text-primary);
+}
+
+.vendedores-aviso {
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+  color: var(--danger);
+}
+
+.vendedores-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 0.85rem;
+}
+
+.vendedores-kpi {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  column-gap: 0.55rem;
+  row-gap: 0.16rem;
+  padding: 0.9rem 1rem;
+}
+
+.vendedores-kpi > svg {
+  grid-row: 1 / 3;
+  color: var(--accent);
+}
+
+.vendedores-kpi > span,
+.vendedores-kpi > small {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.vendedores-kpi > strong {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 1.05rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vendedores-kpi > small {
+  grid-column: 1 / -1;
+  margin-top: 0.2rem;
+}
+
+.vendedores-kpi.is-alta > svg,
+.vendedores-kpi.is-alta > small {
+  color: var(--success);
+}
+
+.vendedores-kpi.is-queda > svg,
+.vendedores-kpi.is-queda > small {
+  color: var(--danger);
+}
+
+.vendedores-tabela-card,
+.vendedores-entidade-card,
+.vendedores-alertas-card,
+.vendedores-ficha-cabeca {
+  min-width: 0;
+  overflow: hidden;
+  padding: 1rem 1.1rem;
+}
+
+.vendedores-entidade-card {
+  display: flex;
+  flex-direction: column;
+  isolation: isolate;
+}
+
+.vendedores-tabela-topo {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.vendedores-busca {
+  width: min(280px, 100%);
+}
+
+.vendedores-tabela-wrap {
+  max-height: 420px;
+  min-width: 0;
+  overflow: auto;
+  isolation: isolate;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-card);
+  background: #121216;
+}
+
+.vendedores-chart {
+  min-width: 0;
+  width: 100%;
+  margin: 0 0 0.9rem;
+}
+
+.vendedores-chart-legenda {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  margin: 0 0 0.45rem;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.vendedores-chart-legenda span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.vendedores-chart-legenda i {
+  width: 0.7rem;
+  height: 0.18rem;
+  border-radius: var(--raio-pill);
+}
+
+.vendedores-chart-legenda i.is-mes { background: #6f8cc4; }
+.vendedores-chart-legenda i.is-media { background: #dabb6c; }
+
+.vendedores-chart-tooltip {
+  display: grid;
+  gap: 0.25rem;
+  min-width: 11rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--raio-controle);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-flutuante);
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+}
+
+.vendedores-chart-tooltip strong { color: var(--text-primary); }
+
+.vendedores-chart-tooltip dl {
+  display: grid;
+  gap: 0.15rem;
+  margin: 0;
+}
+
+.vendedores-chart-tooltip div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.vendedores-chart-tooltip dt { color: var(--text-muted); }
+
+.vendedores-chart-tooltip dd {
+  margin: 0;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+}
+
+.vendedores-tabela-card .vendedores-tabela tbody tr {
+  cursor: pointer;
+}
+
+.vendedores-tabela tbody tr.is-ativo td {
+  background: var(--surface-3);
+}
+
+.vendedores-entidade-card .vendedores-tabela-wrap {
+  max-height: 280px;
+}
+
+.vendedores-entidade-card .vendedores-tabela th {
+  position: static;
+}
+
+.vendedores-entidade-card .vendedores-tabela {
+  min-width: 0;
+  width: 100%;
+}
+
+.vendedores-entidade-card .vendedores-tabela .col-nome {
+  width: auto;
+  min-width: 0;
+}
+
+.vendedores-entidade-card .vendedores-tabela td.col-nome {
+  max-width: 0;
+}
+
+.vendedores-entidade-card .vendedores-tabela .col-num {
+  width: 6.8rem;
+  padding-left: 0.2rem;
+  padding-right: 0.3rem;
+}
+
+.vendedores-entidade-card .vendedores-tabela .col-var,
+.vendedores-entidade-card .vendedores-tabela th.col-var {
+  width: 4rem;
+  padding-left: 0.15rem;
+  padding-right: 0.3rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.vendedores-entidade-card .vendedores-tabela th,
+.vendedores-entidade-card .vendedores-tabela td {
+  padding: 0.45rem 0.45rem;
+}
+
+.vendedores-entidade-card .vendedores-tabela tbody tr:hover td:first-child {
+  box-shadow: none;
+}
+
+.vendedores-tabela tbody tr.is-alerta td:first-child {
+  border-left: 3px solid var(--danger);
+  padding-left: 0.75rem;
+}
+
+.vendedores-tabela td.is-alta,
+.vendedores-ficha-numeros dd.is-alta {
+  color: var(--success);
+}
+
+.vendedores-tabela td.is-queda,
+.vendedores-ficha-numeros dd.is-queda,
+.vendedores-alertas-lista .is-queda {
+  color: var(--danger);
+}
+
+.vendedores-ficha {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  margin-top: 0.85rem;
+}
+
+.vendedores-ficha-cabeca {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.vendedores-ficha-cabeca h2,
+.vendedores-alertas-card h3,
+.vendedores-entidade-card h3 {
+  margin: 0 0 0.65rem;
+  font-size: 1rem;
+}
+
+.vendedores-ficha-numeros {
+  display: grid;
+  grid-template-columns: repeat(4, auto);
+  gap: 0.35rem 1.25rem;
+  margin: 0;
+}
+
+.vendedores-ficha-numeros dt {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.vendedores-ficha-numeros dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.vendedores-alertas-lista {
+  list-style: none;
+  margin: 0.7rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  max-height: 18rem;
+  overflow: auto;
+}
+
+.vendedores-alertas-lista li {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 0.65rem;
+  align-items: center;
+  padding: 0.55rem 0.7rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+}
+
+.vendedores-alertas-lista li strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.vendedores-alerta-tipo {
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+}
+
+.vendedores-ficha-grades {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.85rem;
+  min-width: 0;
+}
+
+.vendedores-ficha-grades > .vendedores-chart-legenda {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+
+@media (max-width: 1100px) {
+  .vendedores-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vendedores-ficha-grades { grid-template-columns: 1fr; }
+  .vendedores-ficha-cabeca,
+  .vendedores-tabela-topo { flex-direction: column; align-items: stretch; }
+}
+
+@media (max-width: 680px) {
+  .vendedores-kpis { grid-template-columns: 1fr; }
+  .vendedores-ficha-numeros { grid-template-columns: repeat(2, 1fr); }
+  .vendedores-alertas-lista li { grid-template-columns: auto 1fr; }
+}
+
+/* ---------------------------------------------------------------------------
+   Clientes · aba Visão geral
+   Grade de dois cards por linha; o donut ocupa a coluna esquerda com a
+   legenda contada à direita, e o rótulo do centro é sobreposto porque o
+   recharts não tem texto central em Pie.
+   --------------------------------------------------------------------------- */
+
+.clientes-visao {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.clientes-visao-referencia {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.clientes-visao-referencia strong {
+  color: var(--text-secondary);
+}
+
+.clientes-visao-aviso {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+}
+
+.clientes-visao-aviso svg {
+  flex: none;
+  margin-top: 0.1rem;
+  color: var(--accent);
+}
+
+.clientes-visao-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.clientes-visao-tags {
+  display: grid;
+  gap: 0.4rem;
+  padding-top: 0.7rem;
+  border-top: 1px solid var(--border);
+}
+
+.clientes-visao-tags-titulo {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.clientes-visao-tags-grade {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 0.5rem;
+}
+
+.clientes-tag-chip {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+}
+
+.clientes-tag-chip-topo {
+  display: grid;
+  grid-template-columns: 0.5rem minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+}
+
+.clientes-tag-chip-topo i {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--tag-cor);
+}
+
+.clientes-tag-chip-topo span {
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clientes-tag-chip-topo em {
+  padding: 0.05rem 0.4rem;
+  border-radius: var(--raio-pill);
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.clientes-tag-chip > strong {
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.clientes-tag-chip-barra {
+  height: 0.25rem;
+  border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.clientes-tag-chip-barra i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--tag-cor);
+}
+
+.clientes-tag-chip > small {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+}
+
+.clientes-visao-grade {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.clientes-visao-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.clientes-visao-card-topo {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.clientes-visao-card-topo h2 {
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+
+.clientes-visao-card-topo p {
+  margin: 0.2rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.clientes-visao-card-rodape {
+  margin-top: auto;
+}
+
+/* Gráfico e tabela com a mesma altura útil do par ao lado, para as duas
+   bordas inferiores da linha fecharem no mesmo ponto. O wrap da tabela
+   cresce com o card: max-height 17rem deixava o bloco curto e o card
+   esticado vazio, com barra nos dois eixos. */
+.clientes-visao-chart {
+  height: 15rem;
+}
+
+.clientes-visao-tabela {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
+  width: 100%;
+}
+
+.clientes-visao-tabela .analisador-tabela {
+  /* A tabela do Analisador pede min-width 640px; em meia largura isso
+     cria barra horizontal e corta Receita/Média/Variação. */
+  min-width: 0;
+}
+
+.clientes-visao-tabela .col-nome {
+  min-width: 0;
+  max-width: none;
+}
+
+.clientes-visao-card-nota {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.clientes-visao-legenda {
+  margin: 0;
+}
+
+.donut-linha {
+  display: grid;
+  grid-template-columns: minmax(0, 12rem) minmax(0, 1fr);
+  align-items: center;
+  gap: 0.9rem;
+}
+
+.donut {
+  position: relative;
+  min-width: 0;
+}
+
+/* Rótulo do furo é SVG (DonutFuro). Tooltip do Recharts 3 é HTML em portal,
+   então fica acima do canvas sem disputa de z-index. */
+.donut-furo-valor {
+  fill: var(--text-primary);
+  font-size: 1.35rem;
+  font-weight: 700;
+}
+
+.donut-furo-legenda {
+  fill: var(--text-muted);
+  font-size: 0.64rem;
+}
+
+/* As colunas vivem no <ul> e cada <li> as herda por subgrid. Com o grid
+   declarado no próprio <li>, coluna `auto` se dimensiona pelo conteúdo
+   daquela linha — "R$ 9.588.864,96" e "R$ 0,00" davam larguras diferentes e
+   desalinhavam contagem, barra e percentual entre as linhas. */
+.donut-legenda {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  gap: 0.3rem 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+}
+
+.donut-legenda li {
+  display: grid;
+  grid-template-columns: 0.55rem minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0.45rem;
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  font-size: 0.74rem;
+}
+
+@supports (grid-template-columns: subgrid) {
+  .donut-legenda li {
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+  }
+}
+
+.donut-legenda i {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 50%;
+}
+
+.donut-legenda span {
+  color: var(--text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.donut-legenda strong {
+  color: var(--text-primary);
+}
+
+.donut-legenda em {
+  color: var(--text-muted);
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.clientes-eventos-lista {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.clientes-eventos-lista li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  font-size: 0.76rem;
+}
+
+.clientes-eventos-lista strong {
+  color: var(--text-primary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clientes-evento-selo {
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--raio-pill);
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
+
+.clientes-evento-valor {
+  /* Coluna fixa: linha sem selo não pode puxar o valor para o meio. */
+  grid-column: 3;
+  text-align: right;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.clientes-tabela td.col-num.is-alta {
+  color: var(--success);
+}
+
+.clientes-tabela td.col-num.is-queda {
+  color: var(--danger);
+}
+
+.clientes-tabela td.col-num svg {
+  vertical-align: -0.15em;
+  margin-right: 0.15rem;
+}
+
+.clientes-tabela tbody tr.is-alerta td:first-child {
+  border-left: 3px solid var(--danger);
+  padding-left: 0.75rem;
+}
+
+.clientes-tabela tbody tr.is-destaque td:first-child {
+  border-left: 3px solid var(--success);
+  padding-left: 0.75rem;
+}
+
+@media (max-width: 1100px) {
+  .clientes-visao-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .clientes-visao-grade { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 680px) {
+  .clientes-visao-kpis { grid-template-columns: 1fr; }
+  .donut-linha { grid-template-columns: 1fr; }
+}
+
+/* -----------------------------------------------------------------------------
+ * PREFETCH INDICATOR
+ * ----------------------------------------------------------------------------- */
+.prefetch-indicator {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 0.75rem 1rem;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.2);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 220px;
+  animation: slideInPrefetch 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+.prefetch-indicator.is-finished {
+  animation: slideOutPrefetch 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards 2.5s;
+}
+
+@keyframes slideInPrefetch {
+  from { opacity: 0; transform: translateY(1rem) scale(0.95); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes slideOutPrefetch {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(1rem) scale(0.95); pointer-events: none; }
+}
+
+.prefetch-indicator-content {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.prefetch-icon-spin {
+  animation: spin 1s linear infinite;
+  color: var(--accent);
+}
+
+.prefetch-icon-success {
+  color: var(--success);
+}
+
+.prefetch-text {
+  font-size: 0.85rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.prefetch-progress-bar {
+  height: 4px;
+  background: var(--bg-primary);
+  border-radius: 2px;
+  overflow: hidden;
+  width: 100%;
+}
+
+.prefetch-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease-out;
 }

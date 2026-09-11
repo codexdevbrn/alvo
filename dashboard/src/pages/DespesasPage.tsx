@@ -1,43 +1,41 @@
 import { useState } from 'react';
-import { Boxes } from 'lucide-react';
+import { Receipt } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
-import { EstoqueVisaoGeral } from '../components/estoque/EstoqueVisaoGeral';
-import { EstoqueEscopo } from '../components/estoque/EstoqueEscopo';
+import { DespesasVisaoGeral } from '../components/despesas/DespesasVisaoGeral';
+import { DespesasLancamentos } from '../components/despesas/DespesasLancamentos';
 import { useEscopoAtual } from '../hooks/useEscopoAtual';
 
-type AbaEstoque = 'visao' | 'escopo';
+type AbaDespesas = 'visao' | 'lancamentos';
 
-const ABAS: { id: AbaEstoque; rotulo: string }[] = [
+const ABAS: { id: AbaDespesas; rotulo: string }[] = [
   { id: 'visao', rotulo: 'Visão geral' },
-  { id: 'escopo', rotulo: 'Escopo' },
+  { id: 'lancamentos', rotulo: 'Lançamentos' },
 ];
 
-/** Casca da tela de estoque: escopo, janela de venda e abas.
- *  Cada aba busca os próprios dados — a visão geral recebe poucos KB de
- *  agregados e não paga o download dos 1.200 pontos do mapa. */
-export default function EstoquePage() {
-  // Empresa e loja vêm da barra lateral e valem para todas as telas.
+/** Casca da tela de despesas: escopo, janela de meses e abas.
+ *  Fonte é `{empresa}_CONTROLADORIA.csv`, opcional — empresa sem o arquivo
+ *  recebe 404 do backend e cada aba mostra o próprio estado vazio. */
+export default function DespesasPage() {
   const { empresa, loja } = useEscopoAtual();
-  const [meses, setMeses] = useState(6);
-  const [aba, setAba] = useState<AbaEstoque>('visao');
+  const [meses, setMeses] = useState(12);
+  const [aba, setAba] = useState<AbaDespesas>('visao');
 
   return (
     <AppShell>
       <div className="dashboard-container estoque-page">
         <header className="app-page-header estoque-page-header">
           <div>
-            <h1>Estoque{empresa && <span className="analisador-header-empresa"> · {empresa}</span>}</h1>
-            <p>Capital parado, risco de ruptura e cobertura por produto.</p>
+            <h1>Despesas{empresa && <span className="analisador-header-empresa"> · {empresa}</span>}</h1>
+            <p>Lançamentos da Controladoria: total, evolução mensal e categorias.</p>
           </div>
           {empresa && (
             <div className="estoque-header-filtros">
-              {/* A janela vale para as duas abas: as duas leem a mesma venda média. */}
               <label className="analisador-campo">
-                <span>Venda média</span>
+                <span>Período</span>
                 <select className="custom-select analisador-select" value={meses} onChange={(e) => setMeses(Number(e.target.value))}>
-                  <option value={3}>Últimos 3 meses</option>
                   <option value={6}>Últimos 6 meses</option>
                   <option value={12}>Últimos 12 meses</option>
+                  <option value={24}>Últimos 24 meses</option>
                 </select>
               </label>
             </div>
@@ -46,14 +44,14 @@ export default function EstoquePage() {
 
         {!empresa && (
           <div className="glass-card glass-card-flat estoque-vazio">
-            <Boxes size={24} aria-hidden="true" />
-            <div><strong>Selecione uma empresa</strong><p>Use seletor da barra lateral para carregar estoque e vendas.</p></div>
+            <Receipt size={24} aria-hidden="true" />
+            <div><strong>Selecione uma empresa</strong><p>Use o seletor da barra lateral para carregar as despesas.</p></div>
           </div>
         )}
 
         {empresa && (
           <>
-            <div className="analisador-tabs custom-scrollbar" role="tablist" aria-label="Áreas da tela de estoque">
+            <div className="analisador-tabs custom-scrollbar" role="tablist" aria-label="Áreas da tela de despesas">
               {ABAS.map((item) => (
                 <button
                   key={item.id}
@@ -69,8 +67,8 @@ export default function EstoquePage() {
             </div>
 
             {aba === 'visao'
-              ? <EstoqueVisaoGeral empresa={empresa} loja={loja} meses={meses} />
-              : <EstoqueEscopo empresa={empresa} loja={loja} meses={meses} />}
+              ? <DespesasVisaoGeral empresa={empresa} loja={loja} meses={meses} />
+              : <DespesasLancamentos empresa={empresa} loja={loja} />}
           </>
         )}
       </div>

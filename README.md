@@ -76,7 +76,7 @@ que o gerador do CRM já tenha criado cada `<clientId>-crm.md`.
 
 ## Deploy
 
-- **Executável Windows** (para máquinas sem Python/Node/XAMPP): `.\build.ps1` gera, em
+- **Executável Windows** (para máquinas sem Python/Node): `.\build.ps1` gera, em
   `dist_release/`, o instalador (`Prisma-<versao>-instalador.exe`) e o pacote
   (`Prisma-<versao>.zip` + `version.json`) que alimenta a atualização automática. Bumpar
   `backend/versao.py` antes — é a fonte única da versão. Nesse modo o próprio FastAPI serve o

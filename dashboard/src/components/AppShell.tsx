@@ -16,14 +16,19 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   UsersRound,
+  ContactRound,
   PackageSearch,
+  Receipt,
   Bot,
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { getToken, clearToken, obterStatusAtualizacao, type StatusAtualizacao } from '../api/client';
+import { getToken, clearToken, obterStatusAtualizacao, obterTelaVendedores, type StatusAtualizacao } from '../api/client';
 import { BannerAtualizacao } from './BannerAtualizacao';
+import { PrefetchIndicator } from './PrefetchIndicator';
 import { SidebarEmpresaSelect } from './SidebarEmpresaSelect';
 import { SidebarLojaSelect } from './SidebarLojaSelect';
+import { SidebarMesesFechadosToggle } from './SidebarMesesFechadosToggle';
+import { EVENTO_TELA_VENDEDORES } from '../utils/telaVendedores';
 
 const URL_CARTEIRA = 'http://127.0.0.1:3001';
 const LS_SIDEBAR = 'prisma_sidebar_collapsed';
@@ -107,7 +112,9 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   const emAnalisador = location.pathname.startsWith('/analisador');
   const emMonitor = location.pathname.startsWith('/monitor');
   const emClientes = location.pathname.startsWith('/clientes');
+  const emVendedores = location.pathname.startsWith('/vendedores');
   const emEstoque = location.pathname.startsWith('/estoque');
+  const emDespesas = location.pathname.startsWith('/despesas');
   const emAssistente = location.pathname.startsWith('/assistente');
   const emConfig = location.pathname.startsWith('/config');
   const emMercadologico = location.pathname.startsWith('/mercadologico');
@@ -121,6 +128,27 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   const colapsado = collapsed && !isMobile;
   const mainRef = useRef<HTMLElement>(null);
   const [statusAtualizacao, setStatusAtualizacao] = useState<StatusAtualizacao | null>(null);
+  const [mostrarVendedores, setMostrarVendedores] = useState(false);
+
+  useEffect(() => {
+    let cancelado = false;
+    void obterTelaVendedores()
+      .then((visivel) => {
+        if (!cancelado) setMostrarVendedores(visivel);
+      })
+      .catch(() => {
+        if (!cancelado) setMostrarVendedores(false);
+      });
+    const aoMudar = (evento: Event) => {
+      const visivel = (evento as CustomEvent<boolean>).detail;
+      setMostrarVendedores(Boolean(visivel));
+    };
+    window.addEventListener(EVENTO_TELA_VENDEDORES, aoMudar);
+    return () => {
+      cancelado = true;
+      window.removeEventListener(EVENTO_TELA_VENDEDORES, aoMudar);
+    };
+  }, []);
 
   // Aviso de versão nova em qualquer tela, e não só dentro de Configurações:
   // quem nunca abre aquela tela nunca saberia que existe atualização. O backend
@@ -223,6 +251,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
 
         <SidebarEmpresaSelect />
         <SidebarLojaSelect />
+        <SidebarMesesFechadosToggle desabilitarMesmoPeriodo={emDashboard || emEstoque || emDespesas} />
 
         <nav className="app-sidebar-nav">
           <div className="app-sidebar-nav-grupo" aria-labelledby="sidebar-grupo-analises">
@@ -248,12 +277,28 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
               ativo={emClientes}
               onClick={() => navigate('/clientes')}
             />
+            {mostrarVendedores && (
+              <NavItem
+                icon={<ContactRound size={17} />}
+                label="Vendedores"
+                collapsed={colapsado}
+                ativo={emVendedores}
+                onClick={() => navigate('/vendedores')}
+              />
+            )}
             <NavItem
               icon={<PackageSearch size={17} />}
               label="Estoque"
               collapsed={colapsado}
               ativo={emEstoque}
               onClick={() => navigate('/estoque')}
+            />
+            <NavItem
+              icon={<Receipt size={17} />}
+              label="Despesas"
+              collapsed={colapsado}
+              ativo={emDespesas}
+              onClick={() => navigate('/despesas')}
             />
             <NavItem
               icon={<Bot size={17} />}
@@ -324,6 +369,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
       <main ref={mainRef} className="app-shell-main">
         {statusAtualizacao && <BannerAtualizacao status={statusAtualizacao} />}
         {children}
+        <PrefetchIndicator />
       </main>
     </div>
   );

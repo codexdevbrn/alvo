@@ -4,6 +4,148 @@ Formato: uma seção por versão publicada, mais recente no topo. Histórico é
 incremental — entradas antigas nunca são apagadas. O estado atual das telas e
 funcionalidades vive em `DOC_TEC.md`, não aqui.
 
+## 1.7.5 — 2026-09-10
+
+### Alterado
+
+- **Fonte de dados trocada de XLSX agregado para o par de CSV bruto.** A fonte
+  por empresa deixa de ser `{empresa}/Dados Mais Atacado.xlsx` (mensal,
+  pré-agregado) e passa a ser `{empresa}/{empresa}_MOVIMENTO_ATUAL.csv` +
+  `{empresa}/{empresa}_PRODUTO.csv` (`;`, aspas duplas), sem subpasta `BI/`.
+  `normalizar_base.py::resolver_arquivos_dados` e
+  `backend/engine/analise_funil.py::carregar_csv_base_empresa` (novo, substitui
+  `carregar_excel_base_empresa`) fazem o join pela chave de produto.
+- Schema canônico ganha `CMV`, `Vendedor` (de `NOME_VENDEDOR`, já suportado) e
+  `Data_Venda_Diaria` real (de `DATA_MOVIMENTO`), no lugar do mtime do arquivo
+  como proxy de data do último movimento. Mês aceita numérico (1–12) além de
+  extenso.
+- `descricao` passa a vir de `DESCRICAO_HARMONIZADA` (fallback para a descrição
+  bruta quando vazia), no lugar do `harm.xlsx` manual e do marcador de texto
+  "NÃO HARMONIZADO" dentro da própria coluna.
+- Estoque (`GET /api/estoque/*`) passa a vir de `QUANTIDADE_ESTOQUE` do
+  `PRODUTO.csv` (`backend/engine/analise_funil.py::montar_estoque_e_vendas`),
+  com custo unitário como CMV total ÷ QTD total do produto, no lugar do
+  pipeline "Liquidez" (`Dados_Estoque_*`/`Dados_Vendas_*`).
+
+### Removido
+
+- `harmonizar_descricoes.py` — harmonização manual morta; a fonte já traz
+  `DESCRICAO_HARMONIZADA`.
+- Geração de `Base.csv`/XLSX intermediário por empresa em `normalizar_base.py`
+  e `normalizar_todas_empresas.py`.
+- Referências ao deploy via XAMPP/Apache em `CLAUDE.md`, `DOC_TEC.md`,
+  `README.md`, `AGENTS.md`, `backend/main.py` e
+  `backend/tests/test_atualizacoes.py` — modo descontinuado, hoje a
+  distribuição é só o executável.
+
+### Corrigido
+
+- `build.ps1` estava salvo em UTF-8 **sem BOM**. O PowerShell (mesmo pwsh 7)
+  lê `.ps1` sem BOM pela codepage do console, não UTF-8 — todo acento/em-dash
+  do script virava byte inválido e o parser abortava antes de rodar qualquer
+  etapa. Isso derrubou duas rodadas de build (1.7.5) com erro de parsing sem
+  relação com o código do app. Corrigido regravando o arquivo com BOM UTF-8
+  (`EF BB BF`); nenhuma mudança de conteúdo.
+- Dois componentes (`ClientesVisaoGeral.tsx`, `EstoqueVisaoGeral.tsx`)
+  quebravam o `tsc -b` por repassar `viewBox` sem o tipo esperado pelo SVG —
+  achado só na hora do build de release, porque `npm run dev` não roda
+  type-check. Corrigido tipando a prop corretamente.
+
+## 1.7.4 — 2026-09-03
+
+### Corrigido
+
+- Rótulo do furo do donut (estoque e clientes) deixa de atravessar o tooltip.
+  Era um overlay HTML depois do gráfico: no Recharts 3 o card vai para um
+  portal, e o `onMouseEnter` do `Pie` não dispara, então o 66% pintava em cima
+  de "Saudável" / "Sem giro". Agora o número é SVG dentro do canvas.
+- Texto do furo era "do capital parado": o 66% é fatia do estoque inteiro, não
+  do capital já parado. Agora lê "está parado". Subtítulo do card perdeu o
+  "parado", porque o donut inclui o saudável.
+- Tabela "Maiores clientes" preenche o card. `max-height: 17rem` no wrap e
+  `min-width: 640px` herdado do Analisador deixavam o bloco curto e com barra
+  nos dois eixos enquanto o card esticava com o par da grade.
+
+## 1.7.3 — 2026-09-03
+
+### Adicionado
+
+- **Tela de Estoque em duas abas.** "Visão geral" mostra capital em estoque,
+  capital parado, risco de ruptura e cobertura média (capital ÷ saída mensal a
+  custo), donut por situação, fabricantes que mais prendem dinheiro e as pontas
+  — ruptura iminente e dinheiro dormindo. "Escopo" continua com o mapa produto a
+  produto. Os números da visão geral vêm de `GET /api/estoque/resumo/{empresa}`
+  (`montar_resumo_estoque`), agregados da base inteira: a aba não baixa os
+  ~1.200 pontos do mapa. As duas saídas passam pelo mesmo `_combinar_estoque_vendas`,
+  então mudar a régua de situação move as duas juntas.
+
+## 1.7.2 — 2026-09-03
+
+### Alterado
+
+- Layout da aba "Visão geral" reorganizado por peso de conteúdo. A grade pareava
+  cards muito desiguais — a lista de tags tinha 2 linhas ao lado de uma lista de
+  20 nomes, e sobrava meio card vazio. Agora cada linha da grade junta pares de
+  peso parecido (donut com gráfico, lista com tabela) e volta a esticar junto,
+  então as bordas fecham no mesmo ponto.
+- "Receita por tag" deixou de ser card e virou faixa de chips no pé do card de
+  Concentração, ocupando o vão que sobrava ali entre a legenda e o rodapé.
+- Tabela de maiores clientes perdeu a coluna Qtd: em meia largura, cinco colunas
+  truncavam nome e valor.
+
+## 1.7.1 — 2026-09-03
+
+### Corrigido
+
+- Listas da aba "Visão geral" (legenda da curva e receita por tag) alinham as
+  colunas entre as linhas. Cada `<li>` era um grid próprio, então coluna `auto`
+  media o conteúdo daquela linha e "R$ 9.588.864,96" e "R$ 0,00" empurravam
+  contagem, barra e percentual para posições diferentes. Agora as colunas vivem
+  no `<ul>` e as linhas as herdam por subgrid.
+- Filete lateral da tabela de maiores clientes fica verde na alta (+20% ou mais)
+  em vez de só existir em vermelho na queda.
+
+## 1.7.0 — 2026-09-03
+
+### Adicionado
+
+- **Tela de Clientes em duas abas.** "Visão geral" é um dashboard da carteira:
+  KPIs do mês de referência (clientes ativos, receita, ticket médio e saldo)
+  contra a média dos 6 meses anteriores, curva ABC nos cortes do Analisador,
+  entrada e saída de clientes nos últimos 12 meses, lista de quem entrou/voltou/
+  parou de comprar e receita por tag. "Base e tags" é a tela que já existia —
+  busca, marcação de tags e alertas continuam lá.
+- `GET /api/clientes/{empresa}/painel` (`backend/analise_clientes.py`) calcula
+  tudo no servidor e devolve poucos KB. Movimento da carteira usa uma janela de
+  inatividade de 3 meses e conta cada evento **uma vez**: novo é a primeira
+  compra da base, recuperado é quem volta depois da janela inteira parado, e
+  perdido é quem comprou há exatamente uma janela e não voltou.
+- Cliente marcado como balcão fica fora do painel, com a contagem excluída
+  visível na tela — consumidor final é uma linha só e afundaria o Pareto.
+
+### Alterado
+
+- Alertas de ritmo e o card de clientes em alerta passaram para a aba
+  "Visão geral".
+- Helpers de período mensal saíram de `analise_vendedores.py` para
+  `backend/periodo_mensal.py`, agora compartilhados com o painel de clientes.
+
+## 1.6.1 — 2026-09-02
+
+### Corrigido
+
+- Tela de Vendedores nasce desligada e só aparece depois de marcada em
+  Configurações; layout da ficha do vendedor corrigido.
+
+## 1.6.0 — 2026-09-02
+
+### Adicionado
+
+- **Tela de Vendedores (`/vendedores`)** — ranking do último mês da base contra
+  a média dos 6 anteriores, com ficha por vendedor (clientes, produtos,
+  fabricantes e alertas de queda). Base sem a coluna de vendedor responde
+  indisponível em vez de falhar.
+
 ## 1.5.0 — 2026-09-01
 
 ### Adicionado
