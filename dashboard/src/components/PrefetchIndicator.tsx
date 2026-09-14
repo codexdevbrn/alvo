@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Loader2, CheckCircle2, Circle } from 'lucide-react';
 import {
@@ -23,7 +23,6 @@ export function PrefetchIndicator() {
   const navigate = useNavigate();
   const [estado, setEstado] = useState<EstadoPrefetch>(obterEstadoPrefetch);
   const [visivel, setVisivel] = useState<boolean>(estaPrefetchVisivel);
-  const montouVisivel = useRef(estaPrefetchVisivel());
 
   useEffect(() => {
     let timeoutId: number;

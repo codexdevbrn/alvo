@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertTriangle,
   ArrowDownRight,
@@ -17,7 +16,6 @@ import { VendedorEvolucaoChart } from '../components/vendedores/VendedorEvolucao
 import {
   obterFichaVendedor,
   obterRankingVendedores,
-  obterTelaVendedores,
   type FichaVendedorResposta,
   type ItemFichaVendedor,
   type ItemRankingVendedor,
@@ -26,7 +24,6 @@ import {
 import { formatCurrency, formatNumber, formatPercent } from '../utils/formatters';
 import { useEscopoAtual } from '../hooks/useEscopoAtual';
 import { useMesesFechados } from '../hooks/useMesesFechados';
-import { EVENTO_TELA_VENDEDORES } from '../utils/telaVendedores';
 
 function normalizarBusca(valor: string): string {
   return valor.normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('pt-BR');
@@ -75,8 +72,6 @@ type AbaEntidade = (typeof ABAS_ENTIDADE)[number]['id'];
 export default function VendedoresPage() {
   const { empresa, loja } = useEscopoAtual();
   const [modoPeriodo] = useMesesFechados();
-  const navigate = useNavigate();
-  const [liberada, setLiberada] = useState(false);
   const [ranking, setRanking] = useState<RankingVendedoresResposta | null>(null);
   const [ficha, setFicha] = useState<FichaVendedorResposta | null>(null);
   const [vendedor, setVendedor] = useState<string | null>(null);
@@ -86,30 +81,9 @@ export default function VendedoresPage() {
   const [erro, setErro] = useState<string | null>(null);
 
   useEffect(() => {
-    let cancelado = false;
-    void obterTelaVendedores()
-      .then((visivel) => {
-        if (cancelado) return;
-        if (!visivel) navigate('/', { replace: true });
-        else setLiberada(true);
-      })
-      .catch(() => {
-        if (!cancelado) navigate('/', { replace: true });
-      });
-    const aoMudar = (evento: Event) => {
-      if (!(evento as CustomEvent<boolean>).detail) navigate('/', { replace: true });
-    };
-    window.addEventListener(EVENTO_TELA_VENDEDORES, aoMudar);
-    return () => {
-      cancelado = true;
-      window.removeEventListener(EVENTO_TELA_VENDEDORES, aoMudar);
-    };
-  }, [navigate]);
-
-  useEffect(() => {
     setVendedor(null);
     setFicha(null);
-    if (!liberada || !empresa) {
+    if (!empresa) {
       setRanking(null);
       setErro(null);
       return;
@@ -128,7 +102,7 @@ export default function VendedoresPage() {
         if (!controller.signal.aborted) setCarregando(false);
       });
     return () => controller.abort();
-  }, [empresa, loja, liberada, modoPeriodo]);
+  }, [empresa, loja, modoPeriodo]);
 
   useEffect(() => {
     if (!empresa || !vendedor) {
@@ -161,14 +135,6 @@ export default function VendedoresPage() {
   const escolher = (item: ItemRankingVendedor) => {
     setVendedor((atual) => (atual === item.vendedor ? null : item.vendedor));
   };
-
-  if (!liberada) {
-    return (
-      <AppShell>
-        <div className="dashboard-container vendedores-page" />
-      </AppShell>
-    );
-  }
 
   return (
     <AppShell>
@@ -259,7 +225,7 @@ export default function VendedoresPage() {
               <div className="vendedores-tabela-topo">
                 <div>
                   <h2>Ranking</h2>
-                  <p>Clique numa linha para abrir clientes, mix e alertas.</p>
+                  <p>Clique numa linha para ver o caminhar de vendas, clientes, mix e alertas.</p>
                 </div>
                 <label className="analisador-campo vendedores-busca">
                   <span>Buscar vendedor</span>
@@ -343,10 +309,15 @@ function FichaPainel({
   carregando: boolean;
 }) {
   const [aba, setAba] = useState<AbaEntidade>('clientes');
+  const ancora = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    ancora.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [nome]);
 
   if (carregando && !ficha) {
     return (
-      <div className="glass-card vendedores-carregando" role="status">
+      <div ref={ancora} className="glass-card vendedores-carregando" role="status">
         <Loader2 size={20} className="dashboard-filter-spinner" /> Abrindo ficha de {nome}…
       </div>
     );
@@ -367,6 +338,7 @@ function FichaPainel({
   const receitaCaiu = (ficha.variacao ?? 0) < 0;
 
   return (
+    <div ref={ancora}>
     <section className="vendedores-ficha" aria-label={`Ficha de ${ficha.vendedor}`}>
       <header className="glass-card glass-card-flat vendedores-ficha-cabeca">
         <div>
@@ -374,6 +346,16 @@ function FichaPainel({
           <p>{ficha.rotulo_periodo} vs média de {ficha.meses_media} meses</p>
         </div>
       </header>
+
+      <div className="glass-card glass-card-flat vendedores-evolucao-card">
+        <header className="estoque-card-topo">
+          <div>
+            <h3>Caminhar de vendas</h3>
+            <p>Receita de {ficha.vendedor} mês a mês, com a régua da média dos {ficha.meses_media} meses anteriores.</p>
+          </div>
+        </header>
+        <VendedorEvolucaoChart pontos={ficha.serie_mensal ?? []} media={ficha.receita_media} />
+      </div>
 
       <div className="vendedores-ficha-kpis">
         <StatCard title="Receita do mês" value={formatCurrency(ficha.receita_atual)} icon={Banknote} />
@@ -386,16 +368,6 @@ function FichaPainel({
           useTrendColor={ficha.variacao != null}
         />
         <StatCard title="Clientes atendidos" value={ficha.clientes_atual.toLocaleString('pt-BR')} icon={Percent} />
-      </div>
-
-      <div className="glass-card glass-card-flat vendedores-evolucao-card">
-        <header className="estoque-card-topo">
-          <div>
-            <h3>Evolução mensal</h3>
-            <p>Receita de {ficha.vendedor} mês a mês, com a régua da média dos {ficha.meses_media} meses anteriores.</p>
-          </div>
-        </header>
-        <VendedorEvolucaoChart pontos={ficha.serie_mensal ?? []} media={ficha.receita_media} />
       </div>
 
       <div className="glass-card glass-card-flat vendedores-alertas-card">
@@ -448,6 +420,7 @@ function FichaPainel({
         <TabelaEntidade itens={abaAtual.itens} coluna={abaAtual.coluna} />
       </div>
     </section>
+    </div>
   );
 }
 

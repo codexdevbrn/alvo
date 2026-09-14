@@ -4,6 +4,7 @@ analise_funil.py do app desktop original via FastAPI.
 """
 
 import json
+import gzip
 import logging
 import os
 import re
@@ -43,6 +44,7 @@ import versao
 from alertas_clientes import avaliar_alertas_clientes, normalizar_regras_alerta
 from auth import criar_token, exigir_login
 from dashboard_summary import (
+    aplicar_cortes_no_summary,
     caminho_summary_dashboard,
     caminho_summary_dashboard_gz,
     gerar_e_gravar_summary_dashboard,
@@ -317,11 +319,9 @@ CHAVE_CAMINHO_ATUALIZACOES = "caminho_atualizacoes"
 #:
 #: É guarda contra acidente, não controle de acesso — quem tem a tela pode ligar.
 CHAVE_REGENERACAO_PERMITIDA = "regeneracao_permitida"
-#: "1" = a tela de Vendedores aparece na barra e a API responde.
-#:
-#: A coluna ainda não veio na base de todas as empresas. Padrão desligado pra
-#: poder publicar a tela sem ela aparecer até alguém marcar em Configurações.
-CHAVE_TELA_VENDEDORES = "tela_vendedores"
+#: "1" = Dashboard, Clientes, Vendedores e Estoque usam os cortes do Relatórios
+#: (config.json do escopo: exclusões e regras de cliente/produto).
+CHAVE_APLICAR_CORTES_RELATORIOS = "aplicar_cortes_relatorios"
 # Legadas — só leitura de fallback / aliases de rota
 CHAVE_CAMINHO_DADOS_DASHBOARD = "caminho_dados_dashboard"
 CHAVE_CAMINHO_EMPRESAS = "caminho_empresas"
@@ -1267,6 +1267,7 @@ def _resposta_summary_arquivo(
     caminho_summary: Path,
     pasta_fonte: str,
     caminho_atacado: str,
+    loja: Optional[str] = None,
 ) -> Response:
     """Serve summary pré-serializado (RAM/disco); header com data da fonte."""
     mtime_csv = os.path.getmtime(caminho_atacado)
@@ -1275,7 +1276,17 @@ def _resposta_summary_arquivo(
     data_ultimo = _data_ultimo_movimento_bi(pasta_fonte)
     if data_ultimo is not None:
         headers["X-Ultimo-Movimento"] = data_ultimo.strftime("%d/%m/%Y")
-    if caminho_summary.name.endswith(".json.gz"):
+    gzipped = caminho_summary.name.endswith(".json.gz")
+    if aplicar_cortes_relatorios():
+        bruto = gzip.decompress(body) if gzipped else body
+        summary = json.loads(bruto)
+        filtrado = aplicar_cortes_no_summary(summary, _cortes_relatorios_do_escopo(empresa, loja))
+        return Response(
+            content=json.dumps(filtrado, ensure_ascii=False).encode("utf-8"),
+            media_type="application/json",
+            headers=headers,
+        )
+    if gzipped:
         headers["Content-Encoding"] = "gzip"
     return Response(
         content=body,
@@ -1504,6 +1515,87 @@ def _carregar_base(
         return (filtrado.copy() if copiar else filtrado), linhas_vazias
     # Sem filtro de loja: cópia defensiva para callers nunca mutarem o DF em cache.
     return (df.copy() if copiar else df), linhas_vazias
+
+
+def aplicar_cortes_relatorios() -> bool:
+    return db.obter_config_app(CHAVE_APLICAR_CORTES_RELATORIOS, "0") == "1"
+
+
+def _campo_config(config: Optional[dict], *nomes, padrao=None):
+    if not isinstance(config, dict):
+        return padrao
+    for nome in nomes:
+        if nome in config and config[nome] is not None:
+            return config[nome]
+    return padrao
+
+
+def _lista_config(config: Optional[dict], *nomes) -> list[str]:
+    valor = _campo_config(config, *nomes, padrao=[])
+    if not isinstance(valor, list):
+        return []
+    return [str(item).strip() for item in valor if str(item).strip()]
+
+
+def _cortes_relatorios_do_escopo(empresa: str, loja: Optional[str] = None) -> dict:
+    config = _ler_config_escopo(empresa, loja) or {}
+    corte = _campo_config(config, "corte_produtos", "corteProdutos", padrao=80.0)
+    try:
+        corte_num = float(corte)
+    except (TypeError, ValueError):
+        corte_num = 80.0
+    return {
+        "clientes_excluidos": _lista_config(config, "clientes_excluidos", "clientesExcluidos"),
+        "produtos_excluidos": _lista_config(config, "produtos_excluidos", "produtosExcluidos"),
+        "corte_produtos": corte_num if corte_num == corte_num else 80.0,
+        "desconsiderar_demais_produtos": bool(
+            _campo_config(config, "desconsiderar_demais_produtos", "desconsiderarDemaisProdutos", padrao=False)
+        ),
+        "desconsiderar_nao_harmonizados": bool(
+            _campo_config(config, "desconsiderar_nao_harmonizados", "desconsiderarNaoHarmonizados", padrao=False)
+        ),
+    }
+
+
+def _assinatura_cortes_escopo(empresa: str, loja: Optional[str] = None) -> tuple:
+    if not aplicar_cortes_relatorios():
+        return ("0",)
+    cortes = _cortes_relatorios_do_escopo(empresa, loja)
+    return (
+        "1",
+        tuple(sorted(cortes["clientes_excluidos"])),
+        tuple(sorted(cortes["produtos_excluidos"])),
+        round(float(cortes["corte_produtos"]), 4),
+        bool(cortes["desconsiderar_demais_produtos"]),
+        bool(cortes["desconsiderar_nao_harmonizados"]),
+    )
+
+
+def _carregar_base_telas(
+    empresa: Optional[str] = None,
+    loja: Optional[str] = None,
+    *,
+    copiar: bool = True,
+) -> tuple[pd.DataFrame, int]:
+    """Base das telas que não são o Relatórios. Aplica config.json se a flag estiver ligada."""
+    if not aplicar_cortes_relatorios() or not (empresa and str(empresa).strip()):
+        return _carregar_base(empresa, loja=loja, copiar=copiar)
+    empresa_norm = empresa.strip()
+    cortes = _cortes_relatorios_do_escopo(empresa_norm, loja)
+    df = _carregar_df_filtrado(
+        cortes["produtos_excluidos"],
+        empresa_norm,
+        loja=loja,
+        corte_produtos=float(cortes["corte_produtos"]),
+        desconsiderar_demais_produtos=cortes["desconsiderar_demais_produtos"],
+        desconsiderar_nao_harmonizados=cortes["desconsiderar_nao_harmonizados"],
+    )
+    excluidos = cortes["clientes_excluidos"]
+    if excluidos and "Cliente" in df.columns:
+        df = df.loc[~df["Cliente"].astype(str).isin(excluidos)].copy()
+    elif copiar:
+        df = df.copy()
+    return df, 0
 
 
 @app.get("/api/base")
@@ -2248,18 +2340,6 @@ def regeneracao_permitida() -> bool:
     return db.obter_config_app(CHAVE_REGENERACAO_PERMITIDA, "0") == "1"
 
 
-def tela_vendedores_visivel() -> bool:
-    return db.obter_config_app(CHAVE_TELA_VENDEDORES, "0") == "1"
-
-
-def _exigir_tela_vendedores() -> None:
-    if not tela_vendedores_visivel():
-        raise HTTPException(
-            status_code=404,
-            detail="A tela de vendedores está desligada em Configurações.",
-        )
-
-
 def _exigir_regeneracao_permitida() -> None:
     if not regeneracao_permitida():
         raise HTTPException(
@@ -2299,22 +2379,22 @@ def definir_regeneracao(
     return {"permitida": regeneracao_permitida()}
 
 
-class TelaVendedoresBody(BaseModel):
-    visivel: bool
+class CortesRelatoriosBody(BaseModel):
+    ativo: bool
 
 
-@app.get("/api/config/tela-vendedores")
-def obter_tela_vendedores(usuario: str = Depends(exigir_login)):
-    return {"visivel": tela_vendedores_visivel()}
+@app.get("/api/config/aplicar-cortes-relatorios")
+def obter_aplicar_cortes_relatorios(usuario: str = Depends(exigir_login)):
+    return {"ativo": aplicar_cortes_relatorios()}
 
 
-@app.post("/api/config/tela-vendedores")
-def definir_tela_vendedores(
-    corpo: TelaVendedoresBody,
+@app.post("/api/config/aplicar-cortes-relatorios")
+def definir_aplicar_cortes_relatorios(
+    corpo: CortesRelatoriosBody,
     usuario: str = Depends(exigir_login),
 ):
-    db.definir_config_app(CHAVE_TELA_VENDEDORES, "1" if corpo.visivel else "0")
-    return {"visivel": tela_vendedores_visivel()}
+    db.definir_config_app(CHAVE_APLICAR_CORTES_RELATORIOS, "1" if corpo.ativo else "0")
+    return {"ativo": aplicar_cortes_relatorios()}
 
 
 def _caminho_atualizador() -> Optional[str]:
@@ -2502,9 +2582,9 @@ def _ler_estoque_vendas(
     recortadas pela loja. Devolve também as lojas da base — a lista sai antes
     do recorte, senão o seletor sumiria assim que uma loja fosse escolhida.
     """
-    df_base, _linhas_vazias = _carregar_base_empresa(empresa)
+    df_completo, _linhas_vazias = _carregar_base_empresa(empresa)
     try:
-        estoque, vendas = af.montar_estoque_e_vendas(df_base, caminho_produto)
+        estoque, vendas = af.montar_estoque_e_vendas(df_completo, caminho_produto)
     except af.ErroCarregamentoCSV as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -2513,7 +2593,14 @@ def _ler_estoque_vendas(
         if nome
     )
     estoque = _filtrar_loja_coluna(estoque, loja_norm, "Loja", caminho_produto.name)
-    vendas = _filtrar_loja_coluna(vendas, loja_norm, "Nome_Loja", caminho_produto.name)
+    if aplicar_cortes_relatorios():
+        df_telas, _linhas = _carregar_base_telas(empresa, loja=loja_norm, copiar=False)
+        try:
+            _estoque_cortado, vendas = af.montar_estoque_e_vendas(df_telas, caminho_produto)
+        except af.ErroCarregamentoCSV as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    else:
+        vendas = _filtrar_loja_coluna(vendas, loja_norm, "Nome_Loja", caminho_produto.name)
     return estoque, vendas, lojas
 
 
@@ -2547,6 +2634,7 @@ def obter_cobertura_estoque(
         raise HTTPException(status_code=400, detail=f"Não foi possível ler arquivos de estoque: {exc}") from exc
     chave_cache = (
         empresa, loja_norm or "", meses, limite, usar_mes_fechado, assinatura, date.today(),
+        _assinatura_cortes_escopo(empresa, loja_norm),
     )
     with _cache_estoque_cobertura_lock:
         cacheado = _cache_estoque_cobertura.get(chave_cache)
@@ -2603,6 +2691,7 @@ def obter_resumo_estoque(
         raise HTTPException(status_code=400, detail=f"Não foi possível ler arquivos de estoque: {exc}") from exc
     chave_cache = (
         "resumo", empresa, loja_norm or "", meses, usar_mes_fechado, assinatura, date.today(),
+        _assinatura_cortes_escopo(empresa, loja_norm),
     )
     with _cache_estoque_cobertura_lock:
         cacheado = _cache_estoque_cobertura.get(chave_cache)
@@ -2636,9 +2725,8 @@ def listar_vendedores(
     usuario: str = Depends(exigir_login),
 ):
     """Ranking do último mês contra a média dos 6 anteriores."""
-    _exigir_tela_vendedores()
     empresa = _validar_nome_empresa(empresa)
-    df, _linhas_vazias = _carregar_base(empresa, loja=loja)
+    df, _linhas_vazias = _carregar_base_telas(empresa, loja=loja)
     resultado = montar_ranking_vendedores(df, modo_periodo=modo_periodo)
     resultado["empresa"] = empresa
     resultado["loja"] = _chave_escopo_loja(loja) or None
@@ -2747,9 +2835,8 @@ def obter_ficha_vendedor(
     usuario: str = Depends(exigir_login),
 ):
     """Ficha de um vendedor: clientes, mix e alertas de queda."""
-    _exigir_tela_vendedores()
     empresa = _validar_nome_empresa(empresa)
-    df, _linhas_vazias = _carregar_base(empresa, loja=loja)
+    df, _linhas_vazias = _carregar_base_telas(empresa, loja=loja)
     try:
         resultado = montar_ficha_vendedor(df, vendedor, modo_periodo=modo_periodo)
     except ErroFichaVendedor as exc:
@@ -2891,7 +2978,7 @@ def obter_alertas_clientes(
     """Avalia ritmo do mês para clientes das tags com regra ativa."""
     nome = _validar_nome_empresa(nome)
     estado_tags = _ler_tags_clientes(nome, loja=loja)
-    df, _linhas_vazias = _carregar_base(nome, loja=loja)
+    df, _linhas_vazias = _carregar_base_telas(nome, loja=loja)
     resultado = avaliar_alertas_clientes(
         df,
         estado_tags.get("tags") or {},
@@ -2917,7 +3004,7 @@ def obter_painel_clientes(
     empresa = _validar_nome_empresa(empresa)
     estado_tags = _ler_tags_clientes(empresa, loja=loja)
     config = _ler_config_escopo(empresa, loja) or {}
-    df, _linhas_vazias = _carregar_base(empresa, loja=loja)
+    df, _linhas_vazias = _carregar_base_telas(empresa, loja=loja)
     resultado = montar_painel_clientes(
         df,
         tags=estado_tags.get("tags") or {},
@@ -3094,16 +3181,16 @@ def definir_aguardando_base_dados_dashboard(corpo: AguardandoBaseDadosBody):
     return {"aguardando": corpo.aguardando}
 
 
-@app.get("/api/dashboard/tela-vendedores")
-def obter_tela_vendedores_dashboard():
-    """Público — a barra lateral some o item sem exigir login."""
-    return {"visivel": tela_vendedores_visivel()}
+@app.get("/api/dashboard/aplicar-cortes-relatorios")
+def obter_aplicar_cortes_relatorios_dashboard():
+    """Público — mesma flag do /api/config, sem exigir login."""
+    return {"ativo": aplicar_cortes_relatorios()}
 
 
-@app.post("/api/dashboard/tela-vendedores")
-def definir_tela_vendedores_dashboard(corpo: TelaVendedoresBody):
-    db.definir_config_app(CHAVE_TELA_VENDEDORES, "1" if corpo.visivel else "0")
-    return {"visivel": tela_vendedores_visivel()}
+@app.post("/api/dashboard/aplicar-cortes-relatorios")
+def definir_aplicar_cortes_relatorios_dashboard(corpo: CortesRelatoriosBody):
+    db.definir_config_app(CHAVE_APLICAR_CORTES_RELATORIOS, "1" if corpo.ativo else "0")
+    return {"ativo": aplicar_cortes_relatorios()}
 
 
 @app.get("/api/dashboard/empresas")
@@ -3250,7 +3337,7 @@ def regenerar_base_dashboard(empresa: str):
 
 
 @app.get("/api/dashboard/summary/{empresa}")
-def obter_summary_dashboard(empresa: str):
+def obter_summary_dashboard(empresa: str, loja: Optional[str] = None):
     """Serve summary_dashboard.json(.gz) em disco/RAM. Regenera só se a fonte for mais nova."""
     pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
     try:
@@ -3261,7 +3348,7 @@ def obter_summary_dashboard(empresa: str):
     caminho_summary = _garantir_summary_dashboard_arquivo(
         empresa, pasta_fonte, pasta_trabalho, caminho_referencia,
     )
-    return _resposta_summary_arquivo(empresa, caminho_summary, pasta_fonte, caminho_referencia)
+    return _resposta_summary_arquivo(empresa, caminho_summary, pasta_fonte, caminho_referencia, loja=loja)
 
 
 # ---------------------------------------------------------------------------
@@ -3601,7 +3688,7 @@ def explorar_schema(
     usuario: str = Depends(exigir_login),
 ):
     """Colunas e métricas disponíveis para o builder livre."""
-    df, _ = _carregar_base(empresa, loja=loja)
+    df, _ = _carregar_base_telas(empresa, loja=loja)
     dimensoes = [c for c in DIMENSOES_EXPLORAR if c in df.columns]
     return {
         "dimensoes": dimensoes,
@@ -3616,7 +3703,7 @@ def explorar_schema(
 def explorar_agregar(parametros: ParametrosExplorar, usuario: str = Depends(exigir_login)):
     """Agrega a base sob demanda para gráficos/tabelas personalizados."""
     empresa = parametros.empresa.strip() if parametros.empresa and parametros.empresa.strip() else None
-    df, _ = _carregar_base(empresa, loja=parametros.loja)
+    df, _ = _carregar_base_telas(empresa, loja=parametros.loja)
     if parametros.aplicar_grupos:
         df = af.aplicar_grupos_manuais_em_cliente(
             df, _grupos_manuais_empresa(empresa, loja=parametros.loja),
@@ -3829,7 +3916,7 @@ def exportar_painel_cliente(
             detail="O painel só pode ser gerado para cliente com tag de monitoramento ativa.",
         )
 
-    df, _ = _carregar_base(empresa, loja=corpo.loja, copiar=False)
+    df, _ = _carregar_base_telas(empresa, loja=corpo.loja, copiar=False)
     try:
         dados = montar_dados_painel_cliente(df, cliente)
     except ErroPainelCliente as exc:

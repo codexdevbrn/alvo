@@ -22,13 +22,13 @@ import {
   Bot,
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { getToken, clearToken, obterStatusAtualizacao, obterTelaVendedores, type StatusAtualizacao } from '../api/client';
+import { getToken, clearToken, obterStatusAtualizacao, type StatusAtualizacao } from '../api/client';
 import { BannerAtualizacao } from './BannerAtualizacao';
 import { PrefetchIndicator } from './PrefetchIndicator';
 import { SidebarEmpresaSelect } from './SidebarEmpresaSelect';
 import { SidebarLojaSelect } from './SidebarLojaSelect';
 import { SidebarMesesFechadosToggle } from './SidebarMesesFechadosToggle';
-import { EVENTO_TELA_VENDEDORES } from '../utils/telaVendedores';
+import { TopoVendaMediaSelect } from './TopoVendaMediaSelect';
 
 const URL_CARTEIRA = 'http://127.0.0.1:3001';
 const LS_SIDEBAR = 'prisma_sidebar_collapsed';
@@ -128,27 +128,6 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   const colapsado = collapsed && !isMobile;
   const mainRef = useRef<HTMLElement>(null);
   const [statusAtualizacao, setStatusAtualizacao] = useState<StatusAtualizacao | null>(null);
-  const [mostrarVendedores, setMostrarVendedores] = useState(false);
-
-  useEffect(() => {
-    let cancelado = false;
-    void obterTelaVendedores()
-      .then((visivel) => {
-        if (!cancelado) setMostrarVendedores(visivel);
-      })
-      .catch(() => {
-        if (!cancelado) setMostrarVendedores(false);
-      });
-    const aoMudar = (evento: Event) => {
-      const visivel = (evento as CustomEvent<boolean>).detail;
-      setMostrarVendedores(Boolean(visivel));
-    };
-    window.addEventListener(EVENTO_TELA_VENDEDORES, aoMudar);
-    return () => {
-      cancelado = true;
-      window.removeEventListener(EVENTO_TELA_VENDEDORES, aoMudar);
-    };
-  }, []);
 
   // Aviso de versão nova em qualquer tela, e não só dentro de Configurações:
   // quem nunca abre aquela tela nunca saberia que existe atualização. O backend
@@ -275,15 +254,13 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
               ativo={emClientes}
               onClick={() => navigate('/clientes')}
             />
-            {mostrarVendedores && (
-              <NavItem
-                icon={<ContactRound size={17} />}
-                label="Vendedores"
-                collapsed={colapsado}
-                ativo={emVendedores}
-                onClick={() => navigate('/vendedores')}
-              />
-            )}
+            <NavItem
+              icon={<ContactRound size={17} />}
+              label="Vendedores"
+              collapsed={colapsado}
+              ativo={emVendedores}
+              onClick={() => navigate('/vendedores')}
+            />
             <NavItem
               icon={<PackageSearch size={17} />}
               label="Estoque"
@@ -371,6 +348,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
       <main ref={mainRef} className="app-shell-main">
         <div className="app-shell-topo">
           <div className="app-shell-escopo">
+            {emEstoque && <TopoVendaMediaSelect />}
             <SidebarEmpresaSelect />
             <SidebarLojaSelect />
           </div>

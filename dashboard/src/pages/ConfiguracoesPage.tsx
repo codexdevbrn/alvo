@@ -19,11 +19,11 @@ import {
   definirDadosNoDisco,
   definirRegeneracao,
   definirInicioAutomatico,
-  definirTelaVendedores,
+  obterAplicarCortesRelatorios,
+  definirAplicarCortesRelatorios,
   obterCaminhoAtualizacoes,
   obterDadosNoDisco,
   obterRegeneracao,
-  obterTelaVendedores,
   obterInicioAutomatico,
   obterStatusAtualizacao,
   obterTagsClientes,
@@ -40,7 +40,8 @@ import {
   type TagCatalogoItem,
 } from '../api/client';
 import { invalidarSummary } from '../utils/cacheSummary';
-import { avisarTelaVendedores } from '../utils/telaVendedores';
+import { avisarCortesRelatorios } from '../utils/cortesRelatorios';
+import { limparCacheGeral } from '../utils/cacheRequisicoes';
 
 const LS_CAMINHO_FONTE = 'prisma_caminho_fonte';
 const LS_CAMINHO_TRABALHO = 'prisma_caminho_trabalho';
@@ -122,8 +123,8 @@ export default function ConfiguracoesPage() {
   const [dadosDisco, setDadosDisco] = useState<DadosNoDisco | null>(null);
   const [salvandoDisco, setSalvandoDisco] = useState(false);
   const [podeRegenerar, setPodeRegenerar] = useState(false);
-  const [mostrarVendedores, setMostrarVendedores] = useState(false);
-  const [salvandoTelaVendedores, setSalvandoTelaVendedores] = useState(false);
+  const [aplicarCortesRelatorios, setAplicarCortesRelatorios] = useState(false);
+  const [salvandoCortesRelatorios, setSalvandoCortesRelatorios] = useState(false);
   const [salvandoRegen, setSalvandoRegen] = useState(false);
   const [horarioInicio, setHorarioInicio] = useState('08:00');
   const [comHorario, setComHorario] = useState(false);
@@ -189,19 +190,21 @@ export default function ConfiguracoesPage() {
     }
   };
 
-  const alternarTelaVendedores = async (visivel: boolean) => {
-    setMostrarVendedores(visivel);
+  const alternarCortesRelatorios = async (ativo: boolean) => {
+    setAplicarCortesRelatorios(ativo);
     setFeedbackDados(null);
-    setSalvandoTelaVendedores(true);
+    setSalvandoCortesRelatorios(true);
     try {
-      const gravada = await definirTelaVendedores(visivel);
-      setMostrarVendedores(gravada);
-      avisarTelaVendedores(gravada);
+      const gravada = await definirAplicarCortesRelatorios(ativo);
+      setAplicarCortesRelatorios(gravada);
+      avisarCortesRelatorios(gravada);
+      invalidarSummary();
+      limparCacheGeral();
     } catch (e) {
-      setMostrarVendedores(!visivel);
-      setFeedbackDados({ tipo: 'erro', texto: e instanceof Error ? e.message : 'Falha ao salvar a tela de vendedores.' });
+      setAplicarCortesRelatorios(!ativo);
+      setFeedbackDados({ tipo: 'erro', texto: e instanceof Error ? e.message : 'Falha ao salvar os cortes do Relatórios.' });
     } finally {
-      setSalvandoTelaVendedores(false);
+      setSalvandoCortesRelatorios(false);
     }
   };
 
@@ -227,7 +230,7 @@ export default function ConfiguracoesPage() {
   useEffect(() => {
     void obterDadosNoDisco().then(setDadosDisco).catch(() => setDadosDisco(null));
     void obterRegeneracao().then(setPodeRegenerar).catch(() => setPodeRegenerar(false));
-    void obterTelaVendedores().then(setMostrarVendedores).catch(() => setMostrarVendedores(false));
+    void obterAplicarCortesRelatorios().then(setAplicarCortesRelatorios).catch(() => setAplicarCortesRelatorios(false));
   }, []);
 
   const alternarRegeneracao = async (permitida: boolean) => {
@@ -664,15 +667,16 @@ export default function ConfiguracoesPage() {
             <label className="analisador-check-linha">
               <input
                 type="checkbox"
-                checked={mostrarVendedores}
-                onChange={(e) => void alternarTelaVendedores(e.target.checked)}
-                disabled={salvandoTelaVendedores}
+                checked={aplicarCortesRelatorios}
+                onChange={(e) => void alternarCortesRelatorios(e.target.checked)}
+                disabled={salvandoCortesRelatorios}
               />
-              Mostrar a tela de Vendedores
+              Aplicar cortes do Relatórios nas outras telas
             </label>
             <p className="analisador-hint">
-              A coluna ainda não veio na base de todas as empresas. Desmarcado, some da
-              barra lateral e quem abrir a rota volta ao Dashboard.
+              Usa exclusões e regras de cliente/produto do Relatórios (config.json do
+              escopo) também no Dashboard, Clientes, Vendedores e Estoque. Despesas
+              não entra: a fonte é a Controladoria, não a base de vendas.
             </p>
 
             {feedbackDados && (

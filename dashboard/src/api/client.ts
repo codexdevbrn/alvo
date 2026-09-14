@@ -886,27 +886,27 @@ export async function definirRegeneracao(permitida: boolean): Promise<boolean> {
   return dados.permitida;
 }
 
-/** Público — a barra some o item Vendedores sem exigir login. */
-export async function obterTelaVendedores(auth = false): Promise<boolean> {
+/** Público — Dashboard e demais telas aplicam os cortes do Relatórios sem login. */
+export async function obterAplicarCortesRelatorios(auth = false): Promise<boolean> {
   const res = await chamar(
-    auth ? '/api/config/tela-vendedores' : '/api/dashboard/tela-vendedores',
+    auth ? '/api/config/aplicar-cortes-relatorios' : '/api/dashboard/aplicar-cortes-relatorios',
     { headers: auth ? authHeaders() : {} },
   );
-  const dados = await tratarResposta<{ visivel: boolean }>(res);
-  return dados.visivel;
+  const dados = await tratarResposta<{ ativo: boolean }>(res);
+  return dados.ativo;
 }
 
-export async function definirTelaVendedores(visivel: boolean, auth = false): Promise<boolean> {
+export async function definirAplicarCortesRelatorios(ativo: boolean, auth = false): Promise<boolean> {
   const res = await chamar(
-    auth ? '/api/config/tela-vendedores' : '/api/dashboard/tela-vendedores',
+    auth ? '/api/config/aplicar-cortes-relatorios' : '/api/dashboard/aplicar-cortes-relatorios',
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...(auth ? authHeaders() : {}) },
-      body: JSON.stringify({ visivel }),
+      body: JSON.stringify({ ativo }),
     },
   );
-  const dados = await tratarResposta<{ visivel: boolean }>(res);
-  return dados.visivel;
+  const dados = await tratarResposta<{ ativo: boolean }>(res);
+  return dados.ativo;
 }
 
 export interface EstadoPasta {

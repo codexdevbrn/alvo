@@ -37,12 +37,17 @@ import gzip
 import json
 import os
 import tempfile
+from collections import defaultdict
 from datetime import date
 from pathlib import Path
 
 import pandas as pd
 
-from engine.analise_funil import MESES_ABREV
+from engine.analise_funil import (
+    MESES_ABREV,
+    classificar_produtos_agregado,
+    eh_produto_nao_harmonizado,
+)
 
 MESES_NOME = {
     1: "janeiro", 2: "fevereiro", 3: "março", 4: "abril", 5: "maio", 6: "junho",
@@ -326,3 +331,144 @@ def gerar_summary(
             "cmv": round(float(base["cmv"].sum()), 2),
         },
     }
+
+
+def aplicar_cortes_no_summary(summary: dict, cortes: dict) -> dict:
+    """Recorta o summary pré-agregado com as mesmas exclusões do Relatórios.
+
+    Não relê a base: filtra `rows` por cliente/produto e reconstrói monthly/yoy/kpis.
+    O arquivo em disco continua o summary cheio, compartilhado.
+    """
+    if not isinstance(summary, dict):
+        return summary
+    maps = summary.get("maps") or {}
+    rows = summary.get("rows") or []
+    clientes = list(maps.get("c") or [])
+    produtos = list(maps.get("d") or [])
+    if not rows:
+        return summary
+
+    drop_c = {str(n).strip() for n in (cortes.get("clientes_excluidos") or []) if str(n).strip()}
+    drop_d = {str(n).strip() for n in (cortes.get("produtos_excluidos") or []) if str(n).strip()}
+    if cortes.get("desconsiderar_nao_harmonizados"):
+        drop_d |= {nome for nome in produtos if eh_produto_nao_harmonizado(nome)}
+
+    if cortes.get("desconsiderar_demais_produtos") and produtos:
+        rev_por_produto: dict[str, float] = defaultdict(float)
+        for row in rows:
+            try:
+                nome = produtos[int(row[4])]
+            except (IndexError, TypeError, ValueError):
+                continue
+            if nome in drop_d:
+                continue
+            rev_por_produto[nome] += float(row[6] or 0)
+        if rev_por_produto:
+            frame = pd.DataFrame(
+                {"descricao": list(rev_por_produto.keys()), "Receita": list(rev_por_produto.values())}
+            )
+            classificado = classificar_produtos_agregado(
+                frame, float(cortes.get("corte_produtos") or 80.0),
+            )
+            drop_d |= {
+                str(nome)
+                for nome in classificado.loc[classificado["Faixa"] == "Demais", "descricao"]
+            }
+
+    if not drop_c and not drop_d:
+        return summary
+
+    drop_c_idx = {i for i, nome in enumerate(clientes) if nome in drop_c}
+    drop_d_idx = {i for i, nome in enumerate(produtos) if nome in drop_d}
+    kept = [
+        row for row in rows
+        if int(row[2]) not in drop_c_idx and int(row[4]) not in drop_d_idx
+    ]
+    if len(kept) == len(rows):
+        return summary
+
+    pids = list(maps.get("p") or [])
+    rev_pid: dict[int, float] = defaultdict(float)
+    qty_pid: dict[int, float] = defaultdict(float)
+    total_rev = 0.0
+    total_qty = 0.0
+    for row in kept:
+        try:
+            pid = int(pids[int(row[0])])
+        except (IndexError, TypeError, ValueError):
+            continue
+        rev = float(row[6] or 0)
+        qty = float(row[7] or 0)
+        rev_pid[pid] += rev
+        qty_pid[pid] += qty
+        total_rev += rev
+        total_qty += qty
+
+    monthly = []
+    for item in summary.get("monthly") or []:
+        pid = int(item.get("pid") or 0)
+        if pid not in rev_pid:
+            continue
+        orig_rev = float(item.get("rev") or 0)
+        orig_cmv = float(item.get("cmv") or 0)
+        novo = dict(item)
+        novo["rev"] = round(rev_pid[pid], 2)
+        novo["cmv"] = round(orig_cmv * (novo["rev"] / orig_rev), 2) if orig_rev else 0.0
+        monthly.append(novo)
+
+    yoy: dict[str, float] = defaultdict(float)
+    for pid, rev in rev_pid.items():
+        yoy[str(pid // 100)] += rev
+    yoy_out = {ano: round(valor, 2) for ano, valor in yoy.items()}
+
+    orig_kpis = summary.get("kpis") or {}
+    orig_rev = float(orig_kpis.get("rev") or 0)
+    orig_cmv = float(orig_kpis.get("cmv") or 0)
+    kpis = {
+        "rev": round(total_rev, 2),
+        "qty": int(total_qty),
+        "avg": round(total_rev / len(kept), 2) if kept else 0.0,
+        "cnt": int(len(kept)),
+        "cmv": round(orig_cmv * (total_rev / orig_rev), 2) if orig_rev else 0.0,
+    }
+
+    remap_keys = (("p", 0), ("s", 1), ("c", 2), ("m", 3), ("d", 4), ("r", 5))
+    novos_maps: dict[str, list] = {}
+    remaps: dict[str, dict[int, int]] = {}
+    usados: dict[str, set[int]] = {chave: set() for chave, _ in remap_keys}
+    for row in kept:
+        for chave, pos in remap_keys:
+            try:
+                usados[chave].add(int(row[pos]))
+            except (IndexError, TypeError, ValueError):
+                continue
+    for chave, _pos in remap_keys:
+        velho = list(maps.get(chave) or [])
+        ordem = [i for i in range(len(velho)) if i in usados[chave]]
+        novos_maps[chave] = [velho[i] for i in ordem]
+        remaps[chave] = {antigo: novo for novo, antigo in enumerate(ordem)}
+
+    novas_rows = []
+    for row in kept:
+        try:
+            novas_rows.append([
+                remaps["p"][int(row[0])],
+                remaps["s"][int(row[1])],
+                remaps["c"][int(row[2])],
+                remaps["m"][int(row[3])],
+                remaps["d"][int(row[4])],
+                remaps["r"][int(row[5])],
+                round(float(row[6] or 0), 2),
+                int(row[7] or 0),
+            ])
+        except (KeyError, IndexError, TypeError, ValueError):
+            continue
+
+    saida = dict(summary)
+    saida["maps"] = novos_maps
+    saida["rows"] = novas_rows
+    saida["monthly"] = monthly
+    saida["yoy"] = yoy_out
+    saida["kpis"] = kpis
+    return saida
+

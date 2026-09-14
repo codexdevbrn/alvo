@@ -1,7 +1,7 @@
 import {
-  Area,
   CartesianGrid,
-  ComposedChart,
+  Line,
+  LineChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -35,20 +35,16 @@ function TooltipEvolucao({
   );
 }
 
-/** Receita mês a mês do vendedor, com a régua da média dos 6 meses anteriores
- *  como referência — mesmo recorte que a tabela compara ponto a ponto. */
+/** Caminhar de vendas do vendedor: linha mês a mês, régua da média dos 6
+ *  anteriores. Mesma paleta do HistoryChart (tokens, ouro, sem vidro). */
 export function VendedorEvolucaoChart({ pontos, media }: Props) {
-  if (!pontos || pontos.length === 0) return null;
+  if (!pontos || pontos.length === 0) {
+    return <p className="analisador-hint">Sem movimento mensal neste recorte.</p>;
+  }
   return (
-    <div className="vendedores-chart" style={{ height: 220 }}>
+    <div className="vendedores-chart" style={{ height: 240 }}>
       <ResponsiveContainer width="100%" height="100%">
-        <ComposedChart data={pontos} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
-          <defs>
-            <linearGradient id="vendedorEvolucaoFill" x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.35} />
-              <stop offset="100%" stopColor="var(--accent)" stopOpacity={0} />
-            </linearGradient>
-          </defs>
+        <LineChart data={pontos} margin={{ top: 8, right: 8, left: 0, bottom: 4 }}>
           <CartesianGrid stroke="var(--border)" strokeDasharray="3 3" vertical={false} />
           <XAxis
             dataKey="rotulo"
@@ -77,17 +73,16 @@ export function VendedorEvolucaoChart({ pontos, media }: Props) {
               }}
             />
           )}
-          <Area
+          <Line
             type="monotone"
             dataKey="valor"
             name="Receita"
             stroke="var(--accent)"
             strokeWidth={2}
-            fill="url(#vendedorEvolucaoFill)"
             dot={{ r: 3, fill: 'var(--accent)', strokeWidth: 0 }}
-            activeDot={{ r: 5 }}
+            activeDot={{ r: 5, fill: 'var(--accent)', stroke: 'var(--accent-contrast)', strokeWidth: 1 }}
           />
-        </ComposedChart>
+        </LineChart>
       </ResponsiveContainer>
     </div>
   );

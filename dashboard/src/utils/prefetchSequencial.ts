@@ -1,6 +1,8 @@
 import { EVENTO_EMPRESA } from './empresaSelecionada';
+import { EVENTO_LOJA, codificarEscopoLojas, lerLojas } from './lojaSelecionada';
+import { EVENTO_VENDA_MEDIA, lerMesesVendaMedia } from './vendaMedia';
 import { limparCacheGeral } from './cacheRequisicoes';
-import { invalidarSummary, gravarSummaryCache } from './cacheSummary';
+import { invalidarSummary, gravarSummaryCache, lerSummaryCache } from './cacheSummary';
 import {
   obterPainelClientes,
   obterRankingVendedores,
@@ -11,8 +13,13 @@ import {
   obterBaseClientes,
   obterTagsClientes
 } from '../api/client';
+import type { ModoPeriodo } from './mesesFechados';
 
 export const EVENTO_PREFETCH = 'prisma-prefetch-progress';
+
+/** Os três modos do toggle Período. Clientes e Vendedores usam os três;
+ *  Estoque/Despesas só distinguem fechados vs o resto (completo ≡ mesmo período). */
+const MODOS_PERIODO: readonly ModoPeriodo[] = ['fechados', 'completo', 'mesmo_periodo'];
 
 export type EstadoPrefetch = {
   rodando: boolean;
@@ -58,35 +65,68 @@ export function estaPrefetchVisivel(): boolean {
 let versaoFila = 0;
 let empresaAtual = '';
 
-async function rodarFila(empresa: string) {
-  const versaoExecucao = ++versaoFila; // Cancela qualquer fila anterior
-  
-  // Limpa cache da empresa anterior
-  limparCacheGeral();
-  invalidarSummary();
-  
+function lojaDaEmpresa(empresa: string): string | null {
+  return codificarEscopoLojas(lerLojas(empresa));
+}
+
+type MotivoPrefetch = 'empresa' | 'loja' | 'venda-media';
+
+async function rodarFila(empresa: string, motivo: MotivoPrefetch = 'empresa') {
+  const versaoExecucao = ++versaoFila;
+
+  if (motivo === 'empresa' && empresa !== empresaAtual) {
+    limparCacheGeral();
+    invalidarSummary();
+  }
+
   if (!empresa) {
+    empresaAtual = '';
     despacharProgresso({ rodando: false, atual: 0, total: 0, nome: '', etapas: [] });
     return;
   }
-  
-  // Pausa leve para não travar a UI durante o render inicial do Dashboard
-  await new Promise((resolve) => setTimeout(resolve, 800));
-  if (versaoFila !== versaoExecucao) return;
-  
-  empresaAtual = empresa;
 
-  // Lista de endpoints a precarregar sequencialmente
-  const tarefas = [
+  if (motivo === 'empresa') {
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    if (versaoFila !== versaoExecucao) return;
+  }
+
+  empresaAtual = empresa;
+  const loja = lojaDaEmpresa(empresa);
+  const mesesEstoque = lerMesesVendaMedia();
+
+  const tarefaEstoque = {
+    nome: 'Estoque',
+    fn: async () => {
+      await obterResumoEstoque(empresaAtual, { loja, meses: mesesEstoque, usarMesesFechados: true });
+      await obterResumoEstoque(empresaAtual, { loja, meses: mesesEstoque, usarMesesFechados: false });
+    },
+  };
+
+  // Cada etapa cobre todas as visualizações de período daquela tela, pra o
+  // clique no toggle Período achar cache quente. Não espera o clique.
+  const tarefas = motivo === 'venda-media' ? [tarefaEstoque] : [
     { nome: 'Dashboard', fn: async () => {
+        const emCache = lerSummaryCache(empresaAtual);
+        if (emCache) return;
         const d = await obterSummaryEmpresa(empresaAtual);
         gravarSummaryCache(empresaAtual, d);
     }},
-    { nome: 'Visão Geral', fn: () => obterPainelClientes(empresaAtual) },
+    { nome: 'Visão Geral', fn: async () => {
+        for (const modo of MODOS_PERIODO) {
+          await obterPainelClientes(empresaAtual, loja, undefined, modo);
+        }
+    }},
     { nome: 'Clientes', fn: async () => { await obterBaseClientes(empresaAtual); await obterTagsClientes(empresaAtual); } },
-    { nome: 'Vendedores', fn: () => obterRankingVendedores(empresaAtual) },
-    { nome: 'Estoque', fn: () => obterResumoEstoque(empresaAtual, { meses: 6, usarMesesFechados: true }) },
-    { nome: 'Despesas', fn: () => obterResumoDespesas(empresaAtual, { meses: 6, usarMesesFechados: true }) },
+    { nome: 'Vendedores', fn: async () => {
+        for (const modo of MODOS_PERIODO) {
+          await obterRankingVendedores(empresaAtual, loja, undefined, modo);
+        }
+    }},
+    tarefaEstoque,
+    { nome: 'Despesas', fn: async () => {
+        await obterResumoDespesas(empresaAtual, { loja, meses: 12, usarMesesFechados: true });
+        await obterResumoDespesas(empresaAtual, { loja, meses: 12, usarMesesFechados: false });
+    }},
     { nome: 'Monitoramento', fn: () => obterMonitorEmpresas({ meses: 6, metrica: 'receita' }) }
   ];
 
@@ -101,7 +141,6 @@ async function rodarFila(empresa: string) {
     try {
       await tarefa.fn();
       if (versaoFila !== versaoExecucao) break;
-      // Respiro para deixar a main thread processar renders
       await new Promise((resolve) => setTimeout(resolve, 200));
     } catch (e) {
       console.warn('Prisma Prefetch: falha ao precarregar tela silenciosamente', e);
@@ -115,12 +154,21 @@ async function rodarFila(empresa: string) {
 
 export function inicializarPrefetchSequencial(): void {
   if (typeof window === 'undefined') return;
-  
+
   window.addEventListener(EVENTO_EMPRESA, ((evento: CustomEvent<string>) => {
     void rodarFila(evento.detail);
   }) as EventListener);
 
-  // Iniciar prefetch também no primeiro boot se houver empresa já salva
+  window.addEventListener(EVENTO_LOJA, (() => {
+    const empresa = localStorage.getItem('alvo_empresa') || '';
+    if (empresa) void rodarFila(empresa, 'loja');
+  }) as EventListener);
+
+  window.addEventListener(EVENTO_VENDA_MEDIA, (() => {
+    const empresa = localStorage.getItem('alvo_empresa') || '';
+    if (empresa) void rodarFila(empresa, 'venda-media');
+  }) as EventListener);
+
   const empresaSalva = localStorage.getItem('alvo_empresa');
   if (empresaSalva) {
     void rodarFila(empresaSalva);
