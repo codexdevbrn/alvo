@@ -198,6 +198,8 @@ h3 {
 .app-sidebar.is-collapsed {
   width: var(--sidebar-width-collapsed);
   align-items: center;
+  gap: 0.4rem;
+  padding: 0.75rem 0.4rem 0.65rem;
 }
 
 .app-shell-main {
@@ -214,6 +216,34 @@ h3 {
 
 .app-shell-main .dashboard-container {
   max-width: none;
+  padding-top: 1.15rem;
+}
+
+.app-shell-topo {
+  display: flex;
+  justify-content: flex-end;
+  align-items: flex-end;
+  padding: 1.15rem 2rem 0;
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  background: var(--bg-main);
+}
+
+.app-shell-escopo {
+  display: flex;
+  align-items: flex-end;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.app-shell-escopo .app-sidebar-empresa {
+  width: 12.5rem;
+  padding: 0;
+}
+
+.app-shell-escopo .app-sidebar-empresa + .app-sidebar-empresa {
+  margin-top: 0;
 }
 
 .app-sidebar-brand {
@@ -337,13 +367,7 @@ h3 {
 }
 
 .app-sidebar.is-collapsed .app-sidebar-empresa {
-  opacity: 0;
-  visibility: hidden;
-  overflow: hidden;
-  max-height: 0;
-  margin: 0;
-  padding: 0;
-  pointer-events: none;
+  display: none;
 }
 
 .app-sidebar-empresa .empresa-select-wrap {
@@ -425,6 +449,12 @@ h3 {
 
 .app-sidebar.is-collapsed .app-sidebar-nav {
   align-items: center;
+  gap: 0.45rem;
+}
+
+.app-sidebar.is-collapsed .app-sidebar-nav-grupo {
+  align-items: center;
+  gap: 0.12rem;
 }
 
 .app-sidebar-nav-label {
@@ -495,28 +525,90 @@ h3 {
 /* Recentra o ícone (17px) no botão recolhido (44px) só com padding-left —
    mesma curva/duração do width da sidebar, sem FLIP: nada pra correr atrás. */
 .app-sidebar.is-collapsed .app-sidebar-nav-item {
-  padding: 0.55rem 0 0.55rem 0.84rem;
-}
-
-.app-sidebar-footer {
-  margin: 0;
-  padding: 0.6rem 0.6rem 0;
-  border-top: 1px solid var(--border);
-  font-size: 0.72rem;
-  color: var(--text-muted);
-  line-height: 1.4;
-  transition: opacity 0.14s ease, visibility 0.14s ease;
-}
-
-.app-sidebar.is-collapsed .app-sidebar-footer {
-  opacity: 0;
-  visibility: hidden;
-  height: 0;
+  width: 2.5rem;
+  height: 2.5rem;
   padding: 0;
+  justify-content: center;
+}
+
+/* Bloco "Sistema": ícones lado a lado, sem rótulo nem texto — troca de coluna
+   (padrão dos grupos de cima) por linha compacta, com título no hover/foco
+   fazendo o papel do texto que sumiu. */
+.app-sidebar-nav-compacta {
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 0.3rem;
+  width: auto;
+}
+
+.app-sidebar-nav-compacta .app-sidebar-nav-item {
+  width: auto;
+  padding: 0.5rem;
+}
+
+.app-sidebar-nav-compacta .app-sidebar-nav-text {
+  display: none;
+}
+
+.app-sidebar-nav-compacta .app-sidebar-nav-item-destaque {
+  margin-top: 0;
+}
+
+.app-sidebar-rodape {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+  width: 100%;
+  min-width: 0;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border);
+}
+
+.app-sidebar-rodape .app-sidebar-nav-compacta {
+  flex: none;
+}
+
+.app-sidebar.is-collapsed .app-sidebar-rodape {
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.12rem;
+  width: 100%;
+  margin-top: 0.2rem;
+  padding-top: 0.4rem;
+}
+
+.app-sidebar.is-collapsed .app-sidebar-nav-compacta {
+  flex-direction: column;
+  align-items: center;
+  width: 100%;
+  gap: 0.12rem;
+}
+
+.app-sidebar.is-collapsed .app-sidebar-nav-compacta .app-sidebar-nav-item {
+  width: 2.5rem;
+  height: 2.5rem;
+  padding: 0;
+  justify-content: center;
+}
+
+.app-sidebar-footer-movimento {
+  flex: 1 1 auto;
   margin: 0;
-  border: none;
-  overflow: hidden;
-  pointer-events: none;
+  padding: 0;
+  min-width: 0;
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  line-height: 1.25;
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: break-word;
+}
+
+.app-sidebar.is-collapsed .app-sidebar-footer-movimento {
+  display: none;
 }
 
 .app-sidebar-nav-item:hover {
@@ -569,9 +661,8 @@ h3 {
 }
 
 .app-sidebar.is-collapsed .app-sidebar-nav-item-destaque {
-  margin-top: 0.2rem;
-  /* Collapsed centraliza via padding-left (não via justify-content). */
-  justify-content: flex-start;
+  margin-top: 0;
+  justify-content: center;
 }
 
 /* Link externo / ação secundária de marca (French Blue) */
@@ -604,9 +695,18 @@ h3 {
 
 .app-sidebar-spacer {
   flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 0;
+  padding: 0 0.15rem;
 }
 
-.app-sidebar-footer strong {
+.app-sidebar.is-collapsed .app-sidebar-spacer {
+  display: none;
+}
+
+.app-sidebar-footer-movimento strong {
   color: var(--text-secondary);
   font-weight: 600;
 }
@@ -771,6 +871,10 @@ h3 {
     transform: none !important;
   }
 
+  .app-shell-topo {
+    padding: 0.85rem 1rem 0;
+  }
+
   .app-sidebar,
   .app-sidebar.is-collapsed {
     position: static;
@@ -797,6 +901,7 @@ h3 {
 
   .app-sidebar.is-collapsed .app-sidebar-brand-text,
   .app-sidebar.is-collapsed .app-sidebar-empresa {
+    display: flex;
     opacity: 1;
     visibility: visible;
     width: auto;
@@ -843,8 +948,8 @@ h3 {
     display: none;
   }
 
-  .app-sidebar-footer,
-  .app-sidebar.is-collapsed .app-sidebar-footer {
+  .app-sidebar-footer-movimento,
+  .app-sidebar.is-collapsed .app-sidebar-footer-movimento {
     display: none;
   }
 }
@@ -1776,6 +1881,7 @@ h3 {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .stat-card-value {
@@ -1785,6 +1891,7 @@ h3 {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  max-width: 100%;
 }
 
 .stat-card-trend {
@@ -6376,6 +6483,12 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   gap: 1rem;
 }
 
+/* Despesas soma um 3º card (curva ABC) ao par que Estoque usa — auto-fit em
+   vez do 2-colunas fixo, para não forçar um card sozinho numa linha vazia. */
+.estoque-visao-grade-auto {
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
 .estoque-visao-card {
   display: flex;
   flex-direction: column;
@@ -6517,6 +6630,22 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   font-size: 0.7rem;
   font-style: normal;
   white-space: nowrap;
+}
+
+/* Chip de grupo ABC (1/2/3/X) antes do nome da categoria em "Por categoria"
+   (Despesas) — inline no mesmo <span> truncado, por isso sem margin própria
+   além do gap herdado do flex de texto. */
+.despesas-grupo-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  margin-right: 0.35rem;
+  border-radius: 4px;
+  font-size: 0.62rem;
+  font-weight: 700;
+  flex-shrink: 0;
 }
 
 .estoque-grafico-card,
@@ -7203,52 +7332,48 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 
 .vendedores-kpis {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 0.75rem;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: stretch;
   margin-bottom: 0.85rem;
 }
 
-.vendedores-kpi {
+.vendedores-hero {
   display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  column-gap: 0.55rem;
-  row-gap: 0.16rem;
-  padding: 0.9rem 1rem;
-}
-
-.vendedores-kpi > svg {
-  grid-row: 1 / 3;
-  color: var(--accent);
-}
-
-.vendedores-kpi > span,
-.vendedores-kpi > small {
-  color: var(--text-muted);
-  font-size: 0.75rem;
-}
-
-.vendedores-kpi > strong {
+  align-content: start;
+  gap: 0.3rem;
   min-width: 0;
-  overflow: hidden;
+  padding: 1.1rem 1.25rem;
+}
+
+.vendedores-kpis-secundarios {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  min-width: 0;
+}
+
+/* Nome de vendedor é texto, não número — precisa quebrar em até 2 linhas em
+   vez do nowrap+ellipsis padrão do StatCard, que cortava no meio da 1ª palavra. */
+.vendedores-kpi-nome {
   font-size: 1.05rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: normal;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.25;
 }
 
-.vendedores-kpi > small {
-  grid-column: 1 / -1;
-  margin-top: 0.2rem;
+.vendedores-ficha-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1rem;
 }
 
-.vendedores-kpi.is-alta > svg,
-.vendedores-kpi.is-alta > small {
-  color: var(--success);
-}
-
-.vendedores-kpi.is-queda > svg,
-.vendedores-kpi.is-queda > small {
-  color: var(--danger);
+.vendedores-evolucao-card {
+  min-width: 0;
+  padding: 1rem 1.1rem;
 }
 
 .vendedores-tabela-card,
@@ -7353,8 +7478,34 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   font-variant-numeric: tabular-nums;
 }
 
-.vendedores-tabela-card .vendedores-tabela tbody tr {
-  cursor: pointer;
+.vendedores-tabela .col-nome {
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  word-break: break-word;
+}
+
+.vendedores-celula-barra {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+}
+
+.vendedores-celula-barra i {
+  display: block;
+  width: 5.5rem;
+  height: 0.28rem;
+  border-radius: 99px;
+  background: var(--surface-2);
+  overflow: hidden;
+}
+
+.vendedores-celula-barra i b {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  border-radius: 99px;
 }
 
 .vendedores-tabela tbody tr.is-ativo td {
@@ -7413,13 +7564,11 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   padding-left: 0.75rem;
 }
 
-.vendedores-tabela td.is-alta,
-.vendedores-ficha-numeros dd.is-alta {
+.vendedores-tabela td.is-alta {
   color: var(--success);
 }
 
 .vendedores-tabela td.is-queda,
-.vendedores-ficha-numeros dd.is-queda,
 .vendedores-alertas-lista .is-queda {
   color: var(--danger);
 }
@@ -7431,37 +7580,17 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   margin-top: 0.85rem;
 }
 
-.vendedores-ficha-cabeca {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-between;
-  gap: 1rem;
-}
-
 .vendedores-ficha-cabeca h2,
 .vendedores-alertas-card h3,
-.vendedores-entidade-card h3 {
+.vendedores-entidade-card h3,
+.vendedores-evolucao-card h3 {
   margin: 0 0 0.65rem;
   font-size: 1rem;
 }
 
-.vendedores-ficha-numeros {
-  display: grid;
-  grid-template-columns: repeat(4, auto);
-  gap: 0.35rem 1.25rem;
-  margin: 0;
-}
-
-.vendedores-ficha-numeros dt {
-  color: var(--text-muted);
-  font-size: 0.72rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.vendedores-ficha-numeros dd {
-  margin: 0;
-  font-weight: 700;
+.vendedores-evolucao-card .estoque-card-topo,
+.vendedores-entidade-card .estoque-card-topo {
+  margin-bottom: 0.6rem;
 }
 
 .vendedores-alertas-lista {
@@ -7500,28 +7629,18 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   color: var(--text-muted);
 }
 
-.vendedores-ficha-grades {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 0.85rem;
-  min-width: 0;
-}
-
-.vendedores-ficha-grades > .vendedores-chart-legenda {
-  grid-column: 1 / -1;
-  margin: 0;
-}
-
 @media (max-width: 1100px) {
-  .vendedores-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .vendedores-ficha-grades { grid-template-columns: 1fr; }
-  .vendedores-ficha-cabeca,
-  .vendedores-tabela-topo { flex-direction: column; align-items: stretch; }
+  .vendedores-kpis { grid-template-columns: 1fr; }
+  .vendedores-kpis-secundarios { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .vendedores-ficha-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .vendedores-tabela-topo,
+  .vendedores-entidade-card .estoque-card-topo,
+  .vendedores-evolucao-card .estoque-card-topo { flex-direction: column; align-items: stretch; }
 }
 
 @media (max-width: 680px) {
-  .vendedores-kpis { grid-template-columns: 1fr; }
-  .vendedores-ficha-numeros { grid-template-columns: repeat(2, 1fr); }
+  .vendedores-kpis-secundarios { grid-template-columns: 1fr; }
+  .vendedores-ficha-kpis { grid-template-columns: 1fr; }
   .vendedores-alertas-lista li { grid-template-columns: auto 1fr; }
 }
 
@@ -7740,6 +7859,11 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 
 .donut {
   position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  justify-self: center;
+  width: 100%;
   min-width: 0;
 }
 
@@ -7896,36 +8020,31 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
  * PREFETCH INDICATOR
  * ----------------------------------------------------------------------------- */
 .prefetch-indicator {
-  position: fixed;
-  bottom: 1.5rem;
-  right: 1.5rem;
-  background: var(--card);
+  width: 100%;
+  box-sizing: border-box;
+  background: var(--surface-1);
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 0.75rem 1rem;
-  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3), 0 8px 10px -6px rgba(0, 0, 0, 0.2);
-  z-index: 9999;
+  border-radius: var(--raio-controle);
+  padding: 0.6rem 0.65rem;
   display: flex;
   flex-direction: column;
   gap: 0.5rem;
-  min-width: 220px;
-  animation: slideInPrefetch 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  margin-bottom: 0.75rem;
+  animation: slideInPrefetch 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .prefetch-indicator.is-finished {
-  animation: slideOutPrefetch 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards 2.5s;
+  animation: slideOutPrefetch 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards 2.5s;
 }
 
 @keyframes slideInPrefetch {
-  from { opacity: 0; transform: translateY(1rem) scale(0.95); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
+  from { opacity: 0; transform: translateY(0.5rem); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 @keyframes slideOutPrefetch {
-  from { opacity: 1; transform: translateY(0) scale(1); }
-  to { opacity: 0; transform: translateY(1rem) scale(0.95); pointer-events: none; }
+  from { opacity: 1; transform: translateY(0); }
+  to { opacity: 0; transform: translateY(0.5rem); pointer-events: none; }
 }
 
 .prefetch-indicator-content {
@@ -7935,7 +8054,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 }
 
 .prefetch-icon-spin {
-  animation: spin 1s linear infinite;
+  animation: dashboard-spin 1s linear infinite;
   color: var(--accent);
 }
 
@@ -7954,7 +8073,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 
 .prefetch-progress-bar {
   height: 4px;
-  background: var(--bg-primary);
+  background: var(--surface-2);
   border-radius: 2px;
   overflow: hidden;
   width: 100%;
@@ -7964,4 +8083,411 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   height: 100%;
   background: var(--accent);
   transition: width 0.3s ease-out;
+}
+
+.prefetch-etapas-lista {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.prefetch-etapa {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.prefetch-etapa-link {
+  border: none;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.prefetch-etapa-link:hover {
+  color: var(--accent);
+}
+
+.prefetch-etapa-pendente {
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.prefetch-etapa-atual {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.prefetch-icon-pendente {
+  color: var(--text-muted);
+}
+
+/* ---------------------------------------------------------------------------
+   Despesas — Visão geral e Lançamentos
+
+   A hierarquia da tela vem do bloco de KPIs: o total do período é um card
+   "herói" (valor grande + faixa da série mensal), e as comparações ficam em
+   StatCards menores ao lado. Antes eram quatro cards iguais, e nenhum número
+   liderava a leitura.
+--------------------------------------------------------------------------- */
+
+.despesas-kpis {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: stretch;
+}
+
+.despesas-kpis-secundarios {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+  min-width: 0;
+}
+
+.despesas-hero {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 1.1rem 1.25rem 0.6rem;
+}
+
+.despesas-hero-texto {
+  display: grid;
+  gap: 0.3rem;
+  min-width: 0;
+}
+
+.despesas-hero-rotulo,
+.despesas-hero-nota {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+.despesas-hero-rotulo {
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.despesas-hero-valor {
+  color: var(--text-primary);
+  font-size: clamp(1.6rem, 3.2vw, 2.3rem);
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A faixa é ilustrativa: mostra o formato da série, não valores. Por isso sem
+   eixo, sem tooltip e marcada `aria-hidden` — o número que importa está acima. */
+.despesas-hero-spark {
+  min-height: 4.5rem;
+  margin: 0 -1.25rem -0.6rem;
+}
+
+.despesas-segmented,
+.segmented-compacto {
+  width: auto;
+  flex: none;
+}
+
+.despesas-segmented .periodo-segmented-btn {
+  padding: 0.3rem 0.7rem;
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+/* Swatch da média: traço pontilhado, igual à ReferenceLine do gráfico. */
+.despesas-legenda-media {
+  background: repeating-linear-gradient(
+    to right,
+    var(--text-muted) 0 4px,
+    transparent 4px 8px
+  );
+}
+
+.despesas-tooltip-cor {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  margin-right: 0.35rem;
+  border-radius: 2px;
+}
+
+/* Grupos da curva ABC embaixo do Pareto: substituem o donut, que gastava meio
+   card para repetir o que a linha de acumulado já mostra. */
+.despesas-grupos {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.despesas-grupos li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  font-size: 0.72rem;
+}
+
+.despesas-grupos i {
+  width: 0.55rem;
+  height: 0.55rem;
+  border-radius: 2px;
+  flex: none;
+}
+
+.despesas-grupos span { color: var(--text-secondary); }
+.despesas-grupos strong { color: var(--text-primary); font-weight: 600; }
+
+.despesas-grupos em {
+  color: var(--text-muted);
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Lista de categorias/lojas: cada item ocupa três linhas (nome+valor, trilho,
+   participação+tendência). A versão anterior era uma linha só de colunas, que
+   lia como tabela e espremia o nome da categoria. */
+.despesas-lista {
+  display: grid;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  max-height: 22rem;
+  overflow-y: auto;
+}
+
+.despesas-lista li {
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+}
+
+.despesas-lista-topo {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
+.despesas-lista-topo span {
+  flex: 1;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.despesas-lista-topo strong {
+  flex: none;
+  color: var(--text-primary);
+  font-size: 0.8rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.despesas-lista-trilho {
+  display: block;
+  height: 0.35rem;
+  border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.despesas-lista-trilho b {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.despesas-lista-rodape {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.despesas-lista-rodape em {
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.despesas-tendencia {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+/* Despesa que sobe é ruim, despesa que cai é boa — o oposto de receita. */
+.despesas-tendencia.is-alta { color: var(--danger); }
+.despesas-tendencia.is-baixa { color: var(--success); }
+
+/* Lançamentos ------------------------------------------------------------ */
+
+.despesas-lancamentos-barra {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.despesas-lancamentos-total {
+  display: grid;
+  gap: 0.15rem;
+  justify-items: flex-end;
+  padding: 0.4rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+}
+
+.despesas-lancamentos-total span {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.despesas-lancamentos-total strong {
+  color: var(--text-primary);
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.despesas-busca {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  color: var(--text-muted);
+}
+
+.despesas-busca input {
+  width: 11rem;
+  padding: 0.45rem 0;
+  border: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: inherit;
+  font-size: 0.78rem;
+}
+
+.despesas-busca input:focus { outline: none; }
+
+.despesas-tabela-wrap { max-height: 32rem; }
+
+/* O cabeçalho gruda porque a tabela chega a 500 linhas — rolar até o fim sem
+   ele obrigava a voltar ao topo para lembrar qual coluna é qual. */
+.despesas-tabela thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-card);
+}
+
+.despesas-tabela .despesas-col-valor {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.despesas-tabela .despesas-col-peso { width: 8rem; }
+
+.despesas-peso {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.despesas-peso i {
+  flex: 1;
+  min-width: 2.5rem;
+  height: 0.3rem;
+  border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.despesas-peso i b {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.despesas-peso em {
+  flex: none;
+  color: var(--text-muted);
+  font-style: normal;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 1100px) {
+  .despesas-kpis { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (max-width: 640px) {
+  .despesas-kpis-secundarios { grid-template-columns: minmax(0, 1fr); }
+  .despesas-segmented { width: 100%; }
+  .despesas-lancamentos-total { width: 100%; justify-items: flex-start; }
+  .despesas-busca input { width: 100%; }
+}
+
+.app-error-boundary {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.app-error-boundary-card {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.85rem;
+  max-width: 420px;
+  border-color: color-mix(in srgb, var(--danger) 42%, var(--border));
+  color: var(--danger);
+}
+
+.app-error-boundary-card strong {
+  display: block;
+  color: var(--text-primary);
+  margin-bottom: 0.25rem;
+}
+
+.app-error-boundary-card p {
+  color: var(--text-secondary);
+  margin: 0 0 0.75rem;
 }

@@ -23,7 +23,7 @@ function lerEmpresa(): string {
   }
 }
 
-/** Combobox de empresa no topo da sidebar (fonte de verdade: localStorage alvo_empresa). */
+/** Combobox de empresa no topo direito (fonte de verdade: localStorage alvo_empresa). */
 export function SidebarEmpresaSelect() {
   const [empresa, setEmpresa] = useState(lerEmpresa);
   const [empresas, setEmpresas] = useState<string[]>([]);

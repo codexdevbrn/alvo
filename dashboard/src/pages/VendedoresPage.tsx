@@ -7,10 +7,13 @@ import {
   Banknote,
   ContactRound,
   Loader2,
+  Percent,
   Search,
+  Users,
 } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
-import { VendedoresComparativoChart } from '../components/vendedores/VendedoresComparativoChart';
+import { StatCard } from '../components/StatCard';
+import { VendedorEvolucaoChart } from '../components/vendedores/VendedorEvolucaoChart';
 import {
   obterFichaVendedor,
   obterRankingVendedores,
@@ -26,13 +29,22 @@ import { useMesesFechados } from '../hooks/useMesesFechados';
 import { EVENTO_TELA_VENDEDORES } from '../utils/telaVendedores';
 
 function normalizarBusca(valor: string): string {
-  return valor.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR');
+  return valor.normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('pt-BR');
 }
 
 function textoVariacao(valor: number | null | undefined): string {
   if (valor == null || !Number.isFinite(valor)) return '—';
   const sinal = valor > 0 ? '+' : '';
   return `${sinal}${formatPercent(valor, 1)}`;
+}
+
+/** Igual a `textoVariacao`, mas troca o percentual por um rótulo quando a receita
+ *  do mês fica negativa (devolução maior que venda) — nesse caso a queda passa
+ *  de -100% e o número deixa de comunicar algo útil. */
+function textoVariacaoDestaque(item: { variacao: number; receita_atual: number } | null | undefined): string {
+  if (item == null) return '—';
+  if (item.receita_atual < 0) return 'Receita negativa no mês';
+  return textoVariacao(item.variacao);
 }
 
 function classeVariacao(valor: number | null | undefined): string {
@@ -51,22 +63,13 @@ function nomeItem(item: ItemFichaVendedor): string {
   return item.cliente || item.produto || item.fabricante || item.nome || '—';
 }
 
-function pontosFicha(itens: ItemFichaVendedor[]) {
-  return itens.slice(0, 6).map((item) => ({
-    nome: nomeItem(item),
-    atual: item.receita_atual,
-    media: item.receita_media,
-  }));
-}
+const ABAS_ENTIDADE = [
+  { id: 'clientes', rotulo: 'Clientes' },
+  { id: 'produtos', rotulo: 'Produtos' },
+  { id: 'fabricantes', rotulo: 'Fabricantes' },
+] as const;
 
-function LegendaComparativo() {
-  return (
-    <p className="vendedores-chart-legenda">
-      <span><i className="is-mes" aria-hidden="true" /> Mês</span>
-      <span><i className="is-media" aria-hidden="true" /> Média 6 meses</span>
-    </p>
-  );
-}
+type AbaEntidade = (typeof ABAS_ENTIDADE)[number]['id'];
 
 /** Tela de análise de vendedores: ranking do último mês vs média dos 6 anteriores. */
 export default function VendedoresPage() {
@@ -153,6 +156,7 @@ export default function VendedoresPage() {
     if (!termo) return itens;
     return itens.filter((item) => normalizarBusca(item.vendedor).includes(termo));
   }, [busca, ranking]);
+  const maiorReceita = visiveis.reduce((maximo, item) => Math.max(maximo, item.receita_atual), 0);
 
   const escolher = (item: ItemRankingVendedor) => {
     setVendedor((atual) => (atual === item.vendedor ? null : item.vendedor));
@@ -184,7 +188,7 @@ export default function VendedoresPage() {
             <ContactRound size={24} aria-hidden="true" />
             <div>
               <strong>Selecione uma empresa</strong>
-              <p>Use o seletor da barra lateral para carregar o ranking de vendedores.</p>
+              <p>Use o seletor no topo da tela para carregar o ranking de vendedores.</p>
             </div>
           </div>
         )}
@@ -215,30 +219,40 @@ export default function VendedoresPage() {
         {ranking?.disponivel && (
           <>
             <section className="vendedores-kpis" aria-label="Resumo de vendedores">
-              <article className="glass-card vendedores-kpi">
-                <ContactRound size={18} />
-                <span>Vendedores</span>
-                <strong>{ranking.resumo.vendedores.toLocaleString('pt-BR')}</strong>
-                <small>{ranking.rotulo_periodo}</small>
+              <article className="glass-card glass-card-flat vendedores-hero">
+                <p className="despesas-hero-rotulo">
+                  <Banknote size={14} aria-hidden="true" /> Receita do mês
+                </p>
+                <strong className="despesas-hero-valor">{formatCurrency(ranking.resumo.receita_atual)}</strong>
+                <p className="despesas-hero-nota">
+                  {ranking.resumo.vendedores.toLocaleString('pt-BR')} vendedor(es) · vs {rotuloPeriodo(ranking.periodo_media_inicio, ranking.periodo_media_fim)}
+                </p>
               </article>
-              <article className="glass-card vendedores-kpi">
-                <Banknote size={18} />
-                <span>Receita do mês</span>
-                <strong>{formatCurrency(ranking.resumo.receita_atual)}</strong>
-                <small>vs {rotuloPeriodo(ranking.periodo_media_inicio, ranking.periodo_media_fim)}</small>
-              </article>
-              <article className="glass-card vendedores-kpi is-alta">
-                <ArrowUpRight size={18} />
-                <span>Maior alta</span>
-                <strong>{ranking.resumo.maior_alta?.vendedor ?? '—'}</strong>
-                <small>{textoVariacao(ranking.resumo.maior_alta?.variacao ?? null)}</small>
-              </article>
-              <article className="glass-card vendedores-kpi is-queda">
-                <ArrowDownRight size={18} />
-                <span>Maior queda</span>
-                <strong>{ranking.resumo.maior_queda?.vendedor ?? '—'}</strong>
-                <small>{textoVariacao(ranking.resumo.maior_queda?.variacao ?? null)}</small>
-              </article>
+              <div className="vendedores-kpis-secundarios">
+                <StatCard
+                  title="Vendedores no período"
+                  value={ranking.resumo.vendedores.toLocaleString('pt-BR')}
+                  icon={Users}
+                />
+                <StatCard
+                  title="Maior alta"
+                  value={ranking.resumo.maior_alta?.vendedor ?? '—'}
+                  valueClassName="vendedores-kpi-nome"
+                  icon={ArrowUpRight}
+                  trend={textoVariacaoDestaque(ranking.resumo.maior_alta)}
+                  trendUp
+                  useTrendColor={ranking.resumo.maior_alta != null}
+                />
+                <StatCard
+                  title="Maior queda"
+                  value={ranking.resumo.maior_queda?.vendedor ?? '—'}
+                  valueClassName="vendedores-kpi-nome"
+                  icon={ArrowDownRight}
+                  trend={textoVariacaoDestaque(ranking.resumo.maior_queda)}
+                  trendUp={false}
+                  useTrendColor={ranking.resumo.maior_queda != null}
+                />
+              </div>
             </section>
 
             <section className="glass-card glass-card-flat vendedores-tabela-card">
@@ -261,22 +275,6 @@ export default function VendedoresPage() {
                   </span>
                 </label>
               </div>
-              {visiveis.length > 0 && (
-                <>
-                  <LegendaComparativo />
-                  <VendedoresComparativoChart
-                    pontos={visiveis.slice(0, 12).map((item) => ({
-                      nome: item.vendedor,
-                      atual: item.receita_atual,
-                      media: item.receita_media,
-                    }))}
-                    modo="colunas"
-                    altura={200}
-                    ativo={vendedor}
-                    onSelect={setVendedor}
-                  />
-                </>
-              )}
               <div className="vendedores-tabela-wrap custom-scrollbar">
                 <table className="analisador-tabela vendedores-tabela">
                   <thead>
@@ -302,7 +300,14 @@ export default function VendedoresPage() {
                         onClick={() => escolher(item)}
                       >
                         <td className="col-nome">{item.vendedor}</td>
-                        <td className="col-num">{formatCurrency(item.receita_atual)}</td>
+                        <td className="col-num">
+                          <span className="vendedores-celula-barra">
+                            <i aria-hidden="true">
+                              <b style={{ width: `${maiorReceita > 0 ? (item.receita_atual / maiorReceita) * 100 : 0}%` }} />
+                            </i>
+                            {formatCurrency(item.receita_atual)}
+                          </span>
+                        </td>
                         <td className="col-num">{formatCurrency(item.receita_media)}</td>
                         <td className={`col-num ${classeVariacao(item.variacao)}`}>{textoVariacao(item.variacao)}</td>
                         <td className="col-num">{formatNumber(item.qtd_atual)}</td>
@@ -337,6 +342,8 @@ function FichaPainel({
   ficha: FichaVendedorResposta | null;
   carregando: boolean;
 }) {
+  const [aba, setAba] = useState<AbaEntidade>('clientes');
+
   if (carregando && !ficha) {
     return (
       <div className="glass-card vendedores-carregando" role="status">
@@ -347,9 +354,17 @@ function FichaPainel({
   if (!ficha) return null;
 
   const alertas = [
-    ...ficha.alertas.clientes.map((item) => ({ tipo: 'Cliente', nome: nomeItem(item), item })),
-    ...ficha.alertas.produtos.map((item) => ({ tipo: 'Produto', nome: nomeItem(item), item })),
+    ...(ficha.alertas?.clientes ?? []).map((item) => ({ tipo: 'Cliente', nome: nomeItem(item), item })),
+    ...(ficha.alertas?.produtos ?? []).map((item) => ({ tipo: 'Produto', nome: nomeItem(item), item })),
   ];
+
+  const itensPorAba: Record<AbaEntidade, { itens: ItemFichaVendedor[]; coluna: string }> = {
+    clientes: { itens: ficha.clientes ?? [], coluna: 'Cliente' },
+    produtos: { itens: ficha.produtos ?? [], coluna: 'Produto' },
+    fabricantes: { itens: ficha.fabricantes ?? [], coluna: 'Fabricante' },
+  };
+  const abaAtual = itensPorAba[aba];
+  const receitaCaiu = (ficha.variacao ?? 0) < 0;
 
   return (
     <section className="vendedores-ficha" aria-label={`Ficha de ${ficha.vendedor}`}>
@@ -358,25 +373,30 @@ function FichaPainel({
           <h2>{ficha.vendedor}</h2>
           <p>{ficha.rotulo_periodo} vs média de {ficha.meses_media} meses</p>
         </div>
-        <dl className="vendedores-ficha-numeros">
-          <div>
-            <dt>Receita</dt>
-            <dd>{formatCurrency(ficha.receita_atual)}</dd>
-          </div>
-          <div>
-            <dt>Média</dt>
-            <dd>{formatCurrency(ficha.receita_media)}</dd>
-          </div>
-          <div>
-            <dt>Variação</dt>
-            <dd className={classeVariacao(ficha.variacao)}>{textoVariacao(ficha.variacao)}</dd>
-          </div>
-          <div>
-            <dt>Clientes</dt>
-            <dd>{ficha.clientes_atual.toLocaleString('pt-BR')}</dd>
-          </div>
-        </dl>
       </header>
+
+      <div className="vendedores-ficha-kpis">
+        <StatCard title="Receita do mês" value={formatCurrency(ficha.receita_atual)} icon={Banknote} />
+        <StatCard title="Média 6 meses" value={formatCurrency(ficha.receita_media)} icon={Banknote} />
+        <StatCard
+          title="Variação"
+          value={textoVariacao(ficha.variacao)}
+          icon={receitaCaiu ? ArrowDownRight : ArrowUpRight}
+          trendUp={!receitaCaiu}
+          useTrendColor={ficha.variacao != null}
+        />
+        <StatCard title="Clientes atendidos" value={ficha.clientes_atual.toLocaleString('pt-BR')} icon={Percent} />
+      </div>
+
+      <div className="glass-card glass-card-flat vendedores-evolucao-card">
+        <header className="estoque-card-topo">
+          <div>
+            <h3>Evolução mensal</h3>
+            <p>Receita de {ficha.vendedor} mês a mês, com a régua da média dos {ficha.meses_media} meses anteriores.</p>
+          </div>
+        </header>
+        <VendedorEvolucaoChart pontos={ficha.serie_mensal ?? []} media={ficha.receita_media} />
+      </div>
 
       <div className="glass-card glass-card-flat vendedores-alertas-card">
         <h3>Alertas de queda</h3>
@@ -404,35 +424,43 @@ function FichaPainel({
         )}
       </div>
 
-      <div className="vendedores-ficha-grades">
-        <LegendaComparativo />
-        <TabelaEntidade titulo="Clientes" itens={ficha.clientes} coluna="Cliente" />
-        <TabelaEntidade titulo="Produtos" itens={ficha.produtos} coluna="Produto" />
-        <TabelaEntidade titulo="Fabricantes" itens={ficha.fabricantes} coluna="Fabricante" />
+      <div className="glass-card glass-card-flat vendedores-entidade-card">
+        <div className="estoque-card-topo">
+          <div>
+            <h3>{itensPorAba[aba].coluna}s</h3>
+            <p>Mesmo recorte: mês contra a média de {ficha.meses_media} meses.</p>
+          </div>
+          <div className="periodo-segmented segmented-compacto" role="tablist" aria-label="Escolher entidade">
+            {ABAS_ENTIDADE.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                role="tab"
+                aria-selected={aba === item.id}
+                className={`periodo-segmented-btn${aba === item.id ? ' is-active' : ''}`}
+                onClick={() => setAba(item.id)}
+              >
+                {item.rotulo}
+              </button>
+            ))}
+          </div>
+        </div>
+        <TabelaEntidade itens={abaAtual.itens} coluna={abaAtual.coluna} />
       </div>
     </section>
   );
 }
 
 function TabelaEntidade({
-  titulo,
   itens,
   coluna,
 }: {
-  titulo: string;
   itens: ItemFichaVendedor[];
   coluna: string;
 }) {
   return (
-    <section className="glass-card glass-card-flat vendedores-entidade-card">
-      <h3>{titulo}</h3>
-      <VendedoresComparativoChart
-        pontos={pontosFicha(itens)}
-        modo="barras"
-        altura={Math.min(itens.length, 6) * 28 + 24}
-      />
-      <div className="vendedores-tabela-wrap custom-scrollbar">
-        <table className="analisador-tabela vendedores-tabela">
+    <div className="vendedores-tabela-wrap custom-scrollbar">
+      <table className="analisador-tabela vendedores-tabela">
           <thead>
             <tr>
               <th className="col-nome">{coluna}</th>
@@ -457,7 +485,6 @@ function TabelaEntidade({
             ))}
           </tbody>
         </table>
-      </div>
-    </section>
+    </div>
   );
 }

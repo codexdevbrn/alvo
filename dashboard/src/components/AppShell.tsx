@@ -249,8 +249,6 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
           </button>
         </div>
 
-        <SidebarEmpresaSelect />
-        <SidebarLojaSelect />
         <SidebarMesesFechadosToggle desabilitarMesmoPeriodo={emDashboard || emEstoque || emDespesas} />
 
         <nav className="app-sidebar-nav">
@@ -328,48 +326,57 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
           </div>
         </nav>
 
-        <div className="app-sidebar-spacer" />
+        <div className="app-sidebar-spacer">
+          <PrefetchIndicator />
+        </div>
 
-        <nav className="app-sidebar-nav">
-          <span className="app-sidebar-nav-label">Sistema</span>
-          <NavItem
-            icon={<Settings size={17} />}
-            label="Configurações"
-            collapsed={colapsado}
-            ativo={emConfig}
-            aviso={statusAtualizacao?.atualizavel ? `Versão ${statusAtualizacao.versao_disponivel} disponível` : undefined}
-            onClick={() => navigate('/config')}
-          />
-          <NavItem
-            icon={<Wallet size={17} />}
-            label="Carteira"
-            collapsed={colapsado}
-            destaque
-            href={URL_CARTEIRA}
-          />
-          {emAnalisador && logado && (
+        <div className="app-sidebar-rodape">
+          <nav className="app-sidebar-nav app-sidebar-nav-compacta">
             <NavItem
-              icon={<LogOut size={17} />}
-              label="Sair"
+              icon={<Settings size={17} />}
+              label="Configurações"
               collapsed={colapsado}
-              onClick={sair}
+              ativo={emConfig}
+              aviso={statusAtualizacao?.atualizavel ? `Versão ${statusAtualizacao.versao_disponivel} disponível` : undefined}
+              onClick={() => navigate('/config')}
             />
+            <NavItem
+              icon={<Wallet size={17} />}
+              label="Carteira"
+              collapsed={colapsado}
+              destaque
+              href={URL_CARTEIRA}
+            />
+            {emAnalisador && logado && (
+              <NavItem
+                icon={<LogOut size={17} />}
+                label="Sair"
+                collapsed={colapsado}
+                onClick={sair}
+              />
+            )}
+          </nav>
+          {ultimoMovimento && (
+            <p
+              className="app-sidebar-footer-movimento"
+              title={`Último movimento: ${ultimoMovimento}`}
+            >
+              Último movimento:<br />
+              <strong>{ultimoMovimento}</strong>
+            </p>
           )}
-          {/* "Sair" só aparece para quem tem token: com o login desativado
-              ninguém precisa entrar, mas quem entrou pode sair. */}
-        </nav>
-
-        {ultimoMovimento && (
-          <p className="app-sidebar-footer">
-            Último movimento: <strong>{ultimoMovimento}</strong>
-          </p>
-        )}
+        </div>
       </aside>
 
       <main ref={mainRef} className="app-shell-main">
+        <div className="app-shell-topo">
+          <div className="app-shell-escopo">
+            <SidebarEmpresaSelect />
+            <SidebarLojaSelect />
+          </div>
+        </div>
         {statusAtualizacao && <BannerAtualizacao status={statusAtualizacao} />}
         {children}
-        <PrefetchIndicator />
       </main>
     </div>
   );

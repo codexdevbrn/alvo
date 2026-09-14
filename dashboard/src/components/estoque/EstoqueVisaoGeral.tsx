@@ -78,26 +78,30 @@ function ListaProdutos({ itens, vazio, detalhe }: {
  *  Números vêm agregados da base inteira, não do recorte do mapa. */
 export function EstoqueVisaoGeral({ empresa, loja, meses }: Props) {
   const [dados, setDados] = useState<ResumoEstoqueResposta | null>(null);
-  const [carregando, setCarregando] = useState(false);
+  const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [modoPeriodo] = useMesesFechados();
   const usarMesesFechados = modoParaBooleano(modoPeriodo);
 
   useEffect(() => {
-    const controller = new AbortController();
+    let vivo = true;
     setCarregando(true);
     setErro(null);
-    void obterResumoEstoque(empresa, { loja, meses, usarMesesFechados }, controller.signal)
-      .then(setDados)
+    void obterResumoEstoque(empresa, { loja, meses, usarMesesFechados })
+      .then((resposta) => {
+        if (vivo) setDados(resposta);
+      })
       .catch((falha) => {
-        if (falha instanceof DOMException && falha.name === 'AbortError') return;
+        if (!vivo) return;
         setDados(null);
         setErro(falha instanceof Error ? falha.message : 'Falha ao carregar o resumo de estoque.');
       })
       .finally(() => {
-        if (!controller.signal.aborted) setCarregando(false);
+        if (vivo) setCarregando(false);
       });
-    return () => controller.abort();
+    return () => {
+      vivo = false;
+    };
   }, [empresa, loja, meses, usarMesesFechados]);
 
   const fatias = useMemo<FatiaSituacao[]>(() => {
@@ -208,6 +212,8 @@ export function EstoqueVisaoGeral({ empresa, loja, meses }: Props) {
                       data={fatias}
                       dataKey="valor"
                       nameKey="nome"
+                      cx="50%"
+                      cy="50%"
                       innerRadius={52}
                       outerRadius={78}
                       paddingAngle={2}

@@ -2687,12 +2687,18 @@ def obter_resumo_despesas(
     usar_mes_fechado: bool = True,
     usuario: str = Depends(exigir_login),
 ):
-    """Total, série mês a mês e rankings de categoria/loja das despesas (Controladoria)."""
+    """Total, série mês a mês e rankings de categoria/loja das despesas (Controladoria).
+
+    A curva ABC de categorias sai do `cortes_clientes` do `config.json` do
+    escopo, os mesmos cortes do Analisador — Despesas precisa classificar a
+    categoria na mesma faixa que Clientes/Produtos.
+    """
     if meses < 1 or meses > 36:
         raise HTTPException(status_code=400, detail="meses deve ficar entre 1 e 36.")
 
     empresa = _validar_nome_empresa(empresa)
     df = _carregar_despesas_df(empresa)
+    config = _ler_config_escopo(empresa, loja) or {}
 
     lojas = sorted(
         nome for nome in df.get("Loja", pd.Series(dtype=str)).fillna("").astype(str).str.strip().unique()
@@ -2701,7 +2707,12 @@ def obter_resumo_despesas(
     loja_norm = _normalizar_loja(loja)
     df_filtrado = _filtrar_loja_coluna(df, loja, "Loja", "CONTROLADORIA.csv")
 
-    resultado = montar_resumo_despesas(df_filtrado, meses=meses, usar_mes_fechado=usar_mes_fechado)
+    resultado = montar_resumo_despesas(
+        df_filtrado,
+        meses=meses,
+        usar_mes_fechado=usar_mes_fechado,
+        cortes=config.get("cortes_clientes"),
+    )
     resultado.update({"empresa": empresa, "loja": loja_norm, "lojas": lojas})
     return resultado
 

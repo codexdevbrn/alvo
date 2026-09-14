@@ -1,7 +1,6 @@
 import { useMemo } from 'react';
 import {
   CartesianGrid,
-  Cell,
   ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
@@ -88,6 +87,17 @@ export function EstoqueCoberturaChart({
     capitalPlot: Math.max(1, item.valor_estoque),
     item,
   })), [itens]);
+  // Uma série por status, não 1.200 <Cell>: o primeiro paint do mapa travava
+  // a aba no "carregando" depois do JSON chegar.
+  const series = useMemo(() => {
+    const mapa = new Map<StatusCoberturaEstoque, PontoGrafico[]>();
+    for (const ponto of pontos) {
+      const lista = mapa.get(ponto.item.status);
+      if (lista) lista.push(ponto);
+      else mapa.set(ponto.item.status, [ponto]);
+    }
+    return Array.from(mapa.entries());
+  }, [pontos]);
 
   if (!pontos.length) {
     return <p className="estoque-chart-vazio">Nenhum produto válido para exibir.</p>;
@@ -132,17 +142,17 @@ export function EstoqueCoberturaChart({
           />
           <ZAxis type="number" dataKey="capitalPlot" domain={[1, maxCapital]} range={[34, 520]} />
           <Tooltip content={<TooltipEstoque />} cursor={{ stroke: 'rgba(255,255,255,0.18)', strokeDasharray: '3 3' }} />
-          <Scatter data={pontos} isAnimationActive={false}>
-            {pontos.map((ponto) => (
-              <Cell
-                key={`${ponto.item.codigo_interno}-${ponto.item.sku}`}
-                fill={CORES[ponto.item.status]}
-                fillOpacity={0.72}
-                stroke="var(--bg-card)"
-                strokeWidth={1}
-              />
-            ))}
-          </Scatter>
+          {series.map(([status, grupo]) => (
+            <Scatter
+              key={status}
+              data={grupo}
+              fill={CORES[status]}
+              fillOpacity={0.72}
+              stroke="var(--bg-card)"
+              strokeWidth={1}
+              isAnimationActive={false}
+            />
+          ))}
         </ScatterChart>
       </ResponsiveContainer>
       <div className="estoque-chart-legenda" aria-label="Legenda do gráfico">

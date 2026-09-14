@@ -66,7 +66,7 @@ export function VendedoresComparativoChart({
   ativo = null,
   onSelect,
 }: Props) {
-  if (pontos.length === 0) return null;
+  if (!pontos || pontos.length === 0) return null;
   const horizontal = modo === 'barras';
   const alto = altura ?? (horizontal ? Math.max(160, pontos.length * 28) : 220);
 
@@ -99,8 +99,8 @@ export function VendedoresComparativoChart({
               <YAxis
                 type="category"
                 dataKey="nome"
-                width={96}
-                tickFormatter={(v) => encurtar(String(v), 14)}
+                width={140}
+                tickFormatter={(v) => encurtar(String(v), 20)}
                 tick={{ fill: 'var(--text-secondary)', fontSize: 11 }}
                 axisLine={false}
                 tickLine={false}

@@ -23,11 +23,11 @@ type Props = {
   meses: number;
 };
 
-/** Aba Escopo: o mapa produto a produto em foco, com os filtros que o alimentam.
+/** Aba Mapa geral: o mapa produto a produto em foco, com os filtros que o alimentam.
  *  Busca própria — a visão geral não carrega os 1.200 pontos do mapa. */
 export function EstoqueEscopo({ empresa, loja, meses }: Props) {
   const [dados, setDados] = useState<CoberturaEstoqueResposta | null>(null);
-  const [carregando, setCarregando] = useState(false);
+  const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [busca, setBusca] = useState('');
   const [fabricante, setFabricante] = useState('');
@@ -36,22 +36,26 @@ export function EstoqueEscopo({ empresa, loja, meses }: Props) {
   const usarMesesFechados = modoParaBooleano(modoPeriodo);
 
   useEffect(() => {
-    const controller = new AbortController();
+    let vivo = true;
     setCarregando(true);
     setErro(null);
-    void obterCoberturaEstoque(
-      empresa, { loja, meses, limite: 1200, usarMesesFechados }, controller.signal,
-    )
-      .then(setDados)
+    // Sem AbortController: o backend síncrono ignora o cancelamento, e o
+    // remount do Strict Mode abortava o primeiro open desta aba.
+    void obterCoberturaEstoque(empresa, { loja, meses, limite: 1200, usarMesesFechados })
+      .then((resposta) => {
+        if (vivo) setDados(resposta);
+      })
       .catch((falha) => {
-        if (falha instanceof DOMException && falha.name === 'AbortError') return;
+        if (!vivo) return;
         setDados(null);
         setErro(falha instanceof Error ? falha.message : 'Falha ao carregar estoque.');
       })
       .finally(() => {
-        if (!controller.signal.aborted) setCarregando(false);
+        if (vivo) setCarregando(false);
       });
-    return () => controller.abort();
+    return () => {
+      vivo = false;
+    };
   }, [empresa, loja, meses, usarMesesFechados]);
 
   const fabricantes = useMemo(() => Array.from(new Set(

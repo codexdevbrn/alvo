@@ -153,7 +153,7 @@ export default function AssistenteIAPage() {
         {!empresa && (
           <div className="glass-card glass-card-flat chat-ia-aviso" role="status">
             <Bot size={24} aria-hidden="true" />
-            <div><strong>Selecione uma empresa</strong><p>Use o seletor da barra lateral para definir o contexto.</p></div>
+            <div><strong>Selecione uma empresa</strong><p>Use o seletor no topo da tela para definir o contexto.</p></div>
           </div>
         )}
 

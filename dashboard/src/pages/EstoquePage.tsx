@@ -1,25 +1,38 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Boxes } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
 import { EstoqueVisaoGeral } from '../components/estoque/EstoqueVisaoGeral';
 import { EstoqueEscopo } from '../components/estoque/EstoqueEscopo';
 import { useEscopoAtual } from '../hooks/useEscopoAtual';
+import { useMesesFechados } from '../hooks/useMesesFechados';
+import { obterCoberturaEstoque } from '../api/client';
+import { modoParaBooleano } from '../utils/mesesFechados';
 
 type AbaEstoque = 'visao' | 'escopo';
 
 const ABAS: { id: AbaEstoque; rotulo: string }[] = [
   { id: 'visao', rotulo: 'Visão geral' },
-  { id: 'escopo', rotulo: 'Escopo' },
+  { id: 'escopo', rotulo: 'Mapa geral' },
 ];
 
 /** Casca da tela de estoque: escopo, janela de venda e abas.
  *  Cada aba busca os próprios dados — a visão geral recebe poucos KB de
  *  agregados e não paga o download dos 1.200 pontos do mapa. */
 export default function EstoquePage() {
-  // Empresa e loja vêm da barra lateral e valem para todas as telas.
   const { empresa, loja } = useEscopoAtual();
   const [meses, setMeses] = useState(6);
   const [aba, setAba] = useState<AbaEstoque>('visao');
+  const [modoPeriodo] = useMesesFechados();
+  const usarMesesFechados = modoParaBooleano(modoPeriodo);
+
+  // Prefetch do mapa enquanto a visão geral está na tela: o primeiro clique
+  // em "Mapa geral" não espera o worker do zero.
+  useEffect(() => {
+    if (!empresa) return;
+    void obterCoberturaEstoque(empresa, {
+      loja, meses, limite: 1200, usarMesesFechados,
+    }).catch(() => { /* a aba trata o erro quando abrir */ });
+  }, [empresa, loja, meses, usarMesesFechados]);
 
   return (
     <AppShell>
@@ -47,7 +60,7 @@ export default function EstoquePage() {
         {!empresa && (
           <div className="glass-card glass-card-flat estoque-vazio">
             <Boxes size={24} aria-hidden="true" />
-            <div><strong>Selecione uma empresa</strong><p>Use seletor da barra lateral para carregar estoque e vendas.</p></div>
+            <div><strong>Selecione uma empresa</strong><p>Use o seletor no topo da tela para carregar estoque e vendas.</p></div>
           </div>
         )}
 

@@ -148,6 +148,17 @@ def test_modo_periodo_mesmo_periodo_corta_o_historico_no_mesmo_dia(monkeypatch):
     assert item["receita_media"] == 100.0
 
 
+def test_ficha_traz_serie_mensal_com_zero_no_mes_sem_venda():
+    dados = montar_ficha_vendedor(_base(), "Ana Souza")
+    serie = dados["serie_mensal"]
+    assert [ponto["periodo"] for ponto in serie] == [
+        "2026-02", "2026-03", "2026-04", "2026-05", "2026-06", "2026-07", "2026-08",
+    ]
+    assert serie[0]["valor"] == 100
+    assert serie[0]["rotulo"] == "fev/26"
+    assert serie[-1]["valor"] == 155
+
+
 def test_ficha_recusa_vendedor_ausente():
     with pytest.raises(ErroFichaVendedor, match="não encontrado"):
         montar_ficha_vendedor(_base(), "Ninguém")

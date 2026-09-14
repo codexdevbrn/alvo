@@ -7,11 +7,18 @@ interface StatCardProps {
     icon: LucideIcon;
     trend?: string;
     trendUp?: boolean;
+    /** Direção da seta do trend. Por padrão segue `trendUp`, que também é a cor.
+     *  Em Despesas os dois divergem: queda de gasto é boa (verde) mas o número
+     *  caiu, então a seta precisa apontar para baixo enquanto a cor diz "bom". */
+    trendArrow?: 'up' | 'down';
     useTrendColor?: boolean;
+    /** Classe extra pro valor — usada quando ele é um nome/texto longo em vez
+     *  de um número curto, caso em que o nowrap+ellipsis padrão trunca demais. */
+    valueClassName?: string;
     onClick?: () => void;
 }
 
-export const StatCard = ({ title, value, icon: Icon, trend, trendUp, useTrendColor, onClick }: StatCardProps) => {
+export const StatCard = ({ title, value, icon: Icon, trend, trendUp, trendArrow, useTrendColor, valueClassName, onClick }: StatCardProps) => {
     const accentColor = useTrendColor ? (trendUp ? 'var(--success)' : 'var(--danger)') : 'var(--accent)';
     return (
         <div
@@ -21,12 +28,15 @@ export const StatCard = ({ title, value, icon: Icon, trend, trendUp, useTrendCol
         >
             <div className="stat-card-content">
                 <p className="stat-card-title">{title}</p>
-                <h3 className="stat-card-value">{value}</h3>
+                <h3
+                    className={`stat-card-value ${valueClassName ?? ''}`}
+                    title={typeof value === 'string' ? value : undefined}
+                >{value}</h3>
                 {trend && (
                     <p className="stat-card-trend" style={{
                         color: trendUp ? 'var(--success)' : 'var(--danger)'
                     }}>
-                        {trendUp ? '↑' : '↓'} {trend}
+                        {(trendArrow ?? (trendUp ? 'up' : 'down')) === 'up' ? '↑' : '↓'} {trend}
                     </p>
                 )}
             </div>

@@ -270,13 +270,32 @@ def montar_ranking_vendedores(
             "maior_alta": None if maior_alta is None else {
                 "vendedor": maior_alta["vendedor"],
                 "variacao": maior_alta["variacao"],
+                "receita_atual": maior_alta["receita_atual"],
             },
             "maior_queda": None if maior_queda is None else {
                 "vendedor": maior_queda["vendedor"],
                 "variacao": maior_queda["variacao"],
+                "receita_atual": maior_queda["receita_atual"],
             },
         },
     }
+
+
+def _serie_mensal_vendedor(recorte: pd.DataFrame, meses: list[pd.Timestamp]) -> list[dict]:
+    """Receita do vendedor em cada mês do recorte (histórico + mês de referência).
+
+    Mês sem venda entra com zero — a linha não pode dar a impressão de que o
+    mês nem existiu no período.
+    """
+    por_mes = recorte.groupby("_periodo")["Receita"].sum()
+    return [
+        {
+            "periodo": mes.strftime("%Y-%m"),
+            "rotulo": _rotulo_periodo(mes),
+            "valor": round(float(por_mes.get(mes, 0.0)), 2),
+        }
+        for mes in meses
+    ]
 
 
 def montar_ficha_vendedor(
@@ -296,6 +315,7 @@ def montar_ficha_vendedor(
     recorte = dados.loc[dados[COLUNA_VENDEDOR] == nome]
     atual_df = recorte.loc[recorte["_periodo"] == referencia]
     hist_df = recorte.loc[recorte["_periodo"].isin(historico)]
+    serie_mensal = _serie_mensal_vendedor(recorte, historico + [referencia])
     if modo_periodo == "mesmo_periodo":
         dia_corte = _dia_corte_mes_aberto(atual_df.get(COLUNA_DATA_DIARIA))
         hist_df = _filtrar_ate_o_dia(hist_df, dia_corte)
@@ -347,6 +367,7 @@ def montar_ficha_vendedor(
         "clientes": clientes,
         "produtos": produtos,
         "fabricantes": fabricantes,
+        "serie_mensal": serie_mensal,
         "alertas": {
             "clientes": alertas_clientes[:LIMITE_ALERTAS],
             "produtos": alertas_produtos[:LIMITE_ALERTAS],

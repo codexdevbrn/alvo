@@ -15,7 +15,7 @@ function empresaAtual(): string {
 }
 
 /**
- * Seletor de loja da sidebar, logo abaixo do de empresa.
+ * Seletor de loja, ao lado do de empresa no topo direito.
  *
  * Só aparece quando a empresa tem mais de uma loja: com uma loja só, o combobox
  * seria uma escolha sem alternativa ocupando espaço fixo na barra.

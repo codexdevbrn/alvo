@@ -45,7 +45,7 @@ export default function DespesasPage() {
         {!empresa && (
           <div className="glass-card glass-card-flat estoque-vazio">
             <Receipt size={24} aria-hidden="true" />
-            <div><strong>Selecione uma empresa</strong><p>Use o seletor da barra lateral para carregar as despesas.</p></div>
+            <div><strong>Selecione uma empresa</strong><p>Use o seletor no topo da tela para carregar as despesas.</p></div>
           </div>
         )}
 

@@ -22,7 +22,7 @@ export interface EscopoAtual {
 }
 
 /**
- * Escopo em uso (empresa + lojas) da barra lateral, sincronizado.
+ * Escopo em uso (empresa + lojas) do topo da tela, sincronizado.
  *
  * Cada tela lia o localStorage e assinava os eventos por conta própria, e cada
  * cópia divergia um pouco (uma zerava a loja ao trocar de empresa, outra não).

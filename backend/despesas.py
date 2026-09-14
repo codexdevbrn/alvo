@@ -151,14 +151,33 @@ def _tendencia_categorias(
     return tendencias
 
 
-def _curva_abc_categorias(por_categoria_serie: pd.Series) -> tuple[dict, dict[str, str]]:
+def _cortes_validos(cortes) -> tuple[float, ...]:
+    """Cortes crescentes entre 0 e 100; qualquer coisa fora disso vira o padrão.
+
+    Mesma regra de `analise_clientes._cortes_validos` — os dois precisam aceitar
+    (e rejeitar) exatamente o mesmo `cortes_clientes` do `config.json`.
+    """
+    try:
+        valores = tuple(float(valor) for valor in cortes)
+    except (TypeError, ValueError):
+        return CORTES_ABC_CATEGORIAS
+    if not valores or any(not 0 < valor <= 100 for valor in valores):
+        return CORTES_ABC_CATEGORIAS
+    if list(valores) != sorted(valores):
+        return CORTES_ABC_CATEGORIAS
+    return valores
+
+
+def _curva_abc_categorias(
+    por_categoria_serie: pd.Series, cortes: tuple[float, ...] = CORTES_ABC_CATEGORIAS
+) -> tuple[dict, dict[str, str]]:
     """Classificação Grupo 1/2/3/Demais das categorias pela régua de `faixa_por_curva`
-    (mesma de Clientes/Produtos), sobre o total de cada categoria no período.
+    (mesmos cortes do Analisador, `cortes_clientes` do `config.json` do escopo).
 
     Devolve o resumo por grupo e um mapa categoria → grupo, para anotar cada
     linha de `por_categoria` sem recalcular a curva duas vezes.
     """
-    cortes = list(CORTES_ABC_CATEGORIAS)
+    cortes = list(cortes)
     if por_categoria_serie.empty or float(por_categoria_serie.sum()) <= 0:
         return {"cortes": cortes, "grupos": []}, {}
 
@@ -187,15 +206,20 @@ def montar_resumo_despesas(
     meses: int = 12,
     limite_categorias: int = 10,
     usar_mes_fechado: bool = True,
+    cortes=None,
 ) -> dict:
     """Total, série mês a mês e rankings de categoria/loja das despesas.
 
     Janela corrida de `meses` terminando no último mês com lançamento. Com
     `usar_mes_fechado`, o mês corrente (ainda em andamento, poucos dias de
     lançamento) fica fora da janela — senão ele aparece como queda brusca.
+
+    `cortes` é o `cortes_clientes` do `config.json` do escopo (mesma régua do
+    Analisador); `None` ou inválido cai em `CORTES_ABC_CATEGORIAS`.
     """
     meses = max(1, min(int(meses), 36))
     limite_categorias = max(1, min(int(limite_categorias), 50))
+    cortes = _cortes_validos(cortes)
 
     if df is None or df.empty:
         return _resposta_vazia(meses)
@@ -250,7 +274,7 @@ def montar_resumo_despesas(
             "pct": _numero(resto / total * 100) if total else 0.0,
         })
 
-    curva_abc_categorias, grupo_por_categoria = _curva_abc_categorias(por_categoria_serie)
+    curva_abc_categorias, grupo_por_categoria = _curva_abc_categorias(por_categoria_serie, cortes)
     tendencia_por_categoria = _tendencia_categorias(
         janela, list(principais.index), inicio, fim,
     )

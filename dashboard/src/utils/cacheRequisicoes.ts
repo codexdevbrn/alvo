@@ -5,6 +5,10 @@
 
 const CACHE_PREFIX = 'prisma_req_cache_';
 const memoriaCache = new Map<string, unknown>();
+/** Pedidos iguais em voo compartilham a Promise. Sem isso, o Strict Mode
+ *  (mount → abort → remount) dispara duas idas ao backend síncrono e a
+ *  segunda espera a primeira acabar — a aba Escopo fica girando no primeiro open. */
+const inflight = new Map<string, Promise<unknown>>();
 
 export function getChaveCache(url: string, params?: unknown): string {
   if (!params) return url;
@@ -41,6 +45,7 @@ export function gravarCache(chave: string, dados: unknown): void {
 
 /** Limpa todo o cache (memória e localStorage). Útil ao trocar de empresa ou regenerar base. */
 export function limparCacheGeral(): void {
+  inflight.clear();
   memoriaCache.clear();
   try {
     const chaves: string[] = [];
@@ -65,8 +70,17 @@ export async function comCache<T>(
   if (!forcarNovo) {
     const emCache = lerCache<T>(chave);
     if (emCache) return emCache;
+    const emVoo = inflight.get(chave);
+    if (emVoo) return emVoo as Promise<T>;
   }
-  const dados = await fetcher();
-  gravarCache(chave, dados);
-  return dados;
+  const pendente = fetcher()
+    .then((dados) => {
+      gravarCache(chave, dados);
+      return dados;
+    })
+    .finally(() => {
+      inflight.delete(chave);
+    });
+  inflight.set(chave, pendente);
+  return pendente;
 }

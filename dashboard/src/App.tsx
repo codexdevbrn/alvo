@@ -1,4 +1,5 @@
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import DashboardPage from './pages/DashboardPage';
 import LoginPage from './pages/LoginPage';
 import AnalisadorPage from './pages/AnalisadorPage';
@@ -17,19 +18,21 @@ import AssistenteIAPage from './pages/AssistenteIAPage';
 export default function App() {
   return (
     <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<DashboardPage />} />
-        <Route path="/login" element={<LoginPage />} />
-        <Route path="/config" element={<ConfiguracoesPage />} />
-        <Route path="/monitor" element={<MonitorPage />} />
-        <Route path="/analisador" element={<AnalisadorPage />} />
-        <Route path="/clientes" element={<ClientesPage />} />
-        <Route path="/vendedores" element={<VendedoresPage />} />
-        <Route path="/estoque" element={<EstoquePage />} />
-        <Route path="/despesas" element={<DespesasPage />} />
-        <Route path="/assistente" element={<AssistenteIAPage />} />
-        <Route path="/mercadologico" element={<MercadologicoPage />} />
-      </Routes>
+      <ErrorBoundary>
+        <Routes>
+          <Route path="/" element={<DashboardPage />} />
+          <Route path="/login" element={<LoginPage />} />
+          <Route path="/config" element={<ConfiguracoesPage />} />
+          <Route path="/monitor" element={<MonitorPage />} />
+          <Route path="/analisador" element={<AnalisadorPage />} />
+          <Route path="/clientes" element={<ClientesPage />} />
+          <Route path="/vendedores" element={<VendedoresPage />} />
+          <Route path="/estoque" element={<EstoquePage />} />
+          <Route path="/despesas" element={<DespesasPage />} />
+          <Route path="/assistente" element={<AssistenteIAPage />} />
+          <Route path="/mercadologico" element={<MercadologicoPage />} />
+        </Routes>
+      </ErrorBoundary>
     </BrowserRouter>
   );
 }

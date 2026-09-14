@@ -51,6 +51,16 @@ MESES_NOME = {
 
 NOME_SUMMARY_DASHBOARD = "summary_dashboard.json"
 NOME_SUMMARY_DASHBOARD_GZ = "summary_dashboard.json.gz"
+NOME_VERSAO_SUMMARY = "summary_dashboard.versao"
+
+#: Muda quando o shape do summary muda — sem isso, um summary já gravado com
+#: mtime >= fonte é lido como fresco pra sempre, mesmo depois de um campo novo
+#: (ex.: `cmv`, versão 2) entrar no código: a fonte não muda só porque o app
+#: atualizou, e reprocessar 45 MB por requisição só pra checar versão anularia
+#: o ganho do cache. Por isso o número mora num arquivo à parte, poucos bytes,
+#: e não dentro do JSON grande. Bumpar aqui invalida os summaries já gravados;
+#: eles regeneram na próxima leitura. 2: passou a somar CMV em kpis/monthly.
+VERSAO_SUMMARY = 2
 
 
 def caminho_summary_dashboard(pasta_trabalho: str | Path) -> Path:
@@ -61,17 +71,32 @@ def caminho_summary_dashboard_gz(pasta_trabalho: str | Path) -> Path:
     return Path(pasta_trabalho) / NOME_SUMMARY_DASHBOARD_GZ
 
 
+def caminho_versao_summary(pasta_trabalho: str | Path) -> Path:
+    return Path(pasta_trabalho) / NOME_VERSAO_SUMMARY
+
+
+def _versao_summary_gravada(pasta_trabalho: str | Path) -> int:
+    """Lê a versão gravada junto do summary; 0 (sempre desatualizada) se ausente/inválida."""
+    try:
+        return int(caminho_versao_summary(pasta_trabalho).read_text(encoding="utf-8").strip())
+    except (OSError, ValueError):
+        return 0
+
+
 def summary_dashboard_atualizado(
     pasta_trabalho: str | Path,
     caminho_base_csv: str | Path,
     *,
     mtime_minimo: float = 0.0,
 ) -> bool:
-    """True se o JSON (ou .gz) em disco existe e não é mais antigo que a fonte.
+    """True se o JSON (ou .gz) em disco existe, não é mais antigo que a fonte e
+    foi gravado com o shape atual do summary (ver `VERSAO_SUMMARY`).
 
     `mtime_minimo` acrescenta outras entradas que também invalidam o summary
     quando mudam sem a fonte mudar — hoje, a regra de harmonização de clientes.
     """
+    if _versao_summary_gravada(pasta_trabalho) != VERSAO_SUMMARY:
+        return False
     caminho_csv = Path(caminho_base_csv)
     if not caminho_csv.is_file():
         return False
@@ -129,6 +154,11 @@ def gravar_summary_dashboard(pasta_trabalho: str | Path, summary: dict) -> Path:
             pass
         raise
 
+    # Grava por último: se o processo cair antes daqui, a próxima leitura vê
+    # versão ausente (0) e regenera em vez de servir um JSON possivelmente
+    # incompleto como se fosse da versão atual.
+    caminho_versao_summary(pasta).write_text(str(VERSAO_SUMMARY), encoding="utf-8")
+
     return destino_gz
 
 
@@ -136,6 +166,7 @@ def invalidar_summary_dashboard(pasta_trabalho: str | Path) -> None:
     for caminho in (
         caminho_summary_dashboard(pasta_trabalho),
         caminho_summary_dashboard_gz(pasta_trabalho),
+        caminho_versao_summary(pasta_trabalho),
     ):
         try:
             caminho.unlink(missing_ok=True)

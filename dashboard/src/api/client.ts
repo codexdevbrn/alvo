@@ -1129,9 +1129,14 @@ export async function obterCoberturaEstoque(
   if (parametros.usarMesesFechados === false) query.set('usar_mes_fechado', 'false');
   const qs = query.toString() ? `?${query}` : '';
   const url = `/api/estoque/cobertura/${encodeURIComponent(empresa)}${qs}`;
-  
+  // Signal fica de fora do fetch cacheado: FastAPI síncrono não aborta, e o
+  // Strict Mode / troca de aba só cancelava o cliente — o worker seguia ocupado
+  // e o retry do mapa nunca terminava no primeiro open.
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
   return comCache(`cobertura_${empresa}_${qs}`, async () => {
-    const res = await chamar(url, { headers: authHeaders(), signal });
+    const res = await chamar(url, { headers: authHeaders() });
     return tratarResposta(res);
   });
 }
@@ -1187,9 +1192,11 @@ export async function obterResumoEstoque(
   if (parametros.usarMesesFechados === false) query.set('usar_mes_fechado', 'false');
   const qs = query.toString() ? `?${query}` : '';
   const url = `/api/estoque/resumo/${encodeURIComponent(empresa)}${qs}`;
-  
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
   return comCache(`resumo_estoque_${empresa}_${qs}`, async () => {
-    const res = await chamar(url, { headers: authHeaders(), signal });
+    const res = await chamar(url, { headers: authHeaders() });
     return tratarResposta(res);
   });
 }
@@ -1274,9 +1281,11 @@ export async function obterResumoDespesas(
   if (parametros.usarMesesFechados === false) query.set('usar_mes_fechado', 'false');
   const qs = query.toString() ? `?${query}` : '';
   const url = `/api/despesas/${encodeURIComponent(empresa)}${qs}`;
-  
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
   return comCache(`resumo_despesas_${empresa}_${qs}`, async () => {
-    const res = await chamar(url, { headers: authHeaders(), signal });
+    const res = await chamar(url, { headers: authHeaders() });
     return tratarResposta(res);
   });
 }
@@ -1427,9 +1436,15 @@ export type RankingVendedoresResposta = {
   resumo: {
     vendedores: number;
     receita_atual: number;
-    maior_alta: { vendedor: string; variacao: number } | null;
-    maior_queda: { vendedor: string; variacao: number } | null;
+    maior_alta: { vendedor: string; variacao: number; receita_atual: number } | null;
+    maior_queda: { vendedor: string; variacao: number; receita_atual: number } | null;
   };
+};
+
+export type PontoSerieVendedor = {
+  periodo: string;
+  rotulo: string;
+  valor: number;
 };
 
 export type FichaVendedorResposta = {
@@ -1448,6 +1463,7 @@ export type FichaVendedorResposta = {
   clientes: ItemFichaVendedor[];
   produtos: ItemFichaVendedor[];
   fabricantes: ItemFichaVendedor[];
+  serie_mensal: PontoSerieVendedor[];
   alertas: {
     clientes: ItemFichaVendedor[];
     produtos: ItemFichaVendedor[];
