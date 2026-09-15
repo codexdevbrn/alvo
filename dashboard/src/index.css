@@ -1413,7 +1413,7 @@ h3 {
 }
 
 .visao-toggle-btn.is-active {
-  color: var(--text-primary);
+  color: var(--accent-contrast);
 }
 
 .visao-toggle-btn:not(.is-active):hover {
