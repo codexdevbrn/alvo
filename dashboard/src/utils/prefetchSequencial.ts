@@ -8,6 +8,7 @@ import {
   obterRankingVendedores,
   obterResumoEstoque,
   obterResumoDespesas,
+  obterPosPrecificacao,
   obterMonitorEmpresas,
   obterSummaryEmpresa,
   obterBaseClientes,
@@ -24,12 +25,20 @@ export const EVENTO_PREFETCH = 'prisma-prefetch-progress';
  *  Estoque/Despesas só distinguem fechados vs o resto (completo ≡ mesmo período). */
 const MODOS_PERIODO: readonly ModoPeriodo[] = ['fechados', 'completo', 'mesmo_periodo'];
 
+/** Teto de telas pesadas ao mesmo tempo, depois da tela aberta.
+ *  Chrome segura ~6 conexões HTTP/1.1 no host; 4 deixa folga pro clique do usuário.
+ *  O backend serializa a 1ª leitura da base por empresa (`_trava_summary_empresa`);
+ *  o resto é pandas em threadpool em cima do DataFrame já em RAM. */
+const LIMITE_PARALELO = 4;
+
 export type EstadoPrefetch = {
   rodando: boolean;
   atual: number;
   total: number;
   nome: string;
   etapas: string[];
+  emAndamento: string[];
+  feitas: string[];
 };
 
 let estadoAtual: EstadoPrefetch = {
@@ -37,7 +46,9 @@ let estadoAtual: EstadoPrefetch = {
   atual: 0,
   total: 0,
   nome: '',
-  etapas: []
+  etapas: [],
+  emAndamento: [],
+  feitas: [],
 };
 let concluidoEm = 0;
 
@@ -74,8 +85,57 @@ function lojaDaEmpresa(empresa: string): string | null {
 
 type MotivoPrefetch = 'empresa' | 'loja' | 'venda-media';
 
+type TarefaPrefetch = {
+  nome: string;
+  fn: () => Promise<void>;
+};
+
+/** Mais específico primeiro: `/` casa com tudo se vier no começo. */
+const ROTA_TAREFA: [string, string][] = [
+  ['/pos-precificacao', 'Pós precificação'],
+  ['/vendedores', 'Vendedores'],
+  ['/estoque', 'Estoque'],
+  ['/despesas', 'Despesas'],
+  ['/monitor', 'Monitoramento'],
+  ['/clientes', 'Clientes: Visão geral'],
+  ['/cortes', 'Cortes'],
+  ['/analisador', 'Relatórios'],
+  ['/', 'Dashboard'],
+];
+
+function nomeTarefaDaRota(pathname: string, nomes: string[]): string | null {
+  for (const [prefixo, nome] of ROTA_TAREFA) {
+    if (!nomes.includes(nome)) continue;
+    if (prefixo === '/') {
+      if (pathname === '/') return nome;
+      continue;
+    }
+    if (pathname.startsWith(prefixo)) return nome;
+  }
+  return null;
+}
+
+async function mapaComLimite<T>(
+  itens: T[],
+  limite: number,
+  fn: (item: T) => Promise<void>,
+  cancelado: () => boolean,
+): Promise<void> {
+  const fila = [...itens];
+  const workers = Array.from({ length: Math.min(limite, Math.max(fila.length, 0)) }, async () => {
+    while (fila.length > 0) {
+      if (cancelado()) return;
+      const item = fila.shift();
+      if (item === undefined) return;
+      await fn(item);
+    }
+  });
+  await Promise.all(workers);
+}
+
 async function rodarFila(empresa: string, motivo: MotivoPrefetch = 'empresa') {
   const versaoExecucao = ++versaoFila;
+  const cancelado = () => versaoFila !== versaoExecucao;
 
   if (motivo === 'empresa' && empresa !== empresaAtual) {
     limparCacheGeral();
@@ -84,30 +144,32 @@ async function rodarFila(empresa: string, motivo: MotivoPrefetch = 'empresa') {
 
   if (!empresa) {
     empresaAtual = '';
-    despacharProgresso({ rodando: false, atual: 0, total: 0, nome: '', etapas: [] });
+    despacharProgresso({
+      rodando: false, atual: 0, total: 0, nome: '', etapas: [], emAndamento: [], feitas: [],
+    });
     return;
   }
 
   if (motivo === 'empresa') {
     await new Promise((resolve) => setTimeout(resolve, 800));
-    if (versaoFila !== versaoExecucao) return;
+    if (cancelado()) return;
   }
 
   empresaAtual = empresa;
   const loja = lojaDaEmpresa(empresa);
   const mesesEstoque = lerMesesVendaMedia();
 
-  const tarefaEstoque = {
+  const tarefaEstoque: TarefaPrefetch = {
     nome: 'Estoque',
     fn: async () => {
-      await obterResumoEstoque(empresaAtual, { loja, meses: mesesEstoque, usarMesesFechados: true });
-      await obterResumoEstoque(empresaAtual, { loja, meses: mesesEstoque, usarMesesFechados: false });
+      await Promise.all([
+        obterResumoEstoque(empresaAtual, { loja, meses: mesesEstoque, usarMesesFechados: true }),
+        obterResumoEstoque(empresaAtual, { loja, meses: mesesEstoque, usarMesesFechados: false }),
+      ]);
     },
   };
 
-  // Cada etapa cobre todas as visualizações de período daquela tela, pra o
-  // clique no toggle Período achar cache quente. Não espera o clique.
-  const tarefas = motivo === 'venda-media' ? [tarefaEstoque] : [
+  const tarefas: TarefaPrefetch[] = motivo === 'venda-media' ? [tarefaEstoque] : [
     { nome: 'Dashboard', fn: async () => {
         const emCache = lerSummaryCache(empresaAtual);
         if (emCache) return;
@@ -115,52 +177,99 @@ async function rodarFila(empresa: string, motivo: MotivoPrefetch = 'empresa') {
         gravarSummaryCache(empresaAtual, d);
     }},
     { nome: 'Cortes', fn: async () => {
-        await obterBase(empresaAtual, loja);
-        await tentarCarregarConfiguracaoEmpresa(empresaAtual, loja);
+        await Promise.all([
+          obterBase(empresaAtual, loja),
+          tentarCarregarConfiguracaoEmpresa(empresaAtual, loja),
+        ]);
     }},
     { nome: 'Relatórios', fn: async () => {
-        await obterCatalogo();
-        await obterBase(empresaAtual, loja);
-        await tentarCarregarConfiguracaoEmpresa(empresaAtual, loja);
+        await Promise.all([
+          obterCatalogo(),
+          obterBase(empresaAtual, loja),
+          tentarCarregarConfiguracaoEmpresa(empresaAtual, loja),
+        ]);
     }},
     { nome: 'Clientes: Visão geral', fn: async () => {
-        for (const modo of MODOS_PERIODO) {
-          await obterPainelClientes(empresaAtual, loja, undefined, modo);
-        }
+        await Promise.all(MODOS_PERIODO.map((modo) => obterPainelClientes(empresaAtual, loja, undefined, modo)));
     }},
-    { nome: 'Clientes: Base e tags', fn: async () => { await obterBaseClientes(empresaAtual); await obterTagsClientes(empresaAtual); } },
+    { nome: 'Clientes: Base e tags', fn: async () => {
+        await Promise.all([obterBaseClientes(empresaAtual), obterTagsClientes(empresaAtual)]);
+    }},
     { nome: 'Vendedores', fn: async () => {
-        for (const modo of MODOS_PERIODO) {
-          await obterRankingVendedores(empresaAtual, loja, undefined, modo);
-        }
+        await Promise.all(MODOS_PERIODO.map((modo) => obterRankingVendedores(empresaAtual, loja, undefined, modo)));
     }},
     tarefaEstoque,
     { nome: 'Despesas', fn: async () => {
-        await obterResumoDespesas(empresaAtual, { loja, meses: 12, usarMesesFechados: true });
-        await obterResumoDespesas(empresaAtual, { loja, meses: 12, usarMesesFechados: false });
+        await Promise.all([
+          obterResumoDespesas(empresaAtual, { loja, meses: 12, usarMesesFechados: true }),
+          obterResumoDespesas(empresaAtual, { loja, meses: 12, usarMesesFechados: false }),
+        ]);
     }},
-    { nome: 'Monitoramento', fn: () => obterMonitorEmpresas({ meses: 6, metrica: 'receita' }) }
+    { nome: 'Pós precificação', fn: async () => {
+        await Promise.all([
+          obterPosPrecificacao(empresaAtual, { loja, usarMesesFechados: true }),
+          obterPosPrecificacao(empresaAtual, { loja, usarMesesFechados: false }),
+        ]);
+    }},
+    { nome: 'Monitoramento', fn: async () => {
+        await obterMonitorEmpresas({ meses: 6, metrica: 'receita' });
+    }},
   ];
 
   const nomesEtapas = tarefas.map((t) => t.nome);
+  const emAndamento = new Set<string>();
+  const feitas = new Set<string>();
 
-  for (let i = 0; i < tarefas.length; i++) {
-    if (versaoFila !== versaoExecucao) break;
-    const tarefa = tarefas[i];
+  const emitir = () => {
+    const voo = [...emAndamento];
+    if (voo.length === 0 && feitas.size === tarefas.length) return;
+    despacharProgresso({
+      rodando: true,
+      atual: feitas.size,
+      total: tarefas.length,
+      nome: voo.length === 1 ? voo[0] : (voo.length > 1 ? `${voo.length} telas` : ''),
+      etapas: nomesEtapas,
+      emAndamento: voo,
+      feitas: [...feitas],
+    });
+  };
 
-    despacharProgresso({ rodando: true, atual: i, total: tarefas.length, nome: tarefa.nome, etapas: nomesEtapas });
-
+  const rodarTarefa = async (tarefa: TarefaPrefetch) => {
+    if (cancelado()) return;
+    emAndamento.add(tarefa.nome);
+    emitir();
     try {
       await tarefa.fn();
-      if (versaoFila !== versaoExecucao) break;
-      await new Promise((resolve) => setTimeout(resolve, 200));
     } catch (e) {
       console.warn('Prisma Prefetch: falha ao precarregar tela silenciosamente', e);
     }
+    emAndamento.delete(tarefa.nome);
+    feitas.add(tarefa.nome);
+    emitir();
+  };
+
+  const pathname = typeof window !== 'undefined' ? window.location.pathname : '/';
+  const prioridade = nomeTarefaDaRota(pathname, nomesEtapas);
+  const resto = tarefas.filter((tarefa) => tarefa.nome !== prioridade);
+  const primeira = tarefas.find((tarefa) => tarefa.nome === prioridade);
+
+  if (primeira) {
+    await rodarTarefa(primeira);
+  }
+  if (!cancelado()) {
+    await mapaComLimite(resto, LIMITE_PARALELO, rodarTarefa, cancelado);
   }
 
-  if (versaoFila === versaoExecucao) {
-    despacharProgresso({ rodando: false, atual: tarefas.length, total: tarefas.length, nome: 'Concluído', etapas: nomesEtapas });
+  if (!cancelado()) {
+    despacharProgresso({
+      rodando: false,
+      atual: tarefas.length,
+      total: tarefas.length,
+      nome: 'Concluído',
+      etapas: nomesEtapas,
+      emAndamento: [],
+      feitas: nomesEtapas,
+    });
   }
 }
 

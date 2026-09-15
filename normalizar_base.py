@@ -12,6 +12,8 @@ Layout da fonte (uma subpasta por empresa, direto nela, sem `BI/`):
     <pasta_fonte>/<empresa>/<empresa>_PRODUTO.csv           (obrigatório)
     <pasta_fonte>/<empresa>/Dados_Estoque_<empresa>.*       (opcional, só Liquidez)
     <pasta_fonte>/<empresa>/Dados_Vendas_<empresa>.*        (opcional, só Liquidez)
+    <pasta_fonte>/<empresa>/{empresa}_CONTROLADORIA.csv     (opcional, Despesas)
+    <pasta_fonte>/<empresa>/{empresa}_PRECIFICACAO.csv      (opcional, Pós precificação)
 
 Movimento e Produto são CSV ';' com valores entre aspas duplas. A ordem das
 colunas pode variar de empresa para empresa — os nomes de coluna, não. A
@@ -170,6 +172,22 @@ def resolver_caminho_controladoria(pasta_empresa: Path) -> Path | None:
     if not pasta_empresa.is_dir():
         return None
     alvo = f"{pasta_empresa.name}_CONTROLADORIA.csv".casefold()
+    for arquivo in pasta_empresa.iterdir():
+        if arquivo.is_file() and arquivo.name.casefold() == alvo:
+            return arquivo
+    return None
+
+
+def resolver_caminho_precificacao(pasta_empresa: Path) -> Path | None:
+    """Localiza `{empresa}_PRECIFICACAO.csv` na fonte, se existir.
+
+    Pós precificação é opcional e independente de Movimento/Produto — dump
+    próprio, nome fixo. Empresa sem o arquivo não tem a tela; não é
+    `ErroNormalizacao`. O CSV deste dump vem com vírgula, não ponto-e-vírgula.
+    """
+    if not pasta_empresa.is_dir():
+        return None
+    alvo = f"{pasta_empresa.name}_PRECIFICACAO.csv".casefold()
     for arquivo in pasta_empresa.iterdir():
         if arquivo.is_file() and arquivo.name.casefold() == alvo:
             return arquivo

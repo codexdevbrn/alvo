@@ -4,6 +4,20 @@ Formato: uma seção por versão publicada, mais recente no topo. Histórico é
 incremental — entradas antigas nunca são apagadas. O estado atual das telas e
 funcionalidades vive em `DOC_TEC.md`, não aqui.
 
+## 1.7.13 — 2026-09-15
+
+### Adicionado
+
+- Tela **Pós precificação**: lê `{empresa}_PRECIFICACAO.csv`, cruza com o
+  movimento e mostra o que foi marcado na última rodada e como andou depois
+  (lucro/dia, qtd/dia, margem vs alvo). Carrossel dos pares, gráficos mensais
+  e lista clicável. Cortes de Relatórios não entram — o dump *é* o recorte.
+
+### Alterado
+
+- Prefetch das telas deixa de ser fila única: prioriza a rota aberta e
+  carrega o resto em paralelo (teto de 4).
+
 ## 1.7.12 — 2026-09-15
 
 ### Adicionado

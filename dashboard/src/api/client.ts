@@ -1354,6 +1354,120 @@ export async function obterDetalheDespesas(
 }
 
 // ---------------------------------------------------------------------------
+// Pós precificação
+// ---------------------------------------------------------------------------
+
+export type PeriodoIso = { inicio: string | null; fim: string | null };
+
+export type SituacaoPrecificacao = 'acima' | 'abaixo' | 'no_alvo' | 'sem_venda' | 'sem_alvo';
+
+export type PontoSeriePrecificacao = {
+  periodo: string;
+  rotulo: string;
+  receita: number;
+  lucro: number;
+  qtd: number;
+  margem: number | null;
+  dias_venda: number;
+  lucro_dia: number | null;
+  qtd_dia: number | null;
+};
+
+export type SituacoesPrecificacao = Record<SituacaoPrecificacao, number>;
+
+export type ItemPosPrecificacao = {
+  nome: string;
+  skus_dump: number;
+  receita_dump: number;
+  margem_anterior_dump: number | null;
+  margem_alvo: number | null;
+  receita_antes: number;
+  receita_depois: number;
+  lucro_antes: number;
+  lucro_depois: number;
+  qtd_antes: number;
+  qtd_depois: number;
+  margem_antes: number | null;
+  margem_depois: number | null;
+  dias_venda_antes: number;
+  dias_venda_depois: number;
+  lucro_dia_antes: number | null;
+  lucro_dia_depois: number | null;
+  qtd_dia_antes: number | null;
+  qtd_dia_depois: number | null;
+  variacao_receita_pct: number | null;
+  variacao_lucro_pct: number | null;
+  variacao_qtd_pct: number | null;
+  gap_alvo_pp: number | null;
+  situacao: SituacaoPrecificacao;
+  serie_mensal: PontoSeriePrecificacao[];
+};
+
+export type ResumoPosPrecificacao = {
+  receita_dump: number;
+  margem_anterior_dump: number | null;
+  margem_alvo: number | null;
+  receita_antes: number;
+  receita_depois: number;
+  lucro_antes: number;
+  lucro_depois: number;
+  qtd_antes: number;
+  qtd_depois: number;
+  margem_antes: number | null;
+  margem_depois: number | null;
+  dias_venda_antes: number;
+  dias_venda_depois: number;
+  lucro_dia_antes: number | null;
+  lucro_dia_depois: number | null;
+  qtd_dia_antes: number | null;
+  qtd_dia_depois: number | null;
+  variacao_receita_pct: number | null;
+  variacao_lucro_pct: number | null;
+  variacao_qtd_pct: number | null;
+  gap_alvo_pp: number | null;
+  situacoes: SituacoesPrecificacao;
+};
+
+export type PosPrecificacaoResposta = {
+  empresa: string;
+  loja: string | null;
+  data_precificacao: string | null;
+  periodo_corte: string | null;
+  periodo_antes: PeriodoIso;
+  periodo_depois: PeriodoIso;
+  dias: number;
+  linhas_dump: number;
+  familias: number;
+  fabricantes_qtd: number;
+  pares: number;
+  skus_com_preco_sugerido: number;
+  tem_movimento_depois: boolean;
+  resumo: ResumoPosPrecificacao;
+  serie_mensal: PontoSeriePrecificacao[];
+  produtos: ItemPosPrecificacao[];
+  fabricantes: ItemPosPrecificacao[];
+};
+
+export async function obterPosPrecificacao(
+  empresa: string,
+  parametros: { loja?: string | null; usarMesesFechados?: boolean } = {},
+  signal?: AbortSignal,
+): Promise<PosPrecificacaoResposta> {
+  const query = new URLSearchParams();
+  if (parametros.loja) query.set('loja', parametros.loja);
+  if (parametros.usarMesesFechados === false) query.set('usar_mes_fechado', 'false');
+  const qs = query.toString() ? `?${query}` : '';
+  const url = `/api/precificacao/${encodeURIComponent(empresa)}${qs}`;
+  if (signal?.aborted) {
+    throw new DOMException('Aborted', 'AbortError');
+  }
+  return comCache(`pos_precificacao_v2_${empresa}_${qs}`, async () => {
+    const res = await chamar(url, { headers: authHeaders() });
+    return tratarResposta(res);
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Monitoramento de empresas
 // ---------------------------------------------------------------------------
 

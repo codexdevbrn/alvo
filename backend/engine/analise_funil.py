@@ -87,6 +87,14 @@ COLUNAS_CONTROLADORIA_EMPRESA = [
     "ID_LOJA", "DESCRICAO", "DESCRICAO_HARMONIZADA", "MES", "ANO", "VALOR",
 ]
 
+COLUNAS_PRECIFICACAO_EMPRESA = [
+    "cnpj", "descricao", "fabricante", "margem_anterior", "margem_alvo",
+    "receita", "cmv", "data_exportacao",
+]
+COLUNAS_PRECIFICACAO_OPCIONAIS = (
+    "markup_alvo", "preco_atual", "preco_sugerido", "variacao_pct",
+)
+
 MAPA_COLUNAS_MOVIMENTO_EMPRESA = {
     "ID_LOJA": "Loja",
     "NOME_CLIENTE": "Cliente",
@@ -360,15 +368,19 @@ def _parse_data_diaria(valores_data):
     return data_diaria
 
 
-def _ler_csv_empresa(caminho_arquivo, colunas_esperadas, tipos_texto):
-    """CSV ';' com aspas duplas da fonte por empresa (utf-8-sig, fallback latin1)."""
+def _ler_csv_empresa(caminho_arquivo, colunas_esperadas, tipos_texto, sep=";"):
+    """CSV da fonte por empresa (utf-8-sig, fallback latin1).
+
+    Movimento/Produto/Controladoria usam `;`. O dump de precificação chega com
+    vírgula — passar `sep=","` nele; o resto do contrato (aspas, encoding) é o mesmo.
+    """
     try:
         df = pd.read_csv(
-            caminho_arquivo, sep=";", quotechar='"', encoding="utf-8-sig", dtype=tipos_texto,
+            caminho_arquivo, sep=sep, quotechar='"', encoding="utf-8-sig", dtype=tipos_texto,
         )
     except UnicodeDecodeError:
         df = pd.read_csv(
-            caminho_arquivo, sep=";", quotechar='"', encoding="latin1", dtype=tipos_texto,
+            caminho_arquivo, sep=sep, quotechar='"', encoding="latin1", dtype=tipos_texto,
         )
     except Exception as exc:
         raise ErroCarregamentoCSV(f"Não foi possível ler {caminho_arquivo.name}: {exc}") from exc
@@ -468,6 +480,36 @@ def carregar_csv_despesas(caminho_controladoria):
         "Mês": pd.to_numeric(df["MES"], errors="coerce"),
         "Valor": _normalizar_numero_excel(df["VALOR"]).fillna(0.0),
     })
+
+
+def carregar_csv_precificacao(caminho_precificacao):
+    """Lê ``{empresa}_PRECIFICACAO.csv``: dump do modelo de preço.
+
+    Vírgula (não `;`). Sem código de produto — o grão visível é
+    família (`descricao`, = DESCRICAO_HARMONIZADA) × fabricante. CNPJ fica
+    texto para não perder zero à esquerda. Colunas de preço sugerido/atual
+    são opcionais: dump "antes de aplicar" chega com elas vazias.
+    """
+    tipos_texto = {coluna: str for coluna in ("cnpj", "descricao", "fabricante")}
+    df = _ler_csv_empresa(
+        Path(caminho_precificacao), COLUNAS_PRECIFICACAO_EMPRESA, tipos_texto, sep=",",
+    )
+    saida = pd.DataFrame({
+        "cnpj": df["cnpj"].astype(str).str.strip(),
+        "descricao": df["descricao"].astype(str).str.strip(),
+        "fabricante": df["fabricante"].astype(str).str.strip(),
+        "margem_anterior": _normalizar_numero_excel(df["margem_anterior"]),
+        "margem_alvo": _normalizar_numero_excel(df["margem_alvo"]),
+        "receita": _normalizar_numero_excel(df["receita"]).fillna(0.0),
+        "cmv": _normalizar_numero_excel(df["cmv"]).fillna(0.0),
+        "data_exportacao": pd.to_datetime(df["data_exportacao"], errors="coerce"),
+    })
+    for coluna in COLUNAS_PRECIFICACAO_OPCIONAIS:
+        if coluna in df.columns:
+            saida[coluna] = _normalizar_numero_excel(df[coluna])
+        else:
+            saida[coluna] = pd.NA
+    return saida
 
 
 def montar_estoque_e_vendas(df_base, caminho_produto):

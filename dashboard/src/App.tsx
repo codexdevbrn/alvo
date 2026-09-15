@@ -12,6 +12,7 @@ import VendedoresPage from './pages/VendedoresPage';
 import EstoquePage from './pages/EstoquePage';
 import DespesasPage from './pages/DespesasPage';
 import AssistenteIAPage from './pages/AssistenteIAPage';
+import PosPrecificacaoPage from './pages/PosPrecificacaoPage';
 
 // Login desativado: o Analisador é aberto, como o Dashboard. A tela de login
 // segue existindo em /login (o backend continua emitindo token para quem quiser
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/vendedores" element={<VendedoresPage />} />
           <Route path="/estoque" element={<EstoquePage />} />
           <Route path="/despesas" element={<DespesasPage />} />
+          <Route path="/pos-precificacao" element={<PosPrecificacaoPage />} />
           <Route path="/assistente" element={<AssistenteIAPage />} />
           <Route path="/mercadologico" element={<MercadologicoPage />} />
         </Routes>

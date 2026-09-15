@@ -12,8 +12,8 @@ const OPCOES: Array<{ valor: boolean; rotulo: string; titulo: string }> = [
 /**
  * Controle global (mesma pasta de trabalho, não por empresa): liga/desliga
  * as exclusões e regras de cliente/produto configuradas no Relatórios nas
- * outras telas (Dashboard, Clientes, Vendedores, Estoque). Despesas não
- * entra — fonte é a Controladoria, não a base de vendas.
+ * outras telas (Dashboard, Clientes, Vendedores, Estoque). Despesas e
+ * Pós precificação não entram — fontes próprias, não a base recortada.
  */
 export function TopoCortesToggle() {
   const [ativo, setAtivo] = useState(false);

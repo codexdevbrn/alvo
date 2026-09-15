@@ -90,6 +90,7 @@ from normalizar_base import (  # noqa: E402
     parse_numero_flexivel,
     resolver_arquivos_dados,
     resolver_caminho_controladoria,
+    resolver_caminho_precificacao,
 )
 from normalizar_liquidez import normalizar_estoque, normalizar_vendas  # noqa: E402
 from analise_vendedores import (  # noqa: E402
@@ -102,6 +103,7 @@ from analise_vendedores import (  # noqa: E402
 from analise_clientes import montar_painel_clientes  # noqa: E402
 from estoque_cobertura import montar_cobertura_estoque, montar_resumo_estoque  # noqa: E402
 from despesas import montar_detalhe_despesas, montar_resumo_despesas  # noqa: E402
+from precificacao import montar_pos_precificacao  # noqa: E402
 
 CAMINHO_BASE_PADRAO = os.path.join(RAIZ_PROJETO, "base_de_dados.xlsx")
 
@@ -1064,6 +1066,9 @@ _cache_estoque_cobertura_lock = threading.Lock()
 # menor que MOVIMENTO_ATUAL), não justifica o segundo nível do Estoque.
 _CACHE_DESPESAS_MAX = 3
 _cache_despesas_df: OrderedDict[str, dict] = OrderedDict()
+
+_CACHE_PRECIFICACAO_MAX = 3
+_cache_precificacao_df: OrderedDict[str, dict] = OrderedDict()
 
 # Uma mesma empresa pode ser solicitada várias vezes em paralelo (F5, StrictMode,
 # vários clientes na LAN). Sem single-flight, cada request relê o XLSX e gera o
@@ -2923,6 +2928,66 @@ def obter_detalhe_despesas(
         df_filtrado, periodo=periodo, categoria=categoria, limite=limite,
     )
     resultado.update({"empresa": empresa, "loja": _normalizar_loja(loja)})
+    return resultado
+
+
+def _caminho_precificacao_empresa(empresa: str) -> Path:
+    pasta_fonte, _pasta_trabalho = _pastas_empresa(empresa)
+    caminho = resolver_caminho_precificacao(Path(pasta_fonte))
+    if caminho is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Empresa '{empresa}' não tem arquivo de precificação ({empresa}_PRECIFICACAO.csv).",
+        )
+    return caminho
+
+
+def _carregar_precificacao_df(empresa: str) -> pd.DataFrame:
+    """Dump de precificação da empresa, cacheado em memória por mtime do CSV."""
+    caminho = _caminho_precificacao_empresa(empresa)
+    try:
+        assinatura = _assinatura_arquivo(caminho)
+    except OSError as exc:
+        raise HTTPException(
+            status_code=400, detail=f"Não foi possível ler o arquivo de precificação: {exc}"
+        ) from exc
+
+    cacheado = _cache_precificacao_df.get(empresa)
+    if cacheado is not None and cacheado["assinatura"] == assinatura:
+        _cache_precificacao_df.move_to_end(empresa)
+        return cacheado["df"]
+
+    try:
+        df = af.carregar_csv_precificacao(caminho)
+    except af.ErroCarregamentoCSV as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    _cache_precificacao_df[empresa] = {"assinatura": assinatura, "df": df}
+    _cache_precificacao_df.move_to_end(empresa)
+    while len(_cache_precificacao_df) > _CACHE_PRECIFICACAO_MAX:
+        _cache_precificacao_df.popitem(last=False)
+    return df
+
+
+@app.get("/api/precificacao/{empresa}")
+def obter_pos_precificacao(
+    empresa: str,
+    loja: Optional[str] = None,
+    usar_mes_fechado: bool = True,
+    usuario: str = Depends(exigir_login),
+):
+    """Última rodada de precificação e como esses pares venderam depois da data.
+
+    O dump não tem loja; o recorte de loja vale só no movimento (desempenho).
+    Cortes de Relatórios não entram: a lista do dump *é* o recorte.
+    """
+    empresa = _validar_nome_empresa(empresa)
+    dump = _carregar_precificacao_df(empresa)
+    df, _linhas = _carregar_base(empresa, loja=loja, copiar=False)
+    resultado = montar_pos_precificacao(dump, df, usar_mes_fechado=usar_mes_fechado)
+    resultado.update({
+        "empresa": empresa,
+        "loja": _chave_escopo_loja(loja) or None,
+    })
     return resultado
 
 

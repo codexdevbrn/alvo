@@ -11,11 +11,14 @@ import {
 
 const ROTA_ETAPA: Record<string, string> = {
   Dashboard: '/',
+  Cortes: '/cortes',
+  Relatórios: '/analisador',
   'Clientes: Visão geral': '/clientes',
   'Clientes: Base e tags': '/clientes',
   Vendedores: '/vendedores',
   Estoque: '/estoque',
   Despesas: '/despesas',
+  'Pós precificação': '/pos-precificacao',
   Monitoramento: '/monitor',
 };
 
@@ -67,6 +70,17 @@ export function PrefetchIndicator() {
 
   const progresso = estado.total > 0 ? (estado.atual / estado.total) * 100 : 0;
   const finalizado = !estado.rodando && estado.nome === 'Concluído';
+  const feitas = new Set(estado.feitas ?? []);
+  const emAndamento = new Set(
+    estado.emAndamento?.length
+      ? estado.emAndamento
+      : (estado.rodando && estado.nome ? [estado.nome] : []),
+  );
+  const rotulo = finalizado
+    ? 'Tudo pronto!'
+    : emAndamento.size > 1
+      ? `Carregando ${emAndamento.size} telas…`
+      : `Carregando: ${estado.nome}`;
 
   return (
     <div className={`prefetch-indicator ${finalizado ? 'is-finished' : ''}`}>
@@ -77,7 +91,7 @@ export function PrefetchIndicator() {
           <Loader2 size={16} className="prefetch-icon-spin" />
         )}
         <span className="prefetch-text">
-          {finalizado ? 'Tudo pronto!' : `Carregando: ${estado.nome}`}
+          {rotulo}
         </span>
       </div>
       {!finalizado && (
@@ -90,8 +104,8 @@ export function PrefetchIndicator() {
       )}
       {estado.etapas.length > 0 && (
         <ul className="prefetch-etapas-lista">
-          {estado.etapas.map((etapa, i) => {
-            const status = i < estado.atual || finalizado ? 'feita' : i === estado.atual && estado.rodando ? 'atual' : 'pendente';
+          {estado.etapas.map((etapa) => {
+            const status = finalizado || feitas.has(etapa) ? 'feita' : emAndamento.has(etapa) ? 'atual' : 'pendente';
             const rota = ROTA_ETAPA[etapa];
             return (
               <li key={etapa} className={`prefetch-etapa prefetch-etapa-${status}`}>

@@ -21,6 +21,7 @@ import {
   Receipt,
   Bot,
   Scissors,
+  BadgePercent,
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getToken, clearToken, obterStatusAtualizacao, type StatusAtualizacao } from '../api/client';
@@ -122,6 +123,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   const emVendedores = location.pathname.startsWith('/vendedores');
   const emEstoque = location.pathname.startsWith('/estoque');
   const emDespesas = location.pathname.startsWith('/despesas');
+  const emPosPrecificacao = location.pathname.startsWith('/pos-precificacao');
   const emAssistente = location.pathname.startsWith('/assistente');
   const emConfig = location.pathname.startsWith('/config');
   const emMercadologico = location.pathname.startsWith('/mercadologico');
@@ -288,6 +290,13 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
               onClick={() => navigate('/despesas')}
             />
             <NavItem
+              icon={<BadgePercent size={17} />}
+              label="Pós precificação"
+              collapsed={colapsado}
+              ativo={emPosPrecificacao}
+              onClick={() => navigate('/pos-precificacao')}
+            />
+            <NavItem
               icon={<Bot size={17} />}
               label="Assistente IA"
               collapsed={colapsado}
@@ -364,15 +373,15 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
               {emEstoque && <TopoVendaMediaSelect />}
               {emDespesas && <TopoDespesasPeriodoSelect />}
               {!emAssistente && !emCortes && (
-                <SidebarMesesFechadosToggle desabilitarMesmoPeriodo={emDashboard || emEstoque || emDespesas} />
+                <SidebarMesesFechadosToggle desabilitarMesmoPeriodo={emDashboard || emEstoque || emDespesas || emPosPrecificacao} />
               )}
               {/* Sem empresa selecionada, nenhuma tela aplica corte algum: o
                   Dashboard cai no summary.json estático (não passa cortes/grupos
                   para o backend) e Clientes/Vendedores/Estoque nem chegam a
                   buscar dado. Escondido aqui em vez de só desabilitado — ligado
                   sem efeito é pior que ausente. */}
-              {!!empresaEscopo && !emDespesas && !emAssistente && !emCortes && <TopoCortesToggle />}
-              {!!empresaEscopo && !emDespesas && !emAssistente && !emCortes && <TopoGruposClientesFiltro />}
+              {!!empresaEscopo && !emDespesas && !emAssistente && !emCortes && !emPosPrecificacao && <TopoCortesToggle />}
+              {!!empresaEscopo && !emDespesas && !emAssistente && !emCortes && !emPosPrecificacao && <TopoGruposClientesFiltro />}
               <SidebarEmpresaSelect />
               <SidebarLojaSelect />
             </div>
