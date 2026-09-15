@@ -4,8 +4,7 @@ import {
 } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { PeriodSelector } from './PeriodSelector';
-import { textoBannerMesesFechados } from '../utils/periodoFechado';
-import { GRANULARIDADES_DASH, rotuloUnidade } from '../utils/granularidade';
+import { GRANULARIDADES_DASH } from '../utils/granularidade';
 import type { DashboardData, GranularidadeDash } from '../types/dashboard';
 
 // ==========================================
@@ -272,7 +271,6 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
         { id: 3, name: "Desconstrução (< -60%)" }
     ];
 
-    const unidade = rotuloUnidade(granularidade);
     const hasFilters = client.length > 0 || mfr.length > 0 || desc.length > 0 || severity.length > 0
       || period.length > 0 || !usarMesesFechados || visaoDetalhada || granularidade !== 'Mensal';
 
@@ -335,29 +333,6 @@ function FilterContent({ data, filters, filterOptions, setters, onClear }: Filte
             </div>
 
             <div className="filters-options-bar">
-                <label
-                    className="periodo-fechado-check filters-option-chip"
-                    style={period.length > 0 ? { opacity: 0.5 } : undefined}
-                    title={period.length > 0
-                      ? `Sem efeito: com período selecionado à mão, os cálculos usam exatamente os ${unidade.plural} marcados.`
-                      : (usarMesesFechados
-                        ? textoBannerMesesFechados(new Date(), granularidade)
-                        : `Incluir o ${unidade.singular} corrente nos cálculos dos cards`)}
-                >
-                    <input
-                        type="checkbox"
-                        checked={usarMesesFechados}
-                        disabled={period.length > 0}
-                        onChange={(e) => setUsarMesesFechados(e.target.checked)}
-                    />
-                    <CalendarClock size={14} aria-hidden="true" />
-                    <span>
-                      {granularidade === 'Mensal'
-                        ? 'Meses fechados nos cálculos'
-                        : 'Períodos fechados nos cálculos'}
-                    </span>
-                </label>
-
                 <div className="granularidade-options" role="group" aria-label="Granularidade do dashboard">
                     <span className="granularidade-options-label">
                         <CalendarClock size={12} aria-hidden="true" /> Granularidade
