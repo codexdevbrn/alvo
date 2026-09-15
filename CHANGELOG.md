@@ -4,6 +4,27 @@ Formato: uma seção por versão publicada, mais recente no topo. Histórico é
 incremental — entradas antigas nunca são apagadas. O estado atual das telas e
 funcionalidades vive em `DOC_TEC.md`, não aqui.
 
+## 1.7.9 — 2026-09-15
+
+### Alterado
+
+- Empresa e loja saem da sidebar e vão para o topo direito; venda média do
+  Estoque sobe para o mesmo cluster. Aba de estoque "Escopo" passa a se chamar
+  "Mapa geral".
+- Tela de Vendedores deixa o toggle especial e fica no padrão das outras.
+  Clique numa linha abre o caminhar de vendas em gráfico de linha.
+- Prefetch sequencial também cobre Fechados / Completo / Mesmo período.
+- Configuração de cortes de Relatórios (clientes e produtos) volta a valer
+  nas outras telas quando ligada.
+
+### Corrigido
+
+- Despesas não abria no primeiro clique; mapa de estoque abortava o fetch
+  inicial.
+- Sidebar colapsada com buraco e rodapé esmagado; data do último movimento
+  cortada com reticências.
+- `despacharProgresso` duplicado quebrava o Vite.
+
 ## 1.7.5 — 2026-09-10
 
 ### Alterado
