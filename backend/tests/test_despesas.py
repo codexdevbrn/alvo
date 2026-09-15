@@ -1,3 +1,5 @@
+from datetime import date
+
 import pandas as pd
 
 from despesas import montar_detalhe_despesas, montar_resumo_despesas
@@ -155,3 +157,19 @@ def test_variacao_anual_none_sem_dado_no_ano_anterior():
 
     assert resultado["resumo"]["mes_mesmo_periodo_ano_anterior"] is None
     assert resultado["resumo"]["variacao_anual_pct"] is None
+
+
+def test_nao_inclui_competencia_futura_nem_mes_sem_lancamento():
+    hoje = date.today()
+    futuro_ano = hoje.year + 1
+    dados = pd.DataFrame([
+        {"Loja": "Matriz", "categoria": "ALUGUEL", "Ano": hoje.year, "Mês": 1, "Valor": 1000.0},
+        {"Loja": "Matriz", "categoria": "ALUGUEL", "Ano": futuro_ano, "Mês": 7, "Valor": 50.0},
+    ])
+    resultado = montar_resumo_despesas(dados, meses=12, usar_mes_fechado=False)
+
+    periodos = [ponto["periodo"] for ponto in resultado["serie_mensal"]]
+    teto = f"{hoje.year:04d}-{hoje.month:02d}"
+    assert all(periodo <= teto for periodo in periodos)
+    assert f"{futuro_ano:04d}-07" not in periodos
+    assert all(ponto["valor"] > 0 for ponto in resultado["serie_mensal"])

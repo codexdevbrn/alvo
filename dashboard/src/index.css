@@ -224,7 +224,7 @@ h3 {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  padding: 1.15rem 2rem 0;
+  padding: 1.15rem 2rem 0.65rem;
   position: sticky;
   top: 0;
   z-index: 40;
@@ -908,7 +908,7 @@ h3 {
   }
 
   .app-shell-topo {
-    padding: 0.85rem 1rem 0;
+    padding: 0.85rem 1rem 0.5rem;
   }
 
   .app-sidebar,
@@ -1247,8 +1247,6 @@ h3 {
   display: inline-flex;
   align-items: center;
   gap: 0.55rem;
-  flex: 1 1 auto;
-  justify-content: center;
   min-width: 0;
 }
 
@@ -1753,6 +1751,26 @@ h3 {
 
 .dashboard-results.is-filtering {
   opacity: 0.55;
+}
+
+.leitura-faixa {
+  margin: 0 0 1rem;
+  padding: 0.7rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  line-height: 1.45;
+}
+
+.leitura-faixa.is-aviso {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  color: var(--text-primary);
+}
+
+.dashboard-kpis {
+  margin-bottom: 1.5rem;
 }
 
 .dashboard-header-filter-loading {
@@ -3249,6 +3267,113 @@ h3 {
 .analisador-check input[type='checkbox']:focus-visible {
   outline: none;
   box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+/* periodo-segmented fora da sidebar (modo de separação % vs quantidade): mais
+   largo que o da sidebar, mas não precisa ocupar a linha toda. */
+.analisador-modo-segmented {
+  width: fit-content;
+  max-width: 100%;
+}
+
+.analisador-modo-segmented .periodo-segmented-btn {
+  flex: 0 0 auto;
+  padding: 0.4rem 0.9rem;
+  font-size: 0.75rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* Grupo de opções liga/desliga — lista vertical, uma linha por opção, switch à
+   direita. Substitui checkbox solto quando a opção é binária e independente
+   das outras (não uma lista que cresce, aí o padrão é .analisador-check-linha). */
+.analisador-toggle-grupo {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.5rem;
+}
+
+@media (max-width: 480px) {
+  .analisador-toggle-grupo {
+    grid-template-columns: 1fr;
+  }
+}
+
+.analisador-toggle-linha {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  /* Item de grid não encolhe por padrão (min-width: auto) — sem isto o texto
+     em nowrap estoura a coluna em vez de truncar com reticências. */
+  min-width: 0;
+  overflow: hidden;
+}
+
+.analisador-toggle-linha:hover {
+  border-color: var(--border-strong);
+  background: var(--surface-2);
+}
+
+.analisador-toggle-label {
+  font-size: 0.85rem;
+  color: var(--text-primary);
+  font-weight: 500;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.analisador-toggle-switch {
+  appearance: none;
+  flex-shrink: 0;
+  width: 2.25rem;
+  height: 1.3rem;
+  border-radius: var(--raio-pill);
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.analisador-toggle-switch::after {
+  content: '';
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 1.05rem;
+  height: 1.05rem;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+
+.analisador-toggle-switch:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.analisador-toggle-switch:checked::after {
+  transform: translateX(0.95rem);
+  background: var(--accent-contrast);
+}
+
+.analisador-toggle-switch:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--accent-glow);
+}
+
+.analisador-toggle-switch:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
 }
 
 .analisador-hint {
@@ -7384,7 +7509,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 
 .vendedores-kpis-secundarios {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
   gap: 1rem;
   min-width: 0;
 }
@@ -7667,7 +7792,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 
 @media (max-width: 1100px) {
   .vendedores-kpis { grid-template-columns: 1fr; }
-  .vendedores-kpis-secundarios { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .vendedores-kpis-secundarios { grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
   .vendedores-ficha-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .vendedores-tabela-topo,
   .vendedores-entidade-card .estoque-card-topo,
@@ -7701,6 +7826,31 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 
 .clientes-visao-referencia strong {
   color: var(--text-secondary);
+}
+
+.clientes-concentracao-punch {
+  display: grid;
+  gap: 0.1rem;
+  margin: 0 0 0.75rem;
+}
+
+.clientes-concentracao-punch strong {
+  color: var(--text-primary);
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  font-weight: 700;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.clientes-concentracao-punch span {
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+}
+
+.clientes-concentracao-punch em {
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-style: normal;
 }
 
 .clientes-visao-aviso {
@@ -8217,6 +8367,14 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   font-weight: 600;
+}
+
+.despesas-hero-nota.is-alta {
+  color: var(--success);
+}
+
+.despesas-hero-nota.is-queda {
+  color: var(--danger);
 }
 
 .despesas-hero-valor {

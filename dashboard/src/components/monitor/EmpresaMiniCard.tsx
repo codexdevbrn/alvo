@@ -23,12 +23,10 @@ function ehMoeda(metrica: MetricaMonitor): boolean {
 type PontoSparkline = { rotulo: string; valor: number };
 
 /**
- * Rótulo de valor sobre o ponto, intercalado — mesma ideia do Histórico do
- * Dashboard (que também pula rótulos): escrever os 12 num card de 1/3 de tela
- * viraria borrão. Um a cada dois recebe texto, e o último sempre, porque é o
- * número que se lê primeiro.
+ * Rótulo só no último ponto — o número que se lê primeiro. Os demais pontos
+ * ficam no tooltip: um card de 1/3 de tela não aguenta 12 valores.
  */
-function RotuloIntercalado(props: {
+function RotuloUltimo(props: {
   x?: number | string;
   y?: number | string;
   value?: number | string | Array<number | string> | boolean | null;
@@ -44,24 +42,18 @@ function RotuloIntercalado(props: {
   const total = props.total ?? 0;
   const ultimo = total > 0 && indice === total - 1;
 
-  if (!valor) return null;
-  if (!ultimo && indice % 2 !== 0) return null;
-
-  // Alterna acima/abaixo: em série quase plana dois rótulos vizinhos ficariam
-  // colados. O último fica sempre acima e ancorado à direita, para não sair do
-  // card.
-  const acima = ultimo || indice % 4 === 0;
+  if (!ultimo || !valor) return null;
 
   return (
     <text
       x={x}
-      y={y + (acima ? -7 : 13)}
-      dx={indice === 0 ? 2 : ultimo ? -2 : 0}
-      textAnchor={indice === 0 ? 'start' : ultimo ? 'end' : 'middle'}
+      y={y - 7}
+      dx={-2}
+      textAnchor="end"
       fill="var(--text-primary)"
       fontSize={9}
-      fontWeight={ultimo ? 700 : 500}
-      opacity={ultimo ? 0.95 : 0.6}
+      fontWeight={700}
+      opacity={0.95}
       style={{ pointerEvents: 'none' }}
     >
       {formatCompacto(valor, moeda)}
@@ -121,7 +113,7 @@ function Sparkline({ pontos, moeda }: { pontos: PontoSparkline[]; moeda: boolean
         {/* Margens enxutas: o que sobra aqui vira altura útil de plotagem, que é o
             que faz a variação aparecer. `top` continua reservando espaço para os
             rótulos de valor acima dos pontos. */}
-        <AreaChart data={pontos} margin={{ top: 14, right: 18, left: 18, bottom: 0 }}>
+        <AreaChart data={pontos} margin={{ top: 14, right: 18, left: 8, bottom: 0 }}>
           <defs>
             <linearGradient id="monitorSpark" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor={COR_ANO_RECENTE} stopOpacity={0.3} />
@@ -150,7 +142,7 @@ function Sparkline({ pontos, moeda }: { pontos: PontoSparkline[]; moeda: boolean
           <YAxis
             hide
             domain={[
-              (min: number) => min - (min > 0 ? min * 0.35 : 0),
+              (min: number) => min - (min > 0 ? min * 0.12 : 0),
               (max: number) => max * 1.12,
             ]}
           />
@@ -173,7 +165,7 @@ function Sparkline({ pontos, moeda }: { pontos: PontoSparkline[]; moeda: boolean
             // `ultimo` era sempre falso — o último ponto, que é o número que se lê
             // primeiro, ficava sem rótulo sempre que a série tinha tamanho par.
             label={(props: object) => (
-              <RotuloIntercalado {...props} total={pontos.length} moeda={moeda} />
+              <RotuloUltimo {...props} total={pontos.length} moeda={moeda} />
             )}
           />
         </AreaChart>

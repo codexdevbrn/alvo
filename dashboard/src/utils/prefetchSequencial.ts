@@ -11,7 +11,10 @@ import {
   obterMonitorEmpresas,
   obterSummaryEmpresa,
   obterBaseClientes,
-  obterTagsClientes
+  obterTagsClientes,
+  obterBase,
+  obterCatalogo,
+  tentarCarregarConfiguracaoEmpresa,
 } from '../api/client';
 import type { ModoPeriodo } from './mesesFechados';
 
@@ -110,6 +113,15 @@ async function rodarFila(empresa: string, motivo: MotivoPrefetch = 'empresa') {
         if (emCache) return;
         const d = await obterSummaryEmpresa(empresaAtual);
         gravarSummaryCache(empresaAtual, d);
+    }},
+    { nome: 'Cortes', fn: async () => {
+        await obterBase(empresaAtual, loja);
+        await tentarCarregarConfiguracaoEmpresa(empresaAtual, loja);
+    }},
+    { nome: 'Relatórios', fn: async () => {
+        await obterCatalogo();
+        await obterBase(empresaAtual, loja);
+        await tentarCarregarConfiguracaoEmpresa(empresaAtual, loja);
     }},
     { nome: 'Clientes: Visão geral', fn: async () => {
         for (const modo of MODOS_PERIODO) {

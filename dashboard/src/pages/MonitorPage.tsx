@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, RefreshCw, Search } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
+import { LeituraFaixa } from '../components/LeituraFaixa';
 import { EmpresaMiniCard } from '../components/monitor/EmpresaMiniCard';
 import { selecionarEmpresaGlobal } from '../utils/empresaSelecionada';
 import {
@@ -36,7 +37,8 @@ function lerMeses(): number {
 
 function lerOrdenacao(): OrdenacaoMonitor {
   const valor = localStorage.getItem(LS_ORDENACAO);
-  return valor === 'valor' || valor === 'variacao' ? valor : 'nome';
+  if (valor === 'nome' || valor === 'valor' || valor === 'variacao') return valor;
+  return 'variacao';
 }
 
 function normalizarBusca(valor: string): string {
@@ -70,27 +72,24 @@ export default function MonitorPage() {
     localStorage.setItem(LS_ESCOPO, escopo);
   }, [metrica, meses, busca, ordenacao, escopo]);
 
-  const carregar = useCallback((forcar = false, signal?: AbortSignal) => {
+  const carregar = useCallback((forcar = false) => {
     setCarregando(true);
     setErro(null);
-    return obterMonitorEmpresas({ metrica, meses, forcar }, signal)
+    return obterMonitorEmpresas({ metrica, meses, forcar })
       .then((resposta) => {
         setDados(resposta);
         setFavoritas(resposta.favoritas ?? []);
       })
       .catch((e) => {
-        if (signal?.aborted) return;
         setErro(e instanceof Error ? e.message : 'Falha ao carregar o monitoramento.');
       })
       .finally(() => {
-        if (!signal?.aborted) setCarregando(false);
+        setCarregando(false);
       });
   }, [metrica, meses]);
 
   useEffect(() => {
-    const controller = new AbortController();
-    void carregar(false, controller.signal);
-    return () => controller.abort();
+    void carregar(false);
   }, [carregar]);
 
   /** Atualização otimista: estrela reage sem esperar rede e reverte se salvar falhar. */
@@ -132,12 +131,15 @@ export default function MonitorPage() {
           return valorPrincipal(b, metrica) - valorPrincipal(a, metrica);
         }
         if (ordenacao === 'variacao') {
-          return (b.variacao_pct ?? Number.NEGATIVE_INFINITY)
-            - (a.variacao_pct ?? Number.NEGATIVE_INFINITY);
+          return (a.variacao_pct ?? Number.POSITIVE_INFINITY)
+            - (b.variacao_pct ?? Number.POSITIVE_INFINITY);
         }
         return a.empresa.localeCompare(b.empresa, 'pt-BR', { sensitivity: 'base' });
       });
   }, [busca, empresas, escopo, favoritas, metrica, ordenacao]);
+
+  const emQueda = empresasVisiveis.filter((item) => (item.variacao_pct ?? 0) < 0).length;
+  const emAlta = empresasVisiveis.filter((item) => (item.variacao_pct ?? 0) > 0).length;
 
   return (
     <AppShell>
@@ -219,7 +221,7 @@ export default function MonitorPage() {
             >
               <option value="nome">Nome</option>
               <option value="valor">Maior valor</option>
-              <option value="variacao">Maior variação</option>
+              <option value="variacao">Maior queda</option>
             </select>
           </label>
 
@@ -245,6 +247,13 @@ export default function MonitorPage() {
             </div>
           </div>
         </section>
+
+        {empresasVisiveis.length > 0 && (
+          <LeituraFaixa tom={emQueda > emAlta ? 'aviso' : 'normal'}>
+            {emQueda} empresa{emQueda === 1 ? '' : 's'} em queda, {emAlta} em alta neste recorte.
+            {ordenacao === 'variacao' ? ' Ordenado pela maior queda.' : ''}
+          </LeituraFaixa>
+        )}
 
         {(metrica === 'receita_dia' || metrica === 'lucro_dia') && (
           <p className="monitor-nota">

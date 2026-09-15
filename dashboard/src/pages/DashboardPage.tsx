@@ -17,11 +17,14 @@ import { EVENTO_EMPRESA } from '../utils/empresaSelecionada';
 import { EVENTO_LOJA, lerLojas } from '../utils/lojaSelecionada';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useMesesFechados } from '../hooks/useMesesFechados';
+import { useVersaoCortesRelatorios } from '../hooks/useVersaoCortesRelatorios';
+import { useGruposClientesFiltro } from '../hooks/useGruposClientesFiltro';
+import { gruposClientesParam } from '../utils/gruposClientesFiltro';
 import { modoParaBooleano } from '../utils/mesesFechados';
 import { obterAguardandoBaseDados, obterSummaryEmpresa } from '../api/client';
 import { formatCurrency, formatNumber } from '../utils/formatters';
 import { COR_ANO_ANTERIOR, COR_ANO_RECENTE, corDoAno } from '../utils/coresAno';
-import { descricaoPeriodoPadrao, mesDeRotulo, resolverPeriodoEfetivo, rotuloCorteFechadoParaGrafico } from '../utils/periodoFechado';
+import { abrevMesAtual, descricaoPeriodoPadrao, mesDeRotulo, resolverPeriodoEfetivo, rotuloCorteFechadoParaGrafico } from '../utils/periodoFechado';
 import {
   GRANULARIDADES_DASH,
   countBucketsInIndices,
@@ -206,6 +209,9 @@ export default function DashboardPage() {
   // "fechados" exclui o mês corrente, qualquer outro modo vira "completo".
   const [modoPeriodo, setModoPeriodo] = useMesesFechados();
   const usarMesesFechados = modoParaBooleano(modoPeriodo);
+  const versaoCortes = useVersaoCortesRelatorios();
+  const gruposClientes = useGruposClientesFiltro();
+  const gruposParam = gruposClientesParam(gruposClientes);
   const setUsarMesesFechados = useCallback(
     (v: boolean) => setModoPeriodo(v ? 'fechados' : 'completo'),
     [setModoPeriodo],
@@ -327,11 +333,13 @@ export default function DashboardPage() {
 
     const controller = new AbortController();
 
+    const chaveCache = gruposParam ? `${empresa}::${gruposParam}` : empresa;
+
     const carregar = async () => {
       setEmpresaError(null);
 
       // Já baixado nesta sessão: volta instantâneo, sem animação nenhuma.
-      const emCache = lerSummaryCache(empresa);
+      const emCache = lerSummaryCache(chaveCache);
       if (emCache) {
         setData(emCache);
         setLoading(false);
@@ -352,10 +360,10 @@ export default function DashboardPage() {
         }
 
         const d = empresa
-          ? await obterSummaryEmpresa(empresa, controller.signal)
+          ? await obterSummaryEmpresa(empresa, controller.signal, gruposParam)
           : await carregarEstatico();
         if (!cancelado) {
-          gravarSummaryCache(empresa, d);
+          gravarSummaryCache(chaveCache, d);
           setData(d);
         }
       } catch (err) {
@@ -392,7 +400,7 @@ export default function DashboardPage() {
       controller.abort();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [empresa]);
+  }, [empresa, versaoCortes, gruposParam]);
 
   useEffect(() => {
     obterAguardandoBaseDados(false).then(setAguardandoBaseDados).catch(() => { /* mantém false */ });
@@ -1030,6 +1038,7 @@ export default function DashboardPage() {
         <div className={`dashboard-results${isFilterPending ? ' is-filtering' : ''}`}>
           <MetricsGrid
             stats={processed.stats}
+            mesAberto={!usarMesesFechados && period.length === 0}
             onRevenueClick={() => { setHistoryType('revenue'); setModalPeriod(period); }}
           />
 
@@ -1050,6 +1059,7 @@ export default function DashboardPage() {
               mesCorteFechado={usarMesesFechados && period.length === 0
                 ? rotuloCorteFechadoParaGrafico(granularidade)
                 : null}
+              mesAberto={!usarMesesFechados && period.length === 0 ? abrevMesAtual() : null}
               isLoading={isFilterPending}
             />
 

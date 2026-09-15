@@ -20,6 +20,8 @@ interface StatCardProps {
 
 export const StatCard = ({ title, value, icon: Icon, trend, trendUp, trendArrow, useTrendColor, valueClassName, onClick }: StatCardProps) => {
     const accentColor = useTrendColor ? (trendUp ? 'var(--success)' : 'var(--danger)') : 'var(--accent)';
+    const mostrarSeta = trendArrow != null || !!useTrendColor;
+    const setaParaCima = (trendArrow ?? (trendUp ? 'up' : 'down')) === 'up';
     return (
         <div
             className={`glass-card stat-card-container ${onClick ? 'interactive-card' : ''} stat-card-responsive`}
@@ -34,9 +36,11 @@ export const StatCard = ({ title, value, icon: Icon, trend, trendUp, trendArrow,
                 >{value}</h3>
                 {trend && (
                     <p className="stat-card-trend" style={{
-                        color: trendUp ? 'var(--success)' : 'var(--danger)'
+                        color: useTrendColor
+                            ? (trendUp ? 'var(--success)' : 'var(--danger)')
+                            : 'var(--text-muted)',
                     }}>
-                        {(trendArrow ?? (trendUp ? 'up' : 'down')) === 'up' ? '↑' : '↓'} {trend}
+                        {mostrarSeta ? `${setaParaCima ? '↑' : '↓'} ` : ''}{trend}
                     </p>
                 )}
             </div>

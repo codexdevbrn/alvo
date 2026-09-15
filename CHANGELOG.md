@@ -4,6 +4,51 @@ Formato: uma seção por versão publicada, mais recente no topo. Histórico é
 incremental — entradas antigas nunca são apagadas. O estado atual das telas e
 funcionalidades vive em `DOC_TEC.md`, não aqui.
 
+## 1.7.12 — 2026-09-15
+
+### Adicionado
+
+- Tela **Cortes** na sidebar: configuração de grupos de clientes e produtos
+  sai do Relatórios e vira página própria.
+- Filtro global de grupos no topo (G1 / G2 / G3 / Demais / Balcão) com
+  "Cortes: Com corte" ligado — vale no Dashboard, Clientes, Estoque e
+  Vendedores.
+- Frase de leitura no topo das telas: o que os números significam, com aviso
+  quando o mês está aberto ou a variação parece buraco de dado.
+
+### Alterado
+
+- Despesas ignora mês sem lançamento e competência futura; média e variação
+  usam só os meses com valor, sem cauda de zeros até 2027.
+- Estoque recorta também os produtos excluídos nos Cortes (antes só
+  vendas/CMV sumiam; o item continuava em dinheiro dormindo).
+- Toggle "Cortes" passa a refazer as telas já abertas, não só o cache.
+
+### Corrigido
+
+- Dashboard aplica filtro de grupos e exclusão de balcão no summary, iguais
+  às outras telas.
+
+## 1.7.11 — 2026-09-15
+
+### Alterado
+
+- Telas de dados mercadológicos deixam de repetir empresa, loja e meses
+  fechados — o escopo fica só no topo.
+- Dashboard perde o checkbox duplicado de meses fechados na `FilterBar`.
+
+### Corrigido
+
+- Texto ativo do toggle Sintética/Detalhada voltou a contrastar com o ouro.
+
+## 1.7.10 — 2026-09-15
+
+### Alterado
+
+- Meses fechados e cortes de Relatórios sobem para a barra de topo.
+- Despesas guarda o período escolhido; venda média vira combobox pesquisável.
+- Prefetch de Clientes distingue Visão geral e Base e tags.
+
 ## 1.7.9 — 2026-09-15
 
 ### Alterado

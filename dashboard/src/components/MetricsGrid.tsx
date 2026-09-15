@@ -1,22 +1,21 @@
-import { DollarSign, TrendingUp, TrendingDown } from 'lucide-react';
+import { DollarSign, TrendingDown, TrendingUp } from 'lucide-react';
 import { StatCard } from './StatCard';
+import { LeituraFaixa } from './LeituraFaixa';
 import { formatCurrency, formatPercent } from '../utils/formatters';
 import type { DashboardStats } from '../types/dashboard';
-
-// ==========================================
-// Types & Interfaces
-// ==========================================
 
 interface MetricsGridProps {
     stats: DashboardStats | null;
     onRevenueClick?: () => void;
+    mesAberto?: boolean;
 }
 
-// ==========================================
-// Main Component
-// ==========================================
+function textoPct(valor: number): string {
+    if (valor > 1000) return '1000%+';
+    return `${valor >= 0 ? '+' : ''}${formatPercent(valor)}`;
+}
 
-export function MetricsGrid({ stats, onRevenueClick }: MetricsGridProps) {
+export function MetricsGrid({ stats, onRevenueClick, mesAberto = false }: MetricsGridProps) {
     if (!stats) return null;
 
     const { statsA, statsB, singleYearMode, labelA, labelB, yearLabel, unidadePeriodo } = stats;
@@ -25,7 +24,6 @@ export function MetricsGrid({ stats, onRevenueClick }: MetricsGridProps) {
     const lenB = stats.lenB || 1;
     const unidade = unidadePeriodo || 'mês';
 
-    // YoY multi-ano: média por bucket da grain (valores mudam ao trocar Mensal/T/S/Anual).
     const revA = singleYearMode ? (statsA.rawRev || 0) : ((statsA.rawRev || 0) / lenA);
     const revB = singleYearMode ? (statsB.rawRev || 0) : ((statsB.rawRev || 0) / lenB);
     const revTotal = stats.statsTotal?.rawRev || 0;
@@ -42,54 +40,47 @@ export function MetricsGrid({ stats, onRevenueClick }: MetricsGridProps) {
         trendPct = stats.performancePct;
     }
 
-    // ==========================================
-    // Helper Functions
-    // ==========================================
-
     const formatPerformance = (val: number) => {
         const formatted = formatCurrency(val);
         if (val > 0) return `+ ${formatted}`;
         return formatted;
     };
 
-    const tituloDesempenho = singleYearMode
-        ? `Receita Total (${yearLabel})`
-        : `Desempenho / ${unidade}`;
+    const heroValor = formatCurrency(singleYearMode ? revTotal : revB);
+    const heroRotulo = singleYearMode
+        ? `Receita total (${yearLabel})`
+        : `Receita média / ${unidade}${labelB ? ` (${labelB})` : ''}`;
 
-    const tituloReceita = singleYearMode
-        ? `Média de Receita (${yearLabel})`
-        : `Receita média / ${unidade} (${labelB})`;
-
-    // ==========================================
-    // Render
-    // ==========================================
+    const leitura = mesAberto
+        ? `Mês corrente ainda em aberto — o último ponto do gráfico não é mês cheio. ${heroRotulo}: ${heroValor}${showTrend ? ` · ${textoPct(trendPct)} vs ${labelA}` : ''}.`
+        : `${stats.periodoDescricao ?? `Comparação por ${unidade} fechado`}. ${heroRotulo}: ${heroValor}${showTrend ? ` · ${textoPct(trendPct)} vs ${labelA}` : ''}.`;
 
     return (
-        <div className="stat-grid">
-            <StatCard
-                title={tituloDesempenho}
-                value={singleYearMode ? formatCurrency(revTotal) : formatPerformance(trendValYoy)}
-                icon={DollarSign}
-                trendUp={singleYearMode ? true : trendValYoy >= 0}
-                useTrendColor={!singleYearMode}
-                onClick={onRevenueClick}
-            />
-
-            <StatCard
-                title={tituloReceita}
-                value={formatCurrency(singleYearMode ? revAvg : revB)}
-                icon={singleYearMode ? TrendingUp : DollarSign}
-                useTrendColor={false}
-                onClick={onRevenueClick}
-            />
-
-            <StatCard
-                title={singleYearMode ? "Tendência" : "Performance (média da variação)"}
-                value={!showTrend ? '-' : (trendPct > 1000 ? '1000%+' : `${trendPct >= 0 ? '+' : ''}${formatPercent(trendPct)}`)}
-                icon={!showTrend ? TrendingUp : (trendPct >= 0 ? TrendingUp : TrendingDown)}
-                trendUp={trendPct >= 0}
-                useTrendColor={showTrend}
-            />
-        </div>
+        <>
+            <LeituraFaixa tom={mesAberto ? 'aviso' : 'normal'}>{leitura}</LeituraFaixa>
+            <div className="despesas-kpis dashboard-kpis">
+                <article className="glass-card glass-card-flat vendedores-hero">
+                    <div className="despesas-hero-texto">
+                        <p className="despesas-hero-rotulo">
+                            <DollarSign size={14} aria-hidden="true" /> {heroRotulo}
+                        </p>
+                        <strong className="despesas-hero-valor">{heroValor}</strong>
+                        <p className={`despesas-hero-nota${showTrend ? (trendPct >= 0 ? ' is-alta' : ' is-queda') : ''}`}>
+                            {showTrend
+                                ? `${textoPct(trendPct)} vs ${labelA}`
+                                : 'sem período anterior para comparar'}
+                        </p>
+                    </div>
+                </article>
+                <StatCard
+                    title={singleYearMode ? `Média de receita (${yearLabel})` : `Desempenho / ${unidade}`}
+                    value={singleYearMode ? formatCurrency(revAvg) : formatPerformance(trendValYoy)}
+                    icon={singleYearMode ? DollarSign : (trendValYoy >= 0 ? TrendingUp : TrendingDown)}
+                    trendUp={singleYearMode ? undefined : trendValYoy >= 0}
+                    useTrendColor={!singleYearMode}
+                    onClick={onRevenueClick}
+                />
+            </div>
+        </>
     );
 }

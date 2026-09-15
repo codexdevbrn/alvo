@@ -26,6 +26,8 @@ interface HistoryChartProps {
     /** Quando true, traça linha vertical no último mês fechado considerado nos cálculos. */
     usarMesesFechados?: boolean;
     mesCorteFechado?: string | null;
+    /** Mês corrente ainda aberto (modo Completo). Não é corte de cálculo — é aviso. */
+    mesAberto?: string | null;
     /** Quando true, os filtros estão sendo recalculados: o gráfico sai e,
      * quando os novos dados chegam, se redesenha da esquerda pra direita. */
     isLoading?: boolean;
@@ -40,77 +42,6 @@ interface HistoryChartProps {
 // ==========================================
 // Helper Components/Functions
 // ==========================================
-
-// Quando os valores das duas séries num mesmo ponto estão próximos, seus
-// rótulos (ambos desenhados ~10px acima da linha) colidem. Para evitar isso,
-// olhamos o valor da série "irmã" no mesmo índice (via chartData) e, se a
-// diferença for pequena relativo à escala, afastamos os dois rótulos: o de
-// maior valor sobe mais, o de menor valor desce para abaixo do ponto.
-/** Campos que o recharts efetivamente passa para `LabelList content` neste uso
- * (posição calculada + valor do ponto); "total" não é declarado no tipo público
- * do recharts mas é passado em runtime pela lib para labels de Area/Bar. */
-interface LabelRenderProps {
-    x?: number | string;
-    y?: number | string;
-    value?: number | string | Array<number | string> | boolean | null;
-    index?: number;
-    total?: number;
-}
-
-const renderCustomizedLabel = (
-    props: LabelRenderProps,
-    isCurrency: boolean,
-    chartData: ChartPoint[],
-    otherKey: 'revenueA' | 'revenueB',
-) => {
-    const x = Number(props.x) || 0;
-    const y = Number(props.y) || 0;
-    const value = Number(props.value) || 0;
-    const index = props.index ?? 0;
-    const total = props.total ?? 0;
-
-    if (!value || value <= 0) return null;
-
-    // denser skip on very small screens
-    const trueMobile = window.innerWidth <= 768;
-    const skip = trueMobile ? (total > 12 ? 3 : 2) : (total > 20 ? 3 : 2);
-    if (index % skip !== 0) return null;
-
-    let textAnchor: "inherit" | "end" | "start" | "middle" | undefined = "middle";
-    let dx = 0;
-    if (index === 0) {
-        textAnchor = "start";
-        dx = 4;
-    } else if (index === total - 1) {
-        textAnchor = "end";
-        dx = -10;
-    }
-
-    let dy = -10;
-    const otherValue = chartData?.[index]?.[otherKey];
-    if (typeof otherValue === 'number' && otherValue > 0) {
-        const escala = Math.max(value, otherValue, 1);
-        const diferencaRelativa = Math.abs(value - otherValue) / escala;
-        if (diferencaRelativa < 0.09) {
-            dy = value >= otherValue ? -21 : 15;
-        }
-    }
-
-    return (
-        <text
-            x={x}
-            y={y + dy}
-            dx={dx}
-            fill="#ffffff"
-            fontSize={trueMobile ? 8 : 10}
-            fontWeight={700}
-            textAnchor={textAnchor}
-            style={{ pointerEvents: 'none', opacity: 0.9 }}
-        >
-            {isCurrency ? formatCurrency(value).replace(',00', '').replace('R$', '').trim() : formatNumber(value)}
-        </text>
-    );
-};
 
 function formatCompactValue(v: number, isCurrency: boolean): string {
     return isCurrency ? formatCurrency(v).replace(',00', '').replace('R$', '').trim() : formatNumber(v);
@@ -170,6 +101,7 @@ function chartMargin(isMobile: boolean) {
 }
 
 const CUTOFF_CHART_LABEL = 'Último período considerado para os cálculos';
+const MES_ABERTO_LABEL = 'Mês em aberto';
 
 interface CutoffDisplay {
     x: string;
@@ -369,7 +301,7 @@ const CHART_ENTER_MS_SAFE = CHART_ENTER_MS;
 function HistoryChartInner({
     chartData, labelA, labelB, showA, showB, isCurrency = true, style,
     singleMonthMode = false, usarMesesFechados = false, mesCorteFechado = null,
-    isLoading = false, corA = COR_ANO_ANTERIOR, corB = COR_ANO_RECENTE,
+    mesAberto = null, isLoading = false, corA = COR_ANO_ANTERIOR, corB = COR_ANO_RECENTE,
 }: HistoryChartProps) {
     const [isMobile, setIsMobile] = useState(window.innerWidth <= 1280);
     // Ids de gradiente únicos por instância: o Dashboard e o modal de detalhe
@@ -413,16 +345,18 @@ function HistoryChartInner({
     }, [chartPhase, endChartEntering]);
 
     const mesCorteX = useMemo(() => {
-        if (!usarMesesFechados || !mesCorteFechado || chartData.length === 0) return null;
-        const alvo = mesCorteFechado.toLowerCase();
+        const alvo = (usarMesesFechados ? mesCorteFechado : mesAberto)?.toLowerCase();
+        if (!alvo || chartData.length === 0) return null;
         const ponto = chartData.find(
             (d) => d.name.toLowerCase() === alvo || d.name.split('/')[0].toLowerCase() === alvo,
         );
         return ponto?.name ?? null;
-    }, [chartData, usarMesesFechados, mesCorteFechado]);
+    }, [chartData, usarMesesFechados, mesCorteFechado, mesAberto]);
+
+    const rotuloMarca = usarMesesFechados ? CUTOFF_CHART_LABEL : MES_ABERTO_LABEL;
 
     const [displayCorte, setDisplayCorte] = useState<CutoffDisplay | null>(
-        mesCorteX ? { x: mesCorteX, exiting: false, chartLabel: CUTOFF_CHART_LABEL } : null,
+        mesCorteX ? { x: mesCorteX, exiting: false, chartLabel: rotuloMarca } : null,
     );
     const [cutoffAnimKey, setCutoffAnimKey] = useState(0);
     const [prevMesCorteX, setPrevMesCorteX] = useState(mesCorteX);
@@ -433,7 +367,7 @@ function HistoryChartInner({
         setPrevMesCorteX(mesCorteX);
         if (mesCorteX) {
             setCutoffAnimKey((k) => k + 1);
-            setDisplayCorte({ x: mesCorteX, exiting: false, chartLabel: CUTOFF_CHART_LABEL });
+            setDisplayCorte({ x: mesCorteX, exiting: false, chartLabel: rotuloMarca });
         } else {
             setDisplayCorte((prev) => (prev ? { ...prev, exiting: true } : null));
         }
@@ -588,9 +522,7 @@ function HistoryChartInner({
                                     strokeWidth={2}
                                     isAnimationActive={false}
                                     connectNulls={false}
-                                >
-                                    <LabelList content={(props) => renderCustomizedLabel(props, isCurrency, chartData, 'revenueB')} />
-                                </Area>
+                                />
                             )}
                             {showB && (
                                 <Area
@@ -602,9 +534,7 @@ function HistoryChartInner({
                                     strokeWidth={2}
                                     isAnimationActive={false}
                                     connectNulls={false}
-                                >
-                                    <LabelList content={(props) => renderCustomizedLabel(props, isCurrency, chartData, 'revenueA')} />
-                                </Area>
+                                />
                             )}
                             {displayCorte && (
                                 <ReferenceLine
@@ -641,6 +571,7 @@ export const HistoryChart = memo(HistoryChartInner, (prev, next) => (
     && prev.isCurrency === next.isCurrency
     && prev.usarMesesFechados === next.usarMesesFechados
     && prev.mesCorteFechado === next.mesCorteFechado
+    && prev.mesAberto === next.mesAberto
     && prev.isLoading === next.isLoading
     && prev.corA === next.corA
     && prev.corB === next.corB

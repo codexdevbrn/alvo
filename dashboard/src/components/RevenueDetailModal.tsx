@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { X, DollarSign, ShoppingCart, Users } from 'lucide-react';
 import { PeriodSelector } from './PeriodSelector';
-import { resolverPeriodoEfetivo } from '../utils/periodoFechado';
+import { abrevMesAtual, resolverPeriodoEfetivo, rotuloCorteFechadoParaGrafico } from '../utils/periodoFechado';
 import { HistoryChart } from './HistoryChart';
 import { formatPercent } from '../utils/formatters';
 import type { DashboardData, DashboardStats, GranularidadeDash } from '../types/dashboard';
@@ -288,6 +288,13 @@ export function RevenueDetailModal({
                                         isCurrency={historyType === 'revenue'}
                                         corA={mData.corA}
                                         corB={mData.corB}
+                                        usarMesesFechados={usarMesesFechados && modalPeriod.length === 0 && period.length === 0}
+                                        mesCorteFechado={usarMesesFechados && modalPeriod.length === 0 && period.length === 0
+                                            ? rotuloCorteFechadoParaGrafico(granularidade ?? 'Mensal')
+                                            : null}
+                                        mesAberto={!usarMesesFechados && modalPeriod.length === 0 && period.length === 0
+                                            ? abrevMesAtual()
+                                            : null}
                                         style={{ height: isMobile ? '300px' : '350px', minHeight: isMobile ? '300px' : '350px', width: '100%' }}
                                     />
                                 </div>

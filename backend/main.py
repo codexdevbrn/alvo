@@ -1268,6 +1268,7 @@ def _resposta_summary_arquivo(
     pasta_fonte: str,
     caminho_atacado: str,
     loja: Optional[str] = None,
+    grupos_clientes: Optional[set[str]] = None,
 ) -> Response:
     """Serve summary pré-serializado (RAM/disco); header com data da fonte."""
     mtime_csv = os.path.getmtime(caminho_atacado)
@@ -1280,7 +1281,10 @@ def _resposta_summary_arquivo(
     if aplicar_cortes_relatorios():
         bruto = gzip.decompress(body) if gzipped else body
         summary = json.loads(bruto)
-        filtrado = aplicar_cortes_no_summary(summary, _cortes_relatorios_do_escopo(empresa, loja))
+        cortes = _cortes_relatorios_do_escopo(empresa, loja)
+        cortes["grupos_clientes"] = grupos_clientes
+        cortes["clientes_balcao_extra"] = _clientes_balcao_extra(empresa, loja=loja)
+        filtrado = aplicar_cortes_no_summary(summary, cortes)
         return Response(
             content=json.dumps(filtrado, ensure_ascii=False).encode("utf-8"),
             media_type="application/json",
@@ -1544,6 +1548,9 @@ def _cortes_relatorios_do_escopo(empresa: str, loja: Optional[str] = None) -> di
         corte_num = float(corte)
     except (TypeError, ValueError):
         corte_num = 80.0
+    cortes_clientes = _campo_config(config, "cortes_clientes", "cortesClientes", padrao=None)
+    if not (isinstance(cortes_clientes, list) and len(cortes_clientes) == 3):
+        cortes_clientes = [30.0, 50.0, 60.0]
     return {
         "clientes_excluidos": _lista_config(config, "clientes_excluidos", "clientesExcluidos"),
         "produtos_excluidos": _lista_config(config, "produtos_excluidos", "produtosExcluidos"),
@@ -1554,10 +1561,52 @@ def _cortes_relatorios_do_escopo(empresa: str, loja: Optional[str] = None) -> di
         "desconsiderar_nao_harmonizados": bool(
             _campo_config(config, "desconsiderar_nao_harmonizados", "desconsiderarNaoHarmonizados", padrao=False)
         ),
+        "cortes_clientes": [float(c) for c in cortes_clientes],
+        "desconsiderar_balcao": bool(
+            _campo_config(config, "desconsiderar_balcao", "desconsiderarBalcao", padrao=False)
+        ),
     }
 
 
-def _assinatura_cortes_escopo(empresa: str, loja: Optional[str] = None) -> tuple:
+#: Tokens de faixa aceitos pelo filtro "grupos de clientes" do topo — "1"/"2"/"3"
+#: (Grupo N, na mesma ordem dos cortes salvos), "X" (Demais), "B" (Balcão).
+def _token_da_faixa(faixa: str) -> str:
+    if faixa == af.NOME_FAIXA_BALCAO:
+        return "B"
+    m = re.match(r"^Grupo (\d+)$", faixa)
+    if m:
+        return m.group(1)
+    return "X"
+
+
+def _parse_grupos_clientes(valor: Optional[str]) -> Optional[set[str]]:
+    """Query string "1,2,B" -> {"1","2","B"}; vazio/None = sem filtro (todos)."""
+    if not valor:
+        return None
+    tokens = {t.strip().upper() for t in valor.split(",") if t.strip()}
+    return tokens or None
+
+
+def _filtrar_por_grupos_clientes(
+    df: pd.DataFrame, cortes: dict, grupos_clientes: Optional[set[str]],
+) -> pd.DataFrame:
+    """Mantém só os clientes cuja faixa (classificação rápida agregada, mesmos
+    cortes salvos em Cortes) está em `grupos_clientes`. None/vazio = sem filtro."""
+    if not grupos_clientes or "Cliente" not in df.columns or df.empty:
+        return df
+    classificado = af.classificar_clientes_agregado(
+        df, [], cortes["cortes_clientes"], desconsiderar_balcao=cortes["desconsiderar_balcao"],
+    )
+    mantidos = {
+        str(nome) for nome, faixa in zip(classificado["Cliente"], classificado["Faixa"])
+        if _token_da_faixa(str(faixa)) in grupos_clientes
+    }
+    return df.loc[df["Cliente"].astype(str).isin(mantidos)]
+
+
+def _assinatura_cortes_escopo(
+    empresa: str, loja: Optional[str] = None, grupos_clientes: Optional[set[str]] = None,
+) -> tuple:
     if not aplicar_cortes_relatorios():
         return ("0",)
     cortes = _cortes_relatorios_do_escopo(empresa, loja)
@@ -1568,6 +1617,8 @@ def _assinatura_cortes_escopo(empresa: str, loja: Optional[str] = None) -> tuple
         round(float(cortes["corte_produtos"]), 4),
         bool(cortes["desconsiderar_demais_produtos"]),
         bool(cortes["desconsiderar_nao_harmonizados"]),
+        bool(cortes["desconsiderar_balcao"]),
+        tuple(sorted(grupos_clientes)) if grupos_clientes else (),
     )
 
 
@@ -1576,6 +1627,7 @@ def _carregar_base_telas(
     loja: Optional[str] = None,
     *,
     copiar: bool = True,
+    grupos_clientes: Optional[set[str]] = None,
 ) -> tuple[pd.DataFrame, int]:
     """Base das telas que não são o Relatórios. Aplica config.json se a flag estiver ligada."""
     if not aplicar_cortes_relatorios() or not (empresa and str(empresa).strip()):
@@ -1595,6 +1647,13 @@ def _carregar_base_telas(
         df = df.loc[~df["Cliente"].astype(str).isin(excluidos)].copy()
     elif copiar:
         df = df.copy()
+    if cortes["desconsiderar_balcao"] and "Cliente" in df.columns:
+        mascara_balcao = af.mascara_clientes_balcao(
+            df["Cliente"].astype(str), _clientes_balcao_extra(empresa_norm, loja),
+        )
+        if bool(mascara_balcao.any()):
+            df = df.loc[~mascara_balcao].copy()
+    df = _filtrar_por_grupos_clientes(df, cortes, grupos_clientes)
     return df, 0
 
 
@@ -1925,6 +1984,27 @@ def _curva_produtos(
         mascara_manual,
         mascara_nao_harm,
     )
+
+
+def _descricoes_produtos_excluidos(df: pd.DataFrame, cortes: dict) -> set[str]:
+    """Descrições de produto que os cortes do Relatórios tiram do relatório
+    (manual + "não harmonizados" + "Demais" da curva, quando ligados) — mesma
+    régua de `_carregar_df_filtrado`, mas devolvendo o conjunto de descrições
+    em vez de um DataFrame filtrado. Usado para recortar `estoque`, que vem
+    inteiro do PRODUTO.csv e não tem noção de linha excluída do movimento."""
+    produtos_excluidos = cortes.get("produtos_excluidos") or []
+    excluidos = {str(p).strip() for p in produtos_excluidos if str(p).strip()}
+    desconsiderar_demais = bool(cortes.get("desconsiderar_demais_produtos"))
+    desconsiderar_nao_harm = bool(cortes.get("desconsiderar_nao_harmonizados"))
+    if not desconsiderar_demais and not desconsiderar_nao_harm:
+        return excluidos
+    classificado, _mascara_manual, mascara_nao_harm = _curva_produtos(
+        df, produtos_excluidos, float(cortes.get("corte_produtos") or 80.0), desconsiderar_nao_harm,
+    )
+    fora = excluidos | set(df.loc[mascara_nao_harm, "descricao"].astype(str))
+    if desconsiderar_demais:
+        fora |= set(classificado.loc[classificado["Faixa"] == "Demais", "descricao"].astype(str))
+    return fora
 
 
 @app.post("/api/produtos/previa")
@@ -2577,6 +2657,7 @@ def _ler_estoque_vendas(
     empresa: str,
     caminho_produto: Path,
     loja_norm: Optional[str],
+    grupos_clientes: Optional[set[str]] = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, list[str]]:
     """Estoque (QUANTIDADE_ESTOQUE do PRODUTO) e vendas (base já carregada),
     recortadas pela loja. Devolve também as lojas da base — a lista sai antes
@@ -2594,11 +2675,23 @@ def _ler_estoque_vendas(
     )
     estoque = _filtrar_loja_coluna(estoque, loja_norm, "Loja", caminho_produto.name)
     if aplicar_cortes_relatorios():
-        df_telas, _linhas = _carregar_base_telas(empresa, loja=loja_norm, copiar=False)
+        df_telas, _linhas = _carregar_base_telas(
+            empresa, loja=loja_norm, copiar=False, grupos_clientes=grupos_clientes,
+        )
         try:
-            _estoque_cortado, vendas = af.montar_estoque_e_vendas(df_telas, caminho_produto)
+            _, vendas = af.montar_estoque_e_vendas(df_telas, caminho_produto)
         except af.ErroCarregamentoCSV as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # `montar_estoque_e_vendas` monta `estoque` inteiro a partir do
+        # PRODUTO.csv — passar o `df` já cortado não tira produto nenhum dele
+        # sozinho (diferente de `vendas`, agregada do `df`). Sem isto, excluir
+        # um produto nos Cortes some das vendas/CMV mas ele continua aparecendo
+        # em "Dinheiro dormindo"/"Capital por situação" do Estoque.
+        cortes = _cortes_relatorios_do_escopo(empresa, loja_norm)
+        df_loja, _ = _carregar_base(empresa, loja=loja_norm, copiar=False)
+        fora_desc = _descricoes_produtos_excluidos(df_loja, cortes)
+        if fora_desc:
+            estoque = estoque.loc[~estoque["descricao"].astype(str).isin(fora_desc)]
     else:
         vendas = _filtrar_loja_coluna(vendas, loja_norm, "Nome_Loja", caminho_produto.name)
     return estoque, vendas, lojas
@@ -2611,6 +2704,7 @@ def obter_cobertura_estoque(
     meses: int = 6,
     limite: int = 800,
     usar_mes_fechado: bool = True,
+    grupos_clientes: Optional[str] = None,
     usuario: str = Depends(exigir_login),
 ):
     """Mapa de estoque atual × velocidade média de venda por produto.
@@ -2628,13 +2722,14 @@ def obter_cobertura_estoque(
     caminho_movimento, caminho_produto = _caminho_produto_empresa(empresa)
 
     loja_norm = _normalizar_loja(loja)
+    grupos_norm = _parse_grupos_clientes(grupos_clientes)
     try:
         assinatura = (_assinatura_arquivo(caminho_produto), _assinatura_arquivo(caminho_movimento))
     except OSError as exc:
         raise HTTPException(status_code=400, detail=f"Não foi possível ler arquivos de estoque: {exc}") from exc
     chave_cache = (
         empresa, loja_norm or "", meses, limite, usar_mes_fechado, assinatura, date.today(),
-        _assinatura_cortes_escopo(empresa, loja_norm),
+        _assinatura_cortes_escopo(empresa, loja_norm, grupos_norm),
     )
     with _cache_estoque_cobertura_lock:
         cacheado = _cache_estoque_cobertura.get(chave_cache)
@@ -2642,7 +2737,7 @@ def obter_cobertura_estoque(
             _cache_estoque_cobertura.move_to_end(chave_cache)
             return cacheado
 
-    estoque, vendas, lojas = _ler_estoque_vendas(empresa, caminho_produto, loja_norm)
+    estoque, vendas, lojas = _ler_estoque_vendas(empresa, caminho_produto, loja_norm, grupos_norm)
 
     resultado = montar_cobertura_estoque(
         estoque, vendas, meses=meses, limite=limite, usar_mes_fechado=usar_mes_fechado,
@@ -2670,6 +2765,7 @@ def obter_resumo_estoque(
     loja: Optional[str] = None,
     meses: int = 6,
     usar_mes_fechado: bool = True,
+    grupos_clientes: Optional[str] = None,
     usuario: str = Depends(exigir_login),
 ):
     """Agregados da visão geral de estoque, calculados sobre a base inteira.
@@ -2685,13 +2781,14 @@ def obter_resumo_estoque(
     caminho_movimento, caminho_produto = _caminho_produto_empresa(empresa)
 
     loja_norm = _normalizar_loja(loja)
+    grupos_norm = _parse_grupos_clientes(grupos_clientes)
     try:
         assinatura = (_assinatura_arquivo(caminho_produto), _assinatura_arquivo(caminho_movimento))
     except OSError as exc:
         raise HTTPException(status_code=400, detail=f"Não foi possível ler arquivos de estoque: {exc}") from exc
     chave_cache = (
         "resumo", empresa, loja_norm or "", meses, usar_mes_fechado, assinatura, date.today(),
-        _assinatura_cortes_escopo(empresa, loja_norm),
+        _assinatura_cortes_escopo(empresa, loja_norm, grupos_norm),
     )
     with _cache_estoque_cobertura_lock:
         cacheado = _cache_estoque_cobertura.get(chave_cache)
@@ -2699,7 +2796,7 @@ def obter_resumo_estoque(
             _cache_estoque_cobertura.move_to_end(chave_cache)
             return cacheado
 
-    estoque, vendas, lojas = _ler_estoque_vendas(empresa, caminho_produto, loja_norm)
+    estoque, vendas, lojas = _ler_estoque_vendas(empresa, caminho_produto, loja_norm, grupos_norm)
 
     resultado = montar_resumo_estoque(estoque, vendas, meses=meses, usar_mes_fechado=usar_mes_fechado)
     resultado.update({
@@ -2722,11 +2819,14 @@ def listar_vendedores(
     empresa: str,
     loja: Optional[str] = None,
     modo_periodo: str = "fechados",
+    grupos_clientes: Optional[str] = None,
     usuario: str = Depends(exigir_login),
 ):
     """Ranking do último mês contra a média dos 6 anteriores."""
     empresa = _validar_nome_empresa(empresa)
-    df, _linhas_vazias = _carregar_base_telas(empresa, loja=loja)
+    df, _linhas_vazias = _carregar_base_telas(
+        empresa, loja=loja, grupos_clientes=_parse_grupos_clientes(grupos_clientes),
+    )
     resultado = montar_ranking_vendedores(df, modo_periodo=modo_periodo)
     resultado["empresa"] = empresa
     resultado["loja"] = _chave_escopo_loja(loja) or None
@@ -2832,11 +2932,14 @@ def obter_ficha_vendedor(
     vendedor: str,
     loja: Optional[str] = None,
     modo_periodo: str = "fechados",
+    grupos_clientes: Optional[str] = None,
     usuario: str = Depends(exigir_login),
 ):
     """Ficha de um vendedor: clientes, mix e alertas de queda."""
     empresa = _validar_nome_empresa(empresa)
-    df, _linhas_vazias = _carregar_base_telas(empresa, loja=loja)
+    df, _linhas_vazias = _carregar_base_telas(
+        empresa, loja=loja, grupos_clientes=_parse_grupos_clientes(grupos_clientes),
+    )
     try:
         resultado = montar_ficha_vendedor(df, vendedor, modo_periodo=modo_periodo)
     except ErroFichaVendedor as exc:
@@ -2994,6 +3097,7 @@ def obter_painel_clientes(
     empresa: str,
     loja: Optional[str] = None,
     modo_periodo: str = "fechados",
+    grupos_clientes: Optional[str] = None,
     usuario: str = Depends(exigir_login),
 ):
     """Visão geral da carteira: KPIs, curva ABC, movimento mensal, top e tags.
@@ -3004,7 +3108,9 @@ def obter_painel_clientes(
     empresa = _validar_nome_empresa(empresa)
     estado_tags = _ler_tags_clientes(empresa, loja=loja)
     config = _ler_config_escopo(empresa, loja) or {}
-    df, _linhas_vazias = _carregar_base_telas(empresa, loja=loja)
+    df, _linhas_vazias = _carregar_base_telas(
+        empresa, loja=loja, grupos_clientes=_parse_grupos_clientes(grupos_clientes),
+    )
     resultado = montar_painel_clientes(
         df,
         tags=estado_tags.get("tags") or {},
@@ -3337,7 +3443,7 @@ def regenerar_base_dashboard(empresa: str):
 
 
 @app.get("/api/dashboard/summary/{empresa}")
-def obter_summary_dashboard(empresa: str, loja: Optional[str] = None):
+def obter_summary_dashboard(empresa: str, loja: Optional[str] = None, grupos_clientes: Optional[str] = None):
     """Serve summary_dashboard.json(.gz) em disco/RAM. Regenera só se a fonte for mais nova."""
     pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
     try:
@@ -3348,7 +3454,10 @@ def obter_summary_dashboard(empresa: str, loja: Optional[str] = None):
     caminho_summary = _garantir_summary_dashboard_arquivo(
         empresa, pasta_fonte, pasta_trabalho, caminho_referencia,
     )
-    return _resposta_summary_arquivo(empresa, caminho_summary, pasta_fonte, caminho_referencia, loja=loja)
+    return _resposta_summary_arquivo(
+        empresa, caminho_summary, pasta_fonte, caminho_referencia,
+        loja=loja, grupos_clientes=_parse_grupos_clientes(grupos_clientes),
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -16,6 +16,7 @@ import {
   YAxis,
 } from 'recharts';
 import { StatCard } from '../StatCard';
+import { LeituraFaixa } from '../LeituraFaixa';
 import {
   obterResumoDespesas,
   type GrupoAbcDespesa,
@@ -25,6 +26,7 @@ import {
 import { formatCompacto, formatCurrency, formatPercent, rotuloGrupoCurto } from '../../utils/formatters';
 import { useMesesFechados } from '../../hooks/useMesesFechados';
 import { modoParaBooleano } from '../../utils/mesesFechados';
+import { variacaoSuspeita } from '../../utils/variacaoSuspeita';
 
 type Props = {
   empresa: string;
@@ -219,7 +221,9 @@ export function DespesasVisaoGeral({ empresa, loja, meses }: Props) {
   const pareto = useMemo<PontoPareto[]>(() => {
     const grupos = dados?.curva_abc_categorias.grupos ?? [];
     let acumulado = 0;
-    return (dados?.por_categoria ?? []).map((item) => {
+    return (dados?.por_categoria ?? [])
+      .filter((item) => item.categoria !== 'Demais')
+      .map((item) => {
       acumulado += item.pct;
       return {
         categoria: item.categoria,
@@ -253,9 +257,15 @@ export function DespesasVisaoGeral({ empresa, loja, meses }: Props) {
 
   const { resumo } = dados;
   const variacaoConhecida = resumo.variacao_pct != null;
-  const despesaCaiu = (resumo.variacao_pct ?? 0) < 0;
+  const quedaBuraco = variacaoSuspeita(resumo.variacao_pct, resumo.mes_atual, resumo.mes_anterior);
+  const despesaCaiu = !quedaBuraco && (resumo.variacao_pct ?? 0) < 0;
   const variacaoAnualConhecida = resumo.variacao_anual_pct != null;
-  const despesaCaiuNoAno = (resumo.variacao_anual_pct ?? 0) < 0;
+  const quedaBuracoAno = variacaoSuspeita(
+    resumo.variacao_anual_pct,
+    resumo.mes_atual,
+    resumo.mes_mesmo_periodo_ano_anterior ?? 0,
+  );
+  const despesaCaiuNoAno = !quedaBuracoAno && (resumo.variacao_anual_pct ?? 0) < 0;
   const periodo = dados.periodo_inicio && dados.periodo_fim
     ? `${dados.periodo_inicio} a ${dados.periodo_fim}`
     : 'sem lançamentos';
@@ -274,6 +284,11 @@ export function DespesasVisaoGeral({ empresa, loja, meses }: Props) {
 
   return (
     <div className="estoque-visao despesas-visao">
+      <LeituraFaixa tom={quedaBuraco || quedaBuracoAno ? 'aviso' : 'normal'}>
+        {quedaBuraco
+          ? `Último mês (${formatCurrency(resumo.mes_atual)}) despenca contra o anterior — conferir se a competência tem lançamento, não celebrar como economia.`
+          : `Total ${formatCurrency(resumo.total)} em ${periodo}. Último mês ${formatCurrency(resumo.mes_atual)}${variacaoConhecida ? ` (${formatPercent(resumo.variacao_pct ?? 0, 1)} vs anterior)` : ''}.`}
+      </LeituraFaixa>
       <section className="despesas-kpis" aria-label="Indicadores de despesas">
         <article className="glass-card glass-card-flat despesas-hero">
           <div className="despesas-hero-texto">
@@ -314,20 +329,28 @@ export function DespesasVisaoGeral({ empresa, loja, meses }: Props) {
           <StatCard
             title="Último mês"
             value={formatCurrency(resumo.mes_atual)}
-            icon={despesaCaiu ? TrendingDown : TrendingUp}
-            trend={variacaoConhecida ? `${formatPercent(Math.abs(resumo.variacao_pct ?? 0), 1)} vs. mês anterior` : 'sem mês anterior para comparar'}
+            icon={quedaBuraco ? AlertTriangle : (despesaCaiu ? TrendingDown : TrendingUp)}
+            trend={quedaBuraco
+              ? 'queda extrema — conferir lançamento do mês'
+              : variacaoConhecida
+                ? `${formatPercent(Math.abs(resumo.variacao_pct ?? 0), 1)} vs. mês anterior`
+                : 'sem mês anterior para comparar'}
             trendUp={despesaCaiu}
-            useTrendColor={variacaoConhecida}
+            trendArrow={despesaCaiu ? 'down' : 'up'}
+            useTrendColor={variacaoConhecida && !quedaBuraco}
           />
           <StatCard
             title="vs. mesmo mês do ano passado"
             value={variacaoAnualConhecida ? formatPercent(Math.abs(resumo.variacao_anual_pct ?? 0), 1) : '—'}
-            icon={despesaCaiuNoAno ? TrendingDown : TrendingUp}
-            trend={variacaoAnualConhecida
-              ? `era ${formatCurrency(resumo.mes_mesmo_periodo_ano_anterior ?? 0)}`
-              : 'sem dado no ano anterior'}
+            icon={quedaBuracoAno ? AlertTriangle : (despesaCaiuNoAno ? TrendingDown : TrendingUp)}
+            trend={quedaBuracoAno
+              ? 'buraco de dado, não economia'
+              : variacaoAnualConhecida
+                ? `era ${formatCurrency(resumo.mes_mesmo_periodo_ano_anterior ?? 0)}`
+                : 'sem dado no ano anterior'}
             trendUp={despesaCaiuNoAno}
-            useTrendColor={variacaoAnualConhecida}
+            trendArrow={despesaCaiuNoAno ? 'down' : 'up'}
+            useTrendColor={variacaoAnualConhecida && !quedaBuracoAno}
           />
         </div>
       </section>
@@ -529,6 +552,7 @@ export function DespesasVisaoGeral({ empresa, loja, meses }: Props) {
               {dados.por_categoria.map((linha) => {
                 const tendencia = tendenciaTexto(linha);
                 const subiu = (linha.tendencia_pct ?? 0) >= 0;
+                const extrema = Math.abs(linha.tendencia_pct ?? 0) >= 80;
                 return (
                   <li key={linha.categoria}>
                     <div className="despesas-lista-topo">
@@ -555,7 +579,7 @@ export function DespesasVisaoGeral({ empresa, loja, meses }: Props) {
                       <em>{formatPercent(linha.pct, 1)} do total</em>
                       {tendencia && (
                         <span
-                          className={`despesas-tendencia${subiu ? ' is-alta' : ' is-baixa'}`}
+                          className={`despesas-tendencia${extrema ? '' : subiu ? ' is-alta' : ' is-baixa'}`}
                           title="Variação entre o início e o fim da janela"
                         >
                           {tendencia}

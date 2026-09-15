@@ -1,54 +1,29 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AppShell } from '../components/AppShell';
-import { Download, FolderOpen, Save } from 'lucide-react';
+import { Download } from 'lucide-react';
 import {
   analisar,
   exportarRelatorio,
   type FormatoExportacao,
-  listarEmpresas,
   obterBase,
-  obterCaminhoTrabalho,
   obterCatalogo,
-  obterPreviaGrupos,
-  obterPreviaProdutos,
-  sugerirCorteProdutos,
-  obterTagsClientes,
-  salvarConfiguracaoEmpresa,
-  salvarGruposManuais,
-  salvarTagsUmCliente,
   tentarCarregarConfiguracaoEmpresa,
-  TAGS_CATALOGO_PADRAO,
   type CategoriaCatalogo,
   type ConfigEmpresaSalva,
-  type Grupo,
-  type GrupoManualClientes,
-  type ItemClientePrevia,
-  type ItemProdutoPrevia,
   type ParametrosAnalise,
-  type PreviaBase,
   type ResultadoAnalise,
-  type TagCatalogoItem,
-  type TagCliente,
 } from '../api/client';
-import { PreviaClientesTable } from '../components/analisador/PreviaClientesTable';
-import { PreviaProdutosTable } from '../components/analisador/PreviaProdutosTable';
-import { NumberStepper } from '../components/analisador/NumberStepper';
 import { ResultTable } from '../components/analisador/ResultTable';
 import { TendenciaProdutosView } from '../components/analisador/TendenciaProdutosView';
 import { ExportarModal } from '../components/analisador/ExportarModal';
 import { ExplorarBuilder } from '../components/analisador/ExplorarBuilder';
-import { AnalisadorCombobox } from '../components/analisador/AnalisadorCombobox';
+import { useEscopoAtual } from '../hooks/useEscopoAtual';
 import {
-  EVENTO_LOJA,
-  codificarEscopoLojas,
-  lerLojas,
-  limparLojas,
-  rotuloEscopoLojas,
-} from '../utils/lojaSelecionada';
-import { slugId } from '../utils/slug';
-import { rotuloGrupoCurto } from '../utils/formatters';
+  CORTES_CLIENTES_PADRAO,
+  CORTE_PRODUTOS_PADRAO,
+} from '../utils/configAnalisador';
 
-type Etapa = 'carregando-base' | 'config' | 'resultados';
+type Etapa = 'config' | 'resultados';
 type AbaWorkspace = 'relatorios' | 'graficos' | 'tabelas';
 
 const ABAS_WORKSPACE: { id: AbaWorkspace; rotulo: string }[] = [
@@ -57,133 +32,71 @@ const ABAS_WORKSPACE: { id: AbaWorkspace; rotulo: string }[] = [
   { id: 'tabelas', rotulo: 'Tabelas' },
 ];
 
-type OverridePrevia = {
-  clientesExcluidos: string[];
-  cortes: [number, number, number];
-  balcao: boolean;
-  produtosExcluidos: string[];
-  corte: number;
-  maxPorGrupo: number;
-  // Viajam explícitas porque o setState correspondente ainda não refletiu
-  // quando a prévia é disparada logo depois de aplicar a config.
-  desconsiderarDemais: boolean;
-  desconsiderarNaoHarm: boolean;
+/** Parâmetros de corte/exclusão são editados na tela Cortes e só lidos aqui, no
+ *  config.json salvo — esta tela não os edita nem exige um Salvar antes de gerar. */
+type ConfigCorteSalvo = Pick<
+  ConfigEmpresaSalva,
+  | 'cortesClientes'
+  | 'corteProdutos'
+  | 'desconsiderarBalcao'
+  | 'desconsiderarDemaisProdutos'
+  | 'desconsiderarNaoHarmonizados'
+  | 'clientesExcluidos'
+  | 'produtosExcluidos'
+  | 'periodosQueda'
+  | 'excluirPeriodoAtual'
+  | 'erosaoSomenteProdutosEmAlerta'
+  | 'topNProdutos'
+  | 'reducaoMinimaErosao'
+  | 'quedaMinimaAlertaRs'
+  | 'quedaMinimaErosaoRs'
+  | 'reducaoMinimaSemVenda'
+  | 'topNPoderCompra'
+>;
+
+const CONFIG_CORTE_PADRAO: ConfigCorteSalvo = {
+  cortesClientes: CORTES_CLIENTES_PADRAO,
+  corteProdutos: CORTE_PRODUTOS_PADRAO,
+  desconsiderarBalcao: false,
+  desconsiderarDemaisProdutos: false,
+  desconsiderarNaoHarmonizados: false,
+  clientesExcluidos: [],
+  produtosExcluidos: [],
+  periodosQueda: 2,
+  excluirPeriodoAtual: true,
+  erosaoSomenteProdutosEmAlerta: false,
+  topNProdutos: '',
+  reducaoMinimaErosao: 50,
+  quedaMinimaAlertaRs: 3000,
+  quedaMinimaErosaoRs: 3000,
+  reducaoMinimaSemVenda: 90,
+  topNPoderCompra: '',
 };
 
-const CORTES_CLIENTES_PADRAO: [number, number, number] = [30, 50, 60];
-const CORTE_PRODUTOS_PADRAO = 80;
-const MAX_POR_GRUPO_PADRAO = 20;
-
-
-function resumirRegrasConfig(dados: ConfigEmpresaSalva): string[] {
-  const cortes = dados.cortesClientes ?? CORTES_CLIENTES_PADRAO;
-  const linhas = [
-    `Cortes de clientes: ${cortes.join(' / ')}%`,
-    `Corte de produtos (alto giro): ${dados.corteProdutos ?? CORTE_PRODUTOS_PADRAO}%`,
-    `Máx. por grupo (sugerir): ${dados.maxPorGrupo ?? MAX_POR_GRUPO_PADRAO}`,
-    `Granularidade: ${dados.granularidade ?? 'Mensal'}`,
-    `Períodos de queda: ${dados.periodosQueda ?? 2}`,
-    `Desconsiderar balcão: ${dados.desconsiderarBalcao ? 'sim' : 'não'}`,
-    `Desconsiderar demais produtos: ${dados.desconsiderarDemaisProdutos ? 'sim' : 'não'}`,
-    `Desconsiderar não harmonizados: ${dados.desconsiderarNaoHarmonizados ? 'sim' : 'não'}`,
-    `Clientes excluídos: ${(dados.clientesExcluidos ?? []).length}`,
-    `Produtos excluídos: ${(dados.produtosExcluidos ?? []).length}`,
-    `Relatórios marcados: ${(dados.chavesSelecionadas ?? []).length}`,
-  ];
-  return linhas;
-}
-
 export default function AnalisadorPage() {
-  const [etapa, setEtapa] = useState<Etapa>('carregando-base');
+  const { empresa: empresaSelecionada, lojas: lojasEscopo, loja: lojaApi } = useEscopoAtual();
+  const empresaBase = empresaSelecionada || null;
+
+  const [etapa, setEtapa] = useState<Etapa>('config');
   const [erro, setErro] = useState<string | null>(null);
-  const [sucesso, setSucesso] = useState<string | null>(null);
-  const [salvandoConfig, setSalvandoConfig] = useState(false);
   const [carregando, setCarregando] = useState(false);
 
-  const [previa, setPrevia] = useState<PreviaBase | null>(null);
   const [catalogo, setCatalogo] = useState<CategoriaCatalogo[]>([]);
   const [resultados, setResultados] = useState<ResultadoAnalise | null>(null);
-  // Identifica o resultado mantido temporariamente no backend para exportação
-  // sem repetir todos os agrupamentos e análises pesadas.
   const [resultadoId, setResultadoId] = useState<string | null>(null);
   const [abaAtiva, setAbaAtiva] = useState<string | null>(null);
   const [formatoParaConfirmar, setFormatoParaConfirmar] = useState<FormatoExportacao | null>(null);
 
-  const [clientesExcluidos, setClientesExcluidos] = useState<Set<string>>(new Set());
-  const [produtosExcluidos, setProdutosExcluidos] = useState<Set<string>>(new Set());
-  const [granularidade, setGranularidade] = useState('Mensal');
   const [chavesSelecionadas, setChavesSelecionadas] = useState<Set<string>>(new Set());
-  const [cortesClientes, setCortesClientes] = useState<[number, number, number]>([30, 50, 60]);
-  const [corteProdutos, setCorteProdutos] = useState(80);
-  const [periodosQueda, setPeriodosQueda] = useState(2);
-  const [desconsiderarBalcao, setDesconsiderarBalcao] = useState(false);
-  const [desconsiderarDemaisProdutos, setDesconsiderarDemaisProdutos] = useState(false);
-  const [desconsiderarNaoHarmonizados, setDesconsiderarNaoHarmonizados] = useState(false);
-  const [excluirPeriodoAtual, setExcluirPeriodoAtual] = useState(true);
-  const [erosaoSomenteProdutosEmAlerta, setErosaoSomenteProdutosEmAlerta] = useState(false);
-  const [nomeEmpresaManual, setNomeEmpresaManual] = useState('');
-  const [topNProdutos, setTopNProdutos] = useState<number | ''>('');
-  const [reducaoMinimaErosao, setReducaoMinimaErosao] = useState(50);
-  const [quedaMinimaAlertaRs, setQuedaMinimaAlertaRs] = useState<number | ''>(3000);
-  const [quedaMinimaErosaoRs, setQuedaMinimaErosaoRs] = useState<number | ''>(3000);
-  const [reducaoMinimaSemVenda, setReducaoMinimaSemVenda] = useState(90);
-  const [topNPoderCompra, setTopNPoderCompra] = useState<number | ''>('');
-
-  const [maxPorGrupo, setMaxPorGrupo] = useState(20);
-  const [grupos, setGrupos] = useState<Grupo[] | null>(null);
-  const [itensClientes, setItensClientes] = useState<ItemClientePrevia[]>([]);
-  const [tagsPorCliente, setTagsPorCliente] = useState<Record<string, TagCliente[]>>({});
-  const [tagsCatalogo, setTagsCatalogo] = useState<TagCatalogoItem[]>(TAGS_CATALOGO_PADRAO);
-  const [gruposManuais, setGruposManuais] = useState<GrupoManualClientes[]>([]);
-  const [carregandoGrupos, setCarregandoGrupos] = useState(false);
-  const [produtosGrupos, setProdutosGrupos] = useState<Grupo[] | null>(null);
-  const [itensProdutos, setItensProdutos] = useState<ItemProdutoPrevia[]>([]);
-  const [carregandoProdutos, setCarregandoProdutos] = useState(false);
+  const [granularidade, setGranularidade] = useState('Mensal');
+  const [configCorte, setConfigCorte] = useState<ConfigCorteSalvo>(CONFIG_CORTE_PADRAO);
 
   const [abaWorkspace, setAbaWorkspace] = useState<AbaWorkspace>('relatorios');
-  /** Serializa saves de grupos (painel + modal) para não sobrescrever no disco. */
-  const gruposSaveChainRef = useRef(Promise.resolve());
-  const gruposManuaisRef = useRef(gruposManuais);
-  gruposManuaisRef.current = gruposManuais;
-  /** Invalida cargas async antigas ao trocar empresa/loja rapidamente. */
-  const cargaSeqRef = useRef(0);
-  /** Debounce da prévia após saves de grupos (último empresa/loja vence). */
-  const gruposPreviaDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const gruposPreviaCtxRef = useRef<{ empresa: string; loja: string | null } | null>(null);
-
-  const [empresas, setEmpresas] = useState<string[]>([]);
-  const [empresaSelecionada, setEmpresaSelecionada] = useState(
-    () => localStorage.getItem('alvo_empresa') || '',
-  );
-  /** Lista vazia = todas as lojas. Quem escolhe é o seletor da barra lateral. */
-  const [lojasEscopo, setLojasEscopo] = useState<string[]>(
-    () => lerLojas(localStorage.getItem('alvo_empresa') || ''),
-  );
-
-  const [caminhoTrabalho, setCaminhoTrabalho] = useState<string | null>(null);
-  const [configPendente, setConfigPendente] = useState<{
-    empresa: string;
-    dados: ConfigEmpresaSalva;
-    loja?: string | null;
-  } | null>(null);
-
-  const nomeEmpresaEfetivo = empresaSelecionada || nomeEmpresaManual.trim();
-  const empresaBase = empresaSelecionada || null;
-  /** null/omitido nas APIs = todas as lojas. */
-  const lojaApi = codificarEscopoLojas(lojasEscopo);
-  const lojasDisponiveis = previa?.lojas ?? [];
-  const rotuloEscopoLoja = rotuloEscopoLojas(lojasEscopo);
 
   useEffect(() => {
     obterCatalogo()
       .then(setCatalogo)
       .catch((e) => setErro(e instanceof Error ? e.message : 'Falha ao carregar catálogo.'));
-    listarEmpresas().then(setEmpresas).catch(() => {});
-    Promise.all([obterCaminhoTrabalho(true)])
-      .then(([trabalho]) => {
-        setCaminhoTrabalho(trabalho);
-      })
-      .catch(() => {});
   }, []);
 
   // Recarrega o catálogo ao entrar na aba Relatórios (pega categorias novas sem F5).
@@ -194,623 +107,56 @@ export default function AnalisadorPage() {
       .catch(() => {});
   }, [abaWorkspace]);
 
+  // Carrega, só para leitura, os cortes/exclusões salvos em Cortes para este
+  // escopo — e a granularidade disponível na base. Sem modal de confirmação:
+  // esta tela usa direto o que estiver salvo (ou o padrão, se nada foi salvo).
   useEffect(() => {
-    return () => {
-      if (gruposPreviaDebounceRef.current !== null) {
-        clearTimeout(gruposPreviaDebounceRef.current);
-        gruposPreviaDebounceRef.current = null;
-      }
-    };
-  }, []);
-
-  // Confirmação é transitória: evita ocupar espaço permanentemente e também
-  // reinicia corretamente quando uma nova ação de salvar é concluída.
-  useEffect(() => {
-    if (!sucesso) return undefined;
-    const timer = window.setTimeout(() => setSucesso(null), 5000);
-    return () => window.clearTimeout(timer);
-  }, [sucesso]);
-
-  const aplicarDadosConfig = (dados: ConfigEmpresaSalva): OverridePrevia => {
-    const cortes = (dados.cortesClientes ?? CORTES_CLIENTES_PADRAO) as [number, number, number];
-    const corte = dados.corteProdutos ?? CORTE_PRODUTOS_PADRAO;
-    const maxG = dados.maxPorGrupo ?? MAX_POR_GRUPO_PADRAO;
-    const clientes = dados.clientesExcluidos ?? [];
-    const produtos = dados.produtosExcluidos ?? [];
-    const balcao = Boolean(dados.desconsiderarBalcao);
-    const semDemais = Boolean(dados.desconsiderarDemaisProdutos);
-    const semNaoHarm = Boolean(dados.desconsiderarNaoHarmonizados);
-
-    setCortesClientes(cortes);
-    setCorteProdutos(corte);
-    setPeriodosQueda(dados.periodosQueda ?? 2);
-    setDesconsiderarBalcao(balcao);
-    setDesconsiderarDemaisProdutos(semDemais);
-    setDesconsiderarNaoHarmonizados(semNaoHarm);
-    setExcluirPeriodoAtual(dados.excluirPeriodoAtual ?? true);
-    setErosaoSomenteProdutosEmAlerta(dados.erosaoSomenteProdutosEmAlerta ?? false);
-    setTopNProdutos(dados.topNProdutos ?? '');
-    setReducaoMinimaErosao(dados.reducaoMinimaErosao ?? 50);
-    setQuedaMinimaAlertaRs(dados.quedaMinimaAlertaRs ?? 3000);
-    setQuedaMinimaErosaoRs(dados.quedaMinimaErosaoRs ?? 3000);
-    setReducaoMinimaSemVenda(dados.reducaoMinimaSemVenda ?? 90);
-    setTopNPoderCompra(dados.topNPoderCompra ?? '');
-    setMaxPorGrupo(maxG);
-    setClientesExcluidos(new Set(clientes));
-    setProdutosExcluidos(new Set(produtos));
-    setChavesSelecionadas(new Set(dados.chavesSelecionadas ?? []));
-    setGranularidade(dados.granularidade ?? 'Mensal');
-
-    return {
-      clientesExcluidos: clientes,
-      cortes,
-      balcao,
-      produtosExcluidos: produtos,
-      corte,
-      maxPorGrupo: maxG,
-      desconsiderarDemais: semDemais,
-      desconsiderarNaoHarm: semNaoHarm,
-    };
-  };
-
-  const resetarParaPadrao = (): OverridePrevia => {
-    setCortesClientes(CORTES_CLIENTES_PADRAO);
-    setCorteProdutos(CORTE_PRODUTOS_PADRAO);
-    setPeriodosQueda(2);
-    setDesconsiderarBalcao(false);
-    setDesconsiderarDemaisProdutos(false);
-    setDesconsiderarNaoHarmonizados(false);
-    setExcluirPeriodoAtual(true);
-    setTopNProdutos('');
-    setReducaoMinimaErosao(50);
-    setQuedaMinimaAlertaRs(3000);
-    setQuedaMinimaErosaoRs(3000);
-    setReducaoMinimaSemVenda(90);
-    setTopNPoderCompra('');
-    setMaxPorGrupo(MAX_POR_GRUPO_PADRAO);
-    setClientesExcluidos(new Set());
-    setProdutosExcluidos(new Set());
-    // Mantém catálogo / chaves já escolhidas pelo usuário se houver — só limpa exclusões e cortes.
-    return {
-      clientesExcluidos: [],
-      cortes: CORTES_CLIENTES_PADRAO,
-      balcao: false,
-      produtosExcluidos: [],
-      corte: CORTE_PRODUTOS_PADRAO,
-      maxPorGrupo: MAX_POR_GRUPO_PADRAO,
-      desconsiderarDemais: false,
-      desconsiderarNaoHarm: false,
-    };
-  };
-
-  const carregarBaseAtual = async (
-    empresa: string | null,
-    opcoes?: { ajustarCortes?: boolean; override?: OverridePrevia; loja?: string | null },
-  ) => {
-    const seq = ++cargaSeqRef.current;
-    const ajustarCortes = opcoes?.ajustarCortes ?? true;
-    const loja = opcoes?.loja !== undefined ? opcoes.loja : lojaApi;
-    setErro(null);
-    setEtapa('carregando-base');
-    try {
-      const resultado = await obterBase(empresa, loja);
-      if (seq !== cargaSeqRef.current) return;
-      setPrevia(resultado);
-      const lojasInvalidas = (resultado.lojas_selecionadas ?? []).filter(
-        (nome) => resultado.lojas && !resultado.lojas.includes(nome),
-      );
-      if (lojasInvalidas.length > 0) {
-        setLojasEscopo([]);
-        if (empresa) limparLojas(empresa);
-      }
-      if (resultado.granularidades.length > 0) {
-        if (opcoes?.ajustarCortes === false) {
+    let cancelado = false;
+    (async () => {
+      try {
+        const [dadosConfig, base] = await Promise.all([
+          empresaSelecionada ? tentarCarregarConfiguracaoEmpresa(empresaSelecionada, lojaApi) : Promise.resolve(null),
+          obterBase(empresaBase, lojaApi),
+        ]);
+        if (cancelado) return;
+        setConfigCorte(dadosConfig ? { ...CONFIG_CORTE_PADRAO, ...dadosConfig } : CONFIG_CORTE_PADRAO);
+        if (base.granularidades.length > 0) {
           setGranularidade((atual) =>
-            resultado.granularidades.includes(atual) ? atual : resultado.granularidades[0],
+            base.granularidades.includes(atual) ? atual : base.granularidades[0],
           );
-        } else {
-          setGranularidade(resultado.granularidades[0]);
         }
+      } catch (e) {
+        if (cancelado) return;
+        setErro(e instanceof Error ? e.message : 'Falha ao carregar configuração da empresa.');
       }
-      setEtapa('config');
-      if (seq !== cargaSeqRef.current) return;
-      await carregarPrevias(empresa, { ajustarCortes, override: opcoes?.override, loja });
-      if (seq !== cargaSeqRef.current) return;
-    } catch (e) {
-      if (seq !== cargaSeqRef.current) return;
-      setErro(e instanceof Error ? e.message : 'Falha ao carregar a base de dados.');
-      setEtapa('config');
-    }
-  };
-
-  /** Antes de puxar dados: se há config.json no escopo, pergunta; senão usa o padrão (autoajuste max). */
-  const iniciarEmpresa = async (nome: string | null, loja?: string | null) => {
-    const seq = ++cargaSeqRef.current;
-    setConfigPendente(null);
-    const lojaEfetiva = loja !== undefined ? loja : lojaApi;
-    if (!nome) {
-      setLojasEscopo([]);
-      const override = resetarParaPadrao();
-      if (seq !== cargaSeqRef.current) return;
-      await carregarBaseAtual(null, { ajustarCortes: true, override, loja: null });
-      return;
-    }
-    setEtapa('carregando-base');
-    try {
-      const dados = await tentarCarregarConfiguracaoEmpresa(nome, lojaEfetiva);
-      if (seq !== cargaSeqRef.current) return;
-      if (dados) {
-        setConfigPendente({ empresa: nome, dados, loja: lojaEfetiva });
-        return;
-      }
-      const override = resetarParaPadrao();
-      await carregarBaseAtual(nome, { ajustarCortes: true, override, loja: lojaEfetiva });
-    } catch (e) {
-      if (seq !== cargaSeqRef.current) return;
-      setErro(e instanceof Error ? e.message : 'Falha ao verificar configuração da empresa.');
-      const override = resetarParaPadrao();
-      await carregarBaseAtual(nome, { ajustarCortes: true, override, loja: lojaEfetiva });
-    }
-  };
-
-  /** Troca de escopo de loja: aplica config salva do escopo ou padrão, sem modal. */
-  const trocarEscopoLoja = async (loja: string | null) => {
-    if (!empresaSelecionada) return;
-    const seq = ++cargaSeqRef.current;
-    setConfigPendente(null);
-    setEtapa('carregando-base');
-    try {
-      const dados = await tentarCarregarConfiguracaoEmpresa(empresaSelecionada, loja);
-      if (seq !== cargaSeqRef.current) return;
-      if (dados) {
-        const override = aplicarDadosConfig(dados);
-        await carregarBaseAtual(empresaSelecionada, { ajustarCortes: false, override, loja });
-        return;
-      }
-      const override = resetarParaPadrao();
-      await carregarBaseAtual(empresaSelecionada, { ajustarCortes: true, override, loja });
-    } catch (e) {
-      if (seq !== cargaSeqRef.current) return;
-      setErro(e instanceof Error ? e.message : 'Falha ao carregar configuração do escopo de loja.');
-      const override = resetarParaPadrao();
-      await carregarBaseAtual(empresaSelecionada, { ajustarCortes: true, override, loja });
-    }
-  };
-
-  const confirmarAplicarConfig = () => {
-    if (!configPendente) return;
-    const { empresa, dados, loja } = configPendente;
-    setConfigPendente(null);
-    const override = aplicarDadosConfig(dados);
-    void carregarBaseAtual(empresa, { ajustarCortes: false, override, loja: loja ?? lojaApi });
-  };
-
-  const recusarConfig = () => {
-    if (!configPendente) return;
-    const { empresa, loja } = configPendente;
-    setConfigPendente(null);
-    const override = resetarParaPadrao();
-    void carregarBaseAtual(empresa, { ajustarCortes: true, override, loja: loja ?? lojaApi });
-  };
-
-  useEffect(() => {
-    void iniciarEmpresa(empresaSelecionada || null, lojaApi);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  useEffect(() => {
-    if (!configPendente) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') recusarConfig();
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [configPendente]);
+    })();
+    return () => { cancelado = true; };
+  }, [empresaSelecionada, empresaBase, lojaApi]);
 
   const montarParametros = (): ParametrosAnalise => ({
     granularidades: [granularidade],
     chaves_selecionadas: Array.from(chavesSelecionadas),
-    clientes_excluidos: Array.from(clientesExcluidos),
-    produtos_excluidos: Array.from(produtosExcluidos),
-    cortes_clientes: cortesClientes,
-    corte_produtos: corteProdutos,
-    periodos_queda_consecutiva: periodosQueda,
-    desconsiderar_balcao: desconsiderarBalcao,
-    excluir_periodo_atual: excluirPeriodoAtual,
-    erosao_somente_produtos_em_alerta: erosaoSomenteProdutosEmAlerta,
-    desconsiderar_demais_produtos: desconsiderarDemaisProdutos,
-    desconsiderar_nao_harmonizados: desconsiderarNaoHarmonizados,
-    top_n_produtos: topNProdutos === '' ? null : topNProdutos,
-    reducao_minima_erosao: reducaoMinimaErosao,
-    queda_minima_alerta_rs: quedaMinimaAlertaRs === '' ? 0 : quedaMinimaAlertaRs,
-    queda_minima_erosao_rs: quedaMinimaErosaoRs === '' ? 0 : quedaMinimaErosaoRs,
-    reducao_minima_sem_venda: reducaoMinimaSemVenda,
-    top_n_poder_compra: topNPoderCompra === '' ? null : topNPoderCompra,
-    nome_empresa: nomeEmpresaEfetivo,
+    clientes_excluidos: configCorte.clientesExcluidos ?? [],
+    produtos_excluidos: configCorte.produtosExcluidos ?? [],
+    cortes_clientes: configCorte.cortesClientes ?? CORTES_CLIENTES_PADRAO,
+    corte_produtos: configCorte.corteProdutos ?? CORTE_PRODUTOS_PADRAO,
+    periodos_queda_consecutiva: configCorte.periodosQueda ?? 2,
+    desconsiderar_balcao: Boolean(configCorte.desconsiderarBalcao),
+    excluir_periodo_atual: configCorte.excluirPeriodoAtual ?? true,
+    erosao_somente_produtos_em_alerta: Boolean(configCorte.erosaoSomenteProdutosEmAlerta),
+    desconsiderar_demais_produtos: Boolean(configCorte.desconsiderarDemaisProdutos),
+    desconsiderar_nao_harmonizados: Boolean(configCorte.desconsiderarNaoHarmonizados),
+    top_n_produtos: configCorte.topNProdutos === '' || configCorte.topNProdutos == null ? null : configCorte.topNProdutos,
+    reducao_minima_erosao: configCorte.reducaoMinimaErosao ?? 50,
+    queda_minima_alerta_rs: configCorte.quedaMinimaAlertaRs === '' || configCorte.quedaMinimaAlertaRs == null ? 0 : configCorte.quedaMinimaAlertaRs,
+    queda_minima_erosao_rs: configCorte.quedaMinimaErosaoRs === '' || configCorte.quedaMinimaErosaoRs == null ? 0 : configCorte.quedaMinimaErosaoRs,
+    reducao_minima_sem_venda: configCorte.reducaoMinimaSemVenda ?? 90,
+    top_n_poder_compra: configCorte.topNPoderCompra === '' || configCorte.topNPoderCompra == null ? null : configCorte.topNPoderCompra,
+    nome_empresa: empresaSelecionada,
     nome_usuario: '',
     empresa: empresaBase,
     loja: lojaApi,
   });
-
-  const atualizarPreviaGrupos = async (parametros?: {
-    clientesExcluidos?: string[];
-    cortes?: [number, number, number];
-    balcao?: boolean;
-    empresa?: string | null;
-    loja?: string | null;
-    maxPorGrupo?: number;
-    ajustarCortes?: boolean;
-  }) => {
-    setErro(null);
-    setCarregandoGrupos(true);
-    try {
-      const resultado = await obterPreviaGrupos({
-        clientes_excluidos: parametros?.clientesExcluidos ?? Array.from(clientesExcluidos),
-        cortes_clientes: parametros?.cortes ?? cortesClientes,
-        desconsiderar_balcao: parametros?.balcao ?? desconsiderarBalcao,
-        max_itens_por_grupo: parametros?.maxPorGrupo ?? maxPorGrupo,
-        ajustar_cortes: parametros?.ajustarCortes ?? true,
-        empresa: parametros?.empresa !== undefined ? parametros.empresa : empresaBase,
-        loja: parametros?.loja !== undefined ? parametros.loja : lojaApi,
-      });
-      if (Array.isArray(resultado.cortes_clientes) && resultado.cortes_clientes.length === 3) {
-        setCortesClientes(resultado.cortes_clientes as [number, number, number]);
-      }
-      setGrupos(resultado.grupos);
-      if (!Array.isArray(resultado.itens)) {
-        setItensClientes([]);
-        setErro('Backend desatualizado: a prévia não retornou a lista de clientes. Reinicie o uvicorn (porta do proxy em vite.config.ts).');
-      } else {
-        setItensClientes(resultado.itens);
-      }
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Falha ao carregar prévia dos grupos.');
-    } finally {
-      setCarregandoGrupos(false);
-    }
-  };
-
-  const handleAtualizarPreviaGrupos = () => atualizarPreviaGrupos({ ajustarCortes: false });
-
-  const handleSugerirCortes = () => atualizarPreviaGrupos({ ajustarCortes: true });
-
-  const atualizarPreviaProdutos = async (parametros?: {
-    produtosExcluidos?: string[];
-    corte?: number;
-    empresa?: string | null;
-    loja?: string | null;
-    desconsiderarDemais?: boolean;
-    desconsiderarNaoHarm?: boolean;
-    sugerirCorte?: boolean;
-  }) => {
-    setErro(null);
-    setCarregandoProdutos(true);
-    try {
-      const excluidosEnviados = parametros?.produtosExcluidos ?? Array.from(produtosExcluidos);
-      const comuns = {
-        produtos_excluidos: excluidosEnviados,
-        corte_produtos: parametros?.corte ?? corteProdutos,
-        desconsiderar_demais_produtos: parametros?.desconsiderarDemais ?? desconsiderarDemaisProdutos,
-        desconsiderar_nao_harmonizados: parametros?.desconsiderarNaoHarm ?? desconsiderarNaoHarmonizados,
-        empresa: parametros?.empresa !== undefined ? parametros.empresa : empresaBase,
-        loja: parametros?.loja !== undefined ? parametros.loja : lojaApi,
-      };
-      const resultado = parametros?.sugerirCorte
-        ? await sugerirCorteProdutos({ ...comuns, max_itens_por_grupo: maxPorGrupo })
-        : await obterPreviaProdutos(comuns);
-      if (typeof resultado.corte_produtos === 'number') {
-        setCorteProdutos(resultado.corte_produtos);
-      }
-      setProdutosGrupos(resultado.grupos);
-      // Migração: até a versão anterior os dois checkboxes despejavam os nomes
-      // dentro de produtos_excluidos, e o config.json guardava essa foto. Aqui
-      // a lista volta a ser só o que foi desmarcado à mão.
-      if (Array.isArray(resultado.produtos_fora_por_regra) && resultado.produtos_fora_por_regra.length > 0) {
-        const porRegra = new Set(resultado.produtos_fora_por_regra);
-        const manuais = excluidosEnviados.filter((produto) => !porRegra.has(produto));
-        if (manuais.length !== excluidosEnviados.length) {
-          setProdutosExcluidos(new Set(manuais));
-        }
-      }
-      if (!Array.isArray(resultado.itens)) {
-        setItensProdutos([]);
-        setErro('Backend desatualizado: a prévia não retornou a lista de produtos. Reinicie o uvicorn (porta do proxy em vite.config.ts).');
-      } else {
-        setItensProdutos(resultado.itens);
-      }
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Falha ao carregar prévia de produtos.');
-    } finally {
-      setCarregandoProdutos(false);
-    }
-  };
-
-  const handleAtualizarPreviaProdutos = () => atualizarPreviaProdutos();
-
-  const handleSugerirCorteProdutos = () => atualizarPreviaProdutos({ sugerirCorte: true });
-
-  // Regra, não exclusão gravada: o backend deriva quem fica de fora na hora do
-  // cálculo, então mudar o corte depois já corrige a lista sozinho.
-  const handleToggleDesconsiderarDemais = async (checked: boolean) => {
-    setDesconsiderarDemaisProdutos(checked);
-    await atualizarPreviaProdutos({ desconsiderarDemais: checked });
-  };
-
-  const handleToggleDesconsiderarNaoHarmonizados = async (checked: boolean) => {
-    setDesconsiderarNaoHarmonizados(checked);
-    await atualizarPreviaProdutos({ desconsiderarNaoHarm: checked });
-  };
-
-  const carregarTagsClientes = async (empresa: string | null, loja?: string | null) => {
-    if (!empresa) {
-      setTagsPorCliente({});
-      setTagsCatalogo(TAGS_CATALOGO_PADRAO);
-      setGruposManuais([]);
-      return;
-    }
-    try {
-      const dados = await obterTagsClientes(empresa, loja !== undefined ? loja : lojaApi);
-      setTagsPorCliente(dados.tags ?? {});
-      setTagsCatalogo(dados.catalogo ?? TAGS_CATALOGO_PADRAO);
-      setGruposManuais(dados.grupos ?? []);
-    } catch (e) {
-      // Não zera gruposManuais: a prévia pode ter aplicado grupos do disco;
-      // limpar aqui deixaria o painel Clientes inconsistente com a prévia.
-      setErro(e instanceof Error ? e.message : 'Falha ao carregar tags/grupos da empresa.');
-    }
-  };
-
-  const persistirGruposManuais = (proximos: GrupoManualClientes[]) => {
-    if (!empresaBase) {
-      return Promise.reject(new Error('Selecione uma empresa.'));
-    }
-    const empresa = empresaBase;
-    const loja = lojaApi;
-    const job = gruposSaveChainRef.current.catch(() => undefined).then(async () => {
-      const dados = await salvarGruposManuais(empresa, proximos, loja);
-      setGruposManuais(dados.grupos ?? proximos);
-      // Prévia fora da fila de disco: N saves rápidos → 1 refresh após idle.
-      gruposPreviaCtxRef.current = { empresa, loja };
-      if (gruposPreviaDebounceRef.current !== null) {
-        clearTimeout(gruposPreviaDebounceRef.current);
-      }
-      gruposPreviaDebounceRef.current = setTimeout(() => {
-        gruposPreviaDebounceRef.current = null;
-        const ctx = gruposPreviaCtxRef.current;
-        gruposPreviaCtxRef.current = null;
-        if (!ctx) return;
-        void atualizarPreviaGrupos({
-          ajustarCortes: false,
-          empresa: ctx.empresa,
-          loja: ctx.loja,
-        });
-      }, 450);
-      return dados;
-    });
-    gruposSaveChainRef.current = job.then(
-      () => undefined,
-      () => undefined,
-    );
-    return job;
-  };
-
-  const handleToggleGrupoManual = async (cliente: string, grupoId: string) => {
-    if (!empresaBase) return;
-    const atual = gruposManuaisRef.current;
-    const proximos = atual.map((g) => ({
-      ...g,
-      clientes: g.clientes.filter((c) => c !== cliente),
-    }));
-    const alvo = proximos.find((g) => g.id === grupoId);
-    const estavaNoGrupo = atual.some(
-      (g) => g.id === grupoId && g.clientes.includes(cliente),
-    );
-    if (!estavaNoGrupo && alvo) {
-      alvo.clientes.push(cliente);
-    }
-    gruposManuaisRef.current = proximos;
-    setGruposManuais(proximos);
-    try {
-      await persistirGruposManuais(proximos);
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Falha ao salvar grupo manual.');
-    }
-  };
-
-  const handleCriarGrupoManual = async (cliente: string, nome: string) => {
-    if (!empresaBase) return;
-    const rotulo = nome.trim();
-    if (!rotulo) return;
-    const atual = gruposManuaisRef.current;
-    const baseId = slugId(rotulo);
-    const ids = new Set(atual.map((g) => g.id));
-    let grupoId = baseId;
-    let n = 2;
-    while (ids.has(grupoId)) {
-      grupoId = `${baseId}_${n}`;
-      n += 1;
-    }
-    const semCliente = atual.map((g) => ({
-      ...g,
-      clientes: g.clientes.filter((c) => c !== cliente),
-    }));
-    const proximos = [...semCliente, { id: grupoId, nome: rotulo, clientes: [cliente] }];
-    gruposManuaisRef.current = proximos;
-    setGruposManuais(proximos);
-    try {
-      await persistirGruposManuais(proximos);
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Falha ao criar grupo manual.');
-    }
-  };
-
-  const handleTagsClienteChange = async (cliente: string, tags: TagCliente[]) => {
-    if (!empresaBase) return;
-    const chave = cliente.trim();
-    if (!chave) return;
-    const tinhaBalcao = (tagsPorCliente[chave] ?? []).includes('cliente_balcao');
-    const temBalcao = tags.includes('cliente_balcao');
-    try {
-      const dados = await salvarTagsUmCliente(empresaBase, chave, tags, lojaApi);
-      setTagsPorCliente(dados.tags ?? {});
-      // Tag só cadastra o nome; o filtro só muda a prévia se o checkbox estiver ligado.
-      if (desconsiderarBalcao && tinhaBalcao !== temBalcao) {
-        await atualizarPreviaGrupos({ ajustarCortes: false, empresa: empresaBase, loja: lojaApi });
-      }
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Falha ao salvar tags do cliente.');
-    }
-  };
-
-  const carregarPrevias = async (
-    empresa?: string | null,
-    opcoes?: { ajustarCortes?: boolean; override?: OverridePrevia; loja?: string | null },
-  ) => {
-    const emp = empresa !== undefined ? empresa : empresaBase;
-    const loja = opcoes?.loja !== undefined ? opcoes.loja : lojaApi;
-    const ajustarCortes = opcoes?.ajustarCortes ?? true;
-    const o = opcoes?.override;
-    // Tags (I/O leve) em paralelo com a 1ª prévia; a 2ª prévia sequencial
-    // evita dois groupbys pesados competindo no worker único do uvicorn.
-    await Promise.all([
-      carregarTagsClientes(emp ?? null, loja),
-      (async () => {
-        await atualizarPreviaGrupos({
-          empresa: emp,
-          loja,
-          ajustarCortes,
-          clientesExcluidos: o?.clientesExcluidos,
-          cortes: o?.cortes,
-          balcao: o?.balcao,
-          maxPorGrupo: o?.maxPorGrupo,
-        });
-        await atualizarPreviaProdutos({
-          empresa: emp,
-          loja,
-          produtosExcluidos: o?.produtosExcluidos,
-          corte: o?.corte,
-          desconsiderarDemais: o?.desconsiderarDemais,
-          desconsiderarNaoHarm: o?.desconsiderarNaoHarm,
-        });
-      })(),
-    ]);
-  };
-
-  const configAtual = () => ({
-    cortesClientes, corteProdutos, periodosQueda, desconsiderarBalcao, desconsiderarDemaisProdutos,
-    desconsiderarNaoHarmonizados, excluirPeriodoAtual, erosaoSomenteProdutosEmAlerta,
-    nomeEmpresa: nomeEmpresaEfetivo, topNProdutos, reducaoMinimaErosao, maxPorGrupo,
-    quedaMinimaAlertaRs, quedaMinimaErosaoRs, reducaoMinimaSemVenda, topNPoderCompra,
-    clientesExcluidos: Array.from(clientesExcluidos), produtosExcluidos: Array.from(produtosExcluidos),
-    chavesSelecionadas: Array.from(chavesSelecionadas), granularidade,
-  });
-
-  const handleSalvarConfiguracaoEmpresa = async () => {
-    if (!nomeEmpresaEfetivo) {
-      const msg = 'Selecione ou informe o nome da empresa antes de salvar.';
-      setErro(msg);
-      setSucesso(null);
-      return;
-    }
-    if (!caminhoTrabalho) {
-      const msg = 'Configure a pasta de trabalho (engrenagem) antes de salvar a configuração.';
-      setErro(msg);
-      setSucesso(null);
-      return;
-    }
-    setErro(null);
-    setSucesso(null);
-    setSalvandoConfig(true);
-    try {
-      const resultado = await salvarConfiguracaoEmpresa(nomeEmpresaEfetivo, configAtual(), lojaApi);
-      const caminho = resultado.caminho || `${caminhoTrabalho}/${nomeEmpresaEfetivo}/config.json`;
-      const escopo = rotuloEscopoLoja;
-      setSucesso(`Configuração salva (${escopo}) em ${caminho}`);
-      setEmpresaSelecionada(nomeEmpresaEfetivo);
-      setNomeEmpresaManual('');
-      localStorage.setItem('alvo_empresa', nomeEmpresaEfetivo);
-      try {
-        const nomes = await listarEmpresas();
-        setEmpresas(nomes);
-      } catch {
-        // Salvamento já ok — falha ao listar empresas não invalida o arquivo.
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'Falha ao salvar configuração da empresa.';
-      setErro(msg);
-      setSucesso(null);
-    } finally {
-      setSalvandoConfig(false);
-    }
-  };
-
-  // Troca de loja na barra lateral recarrega o escopo desta tela (config, tags e
-  // grupos são gravados por escopo). Só reage à empresa que a tela tem aberta;
-  // durante uma troca de empresa o evento pode chegar antes deste estado virar.
-  useEffect(() => {
-    const aoTrocarLoja = (evento: Event) => {
-      const detalhe = evento instanceof CustomEvent ? evento.detail : null;
-      const empresaEvento = detalhe && typeof detalhe === 'object' ? String(detalhe.empresa ?? '') : '';
-      if (!empresaSelecionada || empresaEvento !== empresaSelecionada) return;
-      const novas = lerLojas(empresaSelecionada);
-      const escopoNovo = codificarEscopoLojas(novas);
-      if (escopoNovo === lojaApi) return;
-      setLojasEscopo(novas);
-      void trocarEscopoLoja(escopoNovo);
-    };
-    window.addEventListener(EVENTO_LOJA, aoTrocarLoja);
-    return () => window.removeEventListener(EVENTO_LOJA, aoTrocarLoja);
-  });
-
-  const handleSelecionarEmpresa = (nome: string) => {
-    setEmpresaSelecionada(nome);
-    const lojasSalvas = nome ? lerLojas(nome) : [];
-    setLojasEscopo(lojasSalvas);
-    if (nome) {
-      setNomeEmpresaManual('');
-      localStorage.setItem('alvo_empresa', nome);
-    } else {
-      localStorage.removeItem('alvo_empresa');
-    }
-    void iniciarEmpresa(nome || null, codificarEscopoLojas(lojasSalvas));
-  };
-
-  const handleCarregarConfiguracaoEmpresa = async () => {
-    if (!empresaSelecionada) {
-      setErro('Selecione uma empresa no combobox para carregar a configuração.');
-      return;
-    }
-    setErro(null);
-    try {
-      const dados = await tentarCarregarConfiguracaoEmpresa(empresaSelecionada, lojaApi);
-      if (!dados) {
-        setErro(`Configuração não encontrada para ${rotuloEscopoLoja}.`);
-        return;
-      }
-      setNomeEmpresaManual('');
-      const override = aplicarDadosConfig(dados);
-      await atualizarPreviaGrupos({
-        clientesExcluidos: override.clientesExcluidos,
-        cortes: override.cortes,
-        balcao: override.balcao,
-        maxPorGrupo: override.maxPorGrupo,
-        ajustarCortes: false,
-        empresa: empresaSelecionada,
-        loja: lojaApi,
-      });
-      await atualizarPreviaProdutos({
-        produtosExcluidos: override.produtosExcluidos,
-        corte: override.corte,
-        desconsiderarDemais: override.desconsiderarDemais,
-        desconsiderarNaoHarm: override.desconsiderarNaoHarm,
-        empresa: empresaSelecionada,
-        loja: lojaApi,
-      });
-    } catch (e) {
-      setErro(e instanceof Error ? e.message : 'Falha ao carregar configuração da empresa.');
-    }
-  };
 
   const handleGerar = async () => {
     if (chavesSelecionadas.size === 0) {
@@ -903,63 +249,6 @@ export default function AnalisadorPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [abasResultados]);
 
-  // Conta, por grupo (Faixa), quantos itens já visíveis na prévia estão
-  // marcados como excluídos — usado para ajustar a contagem "oficial" (que
-  // vem do backend e não sabe de exclusões feitas só no front, sem clicar em
-  // "Atualizar prévia" de novo) para o valor real que de fato entra na
-  // análise.
-  const contarExcluidosPorGrupo = <T,>(
-    itens: T[],
-    excluidos: Set<string>,
-    obterGrupo: (item: T) => string,
-    obterChave: (item: T) => string,
-  ) => {
-    const mapa: Record<string, number> = {};
-    itens.forEach((item) => {
-      if (excluidos.has(obterChave(item))) {
-        const grupo = obterGrupo(item);
-        mapa[grupo] = (mapa[grupo] ?? 0) + 1;
-      }
-    });
-    return mapa;
-  };
-
-  const clientesExcluidosPorGrupo = useMemo(
-    () => contarExcluidosPorGrupo(itensClientes, clientesExcluidos, (i) => i.grupo, (i) => i.cliente),
-    [itensClientes, clientesExcluidos],
-  );
-  const produtosExcluidosPorGrupo = useMemo(
-    () => contarExcluidosPorGrupo(itensProdutos, produtosExcluidos, (i) => i.grupo, (i) => i.produto),
-    [itensProdutos, produtosExcluidos],
-  );
-
-  const resumoGrupos = (
-    lista: Grupo[] | null,
-    rotulo: string,
-    excluidosPorGrupo: Record<string, number> = {},
-  ) => {
-    if (!lista) return null;
-    return (
-      <p className="analisador-resumo-grupos">
-        {lista.map((g) => {
-          // O nome do grupo aqui pode ter um sufixo (ex.: "Grupo 1 (alto
-          // giro)") que não existe no campo "grupo" de cada item da prévia
-          // (ex.: "Grupo 1") — por isso o match é por prefixo, não só igualdade.
-          const chaveCorrespondente = Object.keys(excluidosPorGrupo).find(
-            (chave) => g.nome === chave || g.nome.startsWith(`${chave} `),
-          );
-          const excluidosNoGrupo = chaveCorrespondente ? excluidosPorGrupo[chaveCorrespondente] : 0;
-          const quantidadeReal = Math.max(0, g.quantidade - excluidosNoGrupo);
-          const rotuloCurto = rotuloGrupoCurto(g.nome);
-          const texto = g.ate_percentual != null
-            ? `${rotuloCurto} (até ${g.ate_percentual.toFixed(1)}%): ${quantidadeReal} ${rotulo}`
-            : `${rotuloCurto}: ${quantidadeReal} ${rotulo}`;
-          return excluidosNoGrupo > 0 ? `${texto} (${excluidosNoGrupo} excluído(s))` : texto;
-        }).join(' | ')}
-      </p>
-    );
-  };
-
   return (
     <AppShell>
     <div className="dashboard-container analisador-page">
@@ -967,12 +256,12 @@ export default function AnalisadorPage() {
         <div>
           <h1>
             Relatórios
-            {nomeEmpresaEfetivo && (
+            {empresaSelecionada && (
               <span className="analisador-header-empresa">
                 <span className="analisador-header-empresa-sep" aria-hidden="true">·</span>
-                <span className="analisador-header-empresa-nome">{nomeEmpresaEfetivo}</span>
+                <span className="analisador-header-empresa-nome">{empresaSelecionada}</span>
                 {lojasEscopo.length > 0 && (
-                  <span className="analisador-header-empresa-loja"> · {rotuloEscopoLoja}</span>
+                  <span className="analisador-header-empresa-loja"> · {lojasEscopo.length === 1 ? lojasEscopo[0] : `${lojasEscopo.length} lojas`}</span>
                 )}
               </span>
             )}
@@ -995,150 +284,8 @@ export default function AnalisadorPage() {
         </div>
       )}
 
-      {sucesso && (
-        <div className="glass-card glass-card-flat analisador-sucesso" role="status" aria-live="polite">
-          <span>{sucesso}</span>
-          <button
-            type="button"
-            className="analisador-sucesso-fechar"
-            onClick={() => setSucesso(null)}
-            aria-label="Fechar notificação"
-            title="Fechar"
-          >
-            ×
-          </button>
-        </div>
-      )}
-
-      {configPendente && (
-        <div
-          className="config-modal-overlay"
-          role="presentation"
-          onClick={recusarConfig}
-        >
-          <div
-            className="config-modal"
-            style={{ width: 'min(480px, 100%)', maxHeight: 'min(80vh, 640px)' }}
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="confirm-config-titulo"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="config-modal-header">
-              <h2 id="confirm-config-titulo">Configuração salva</h2>
-            </div>
-            <div className="config-modal-body" style={{ padding: '1.25rem' }}>
-              <p style={{ margin: '0 0 1rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
-                A empresa <strong>{configPendente.empresa}</strong> tem configuração salva
-                {configPendente.loja ? (
-                  <> para o escopo <strong>{rotuloEscopoLoja}</strong></>
-                ) : (
-                  <> para <strong>Todas as lojas</strong></>
-                )}
-                . Deseja aplicar essas regras antes de carregar os dados?
-              </p>
-              <ul
-                style={{
-                  margin: '0 0 1.25rem',
-                  paddingLeft: '1.25rem',
-                  color: 'var(--text-secondary)',
-                  lineHeight: 1.6,
-                  fontSize: '0.95rem',
-                }}
-              >
-                {resumirRegrasConfig(configPendente.dados).map((linha) => (
-                  <li key={linha}>{linha}</li>
-                ))}
-              </ul>
-              <p style={{ margin: '0 0 1.25rem', fontSize: '0.9rem', color: 'var(--text-muted, var(--text-secondary))' }}>
-                Se escolher Não, usa o padrão (cortes 30/50/60 e 80%, com ajuste automático até {MAX_POR_GRUPO_PADRAO} por grupo).
-              </p>
-              <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
-                <button type="button" className="analisador-btn analisador-btn-sec" onClick={recusarConfig}>
-                  Não, usar padrão
-                </button>
-                <button type="button" className="analisador-btn analisador-btn-pri" onClick={confirmarAplicarConfig}>
-                  Sim, aplicar
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {etapa === 'carregando-base' && !configPendente && (
-        <div className="glass-card glass-card-flat" style={{ maxWidth: 480 }}>
-          <p className="analisador-hint">Carregando base de dados...</p>
-        </div>
-      )}
-
-      {etapa === 'carregando-base' && configPendente && (
-        <div className="glass-card glass-card-flat" style={{ maxWidth: 480 }}>
-          <p className="analisador-hint">Aguardando confirmação da configuração salva...</p>
-        </div>
-      )}
-
-      {etapa === 'config' && previa && (
+      {etapa === 'config' && (
         <div className="analisador-stack">
-          <div className="glass-card glass-card-flat">
-            <p className="analisador-hint" style={{ margin: 0 }}>
-              {previa.linhas.toLocaleString('pt-BR')} linhas carregadas
-              {lojasEscopo.length > 0 && ` · ${rotuloEscopoLoja}`}
-              {lojasEscopo.length === 0 && lojasDisponiveis.length === 1 && ` · loja ${lojasDisponiveis[0]}`}
-              {previa.linhas_ignoradas > 0 && ` (${previa.linhas_ignoradas} ignoradas por Ano/Mês vazio)`}
-              {previa.qtd_nao_harmonizados > 0 && ` · ${previa.qtd_nao_harmonizados} lançamentos sem descrição de produto`}
-            </p>
-          </div>
-
-          <div className="glass-card glass-card-flat analisador-bloco analisador-bloco-empresa">
-            <h2 className="analisador-titulo">Empresa analisada</h2>
-            <div className="analisador-campo">
-              <span>Empresa analisada</span>
-              <AnalisadorCombobox
-                value={empresaSelecionada}
-                options={empresas}
-                onChange={handleSelecionarEmpresa}
-                emptyLabel="— Digitar manualmente —"
-                searchPlaceholder="Buscar empresa…"
-                includeOrphanValue
-                aria-label="Empresa analisada"
-              />
-            </div>
-            {!empresaSelecionada && (
-              <label className="analisador-campo">
-                <span>Nome manual</span>
-                <input
-                  className="analisador-input"
-                  value={nomeEmpresaManual}
-                  onChange={(e) => setNomeEmpresaManual(e.target.value)}
-                  placeholder="Aparece na capa e no nome do arquivo"
-                />
-              </label>
-            )}
-            {/* A loja é escolhida na barra lateral e vale para todas as telas. */}
-            <div className="analisador-acoes">
-              <button type="button" onClick={handleCarregarConfiguracaoEmpresa} className="analisador-btn analisador-btn-sec">
-                <FolderOpen size={16} /> Carregar configuração
-              </button>
-              <button
-                type="button"
-                onClick={handleSalvarConfiguracaoEmpresa}
-                disabled={salvandoConfig}
-                className="analisador-btn analisador-btn-sec"
-              >
-                <Save size={16} /> {salvandoConfig ? 'Salvando...' : 'Salvar configuração'}
-              </button>
-            </div>
-            {erro && (
-              <p className="analisador-feedback-inline erro" role="alert">{erro}</p>
-            )}
-            <p className="analisador-hint" style={{ width: '100%' }}>
-              {empresaSelecionada
-                ? `Configuração, tags e grupos são salvos por escopo de loja em ${caminhoTrabalho || 'pasta de trabalho'}/${empresaSelecionada}/ (config.json e clientes_tags.json). Escopo atual: ${rotuloEscopoLoja}.`
-                : 'Sem empresa: usa base_de_dados.xlsx da raiz. Selecione uma empresa (ou abra o Analisador com uma já escolhida no Dashboard).'}
-            </p>
-          </div>
-
           <div className="analisador-tabs custom-scrollbar" role="tablist" aria-label="Áreas do analisador">
             {ABAS_WORKSPACE.map((aba) => (
               <button
@@ -1159,154 +306,6 @@ export default function AnalisadorPage() {
 
           {abaWorkspace === 'relatorios' && (
           <>
-          <div className="analisador-previas-grid">
-            <div className="glass-card glass-card-flat analisador-stack-inner">
-              <h2 className="analisador-titulo">Grupos de clientes</h2>
-              <div className="analisador-segmentacao-linha">
-                <div className="analisador-campo">
-                  <span id="cortes-abc-label">Cortes A/B/C (% acumulada) e máx. por grupo</span>
-                  <div className="analisador-cortes" role="group" aria-labelledby="cortes-abc-label">
-                    {cortesClientes.map((valor, indice) => (
-                      <NumberStepper
-                        key={indice}
-                        value={valor}
-                        ariaLabel={`Corte grupo ${indice + 1}`}
-                        onChange={(v) => {
-                          const novo = [...cortesClientes] as [number, number, number];
-                          novo[indice] = v === '' ? 0 : v;
-                          setCortesClientes(novo);
-                        }}
-                      />
-                    ))}
-                    <span className="analisador-cortes-sep" aria-hidden="true" />
-                    <NumberStepper
-                      value={maxPorGrupo}
-                      ariaLabel="Máximo de clientes por grupo"
-                      onChange={(v) => setMaxPorGrupo(v === '' ? 0 : v)}
-                    />
-                  </div>
-                </div>
-              </div>
-              <label className="analisador-check-linha">
-                <input
-                  type="checkbox"
-                  checked={desconsiderarBalcao}
-                  onChange={(e) => {
-                    const checked = e.target.checked;
-                    setDesconsiderarBalcao(checked);
-                    void atualizarPreviaGrupos({ balcao: checked, ajustarCortes: false });
-                  }}
-                />
-                Desconsiderar clientes balcão
-              </label>
-              <div className="analisador-acoes">
-                <button type="button" onClick={handleSugerirCortes} disabled={carregandoGrupos} className="analisador-btn analisador-btn-sec">
-                  {carregandoGrupos ? 'Calculando...' : 'Sugerir cortes automaticamente'}
-                </button>
-                <button type="button" onClick={handleAtualizarPreviaGrupos} disabled={carregandoGrupos} className="analisador-btn analisador-btn-sec">
-                  {carregandoGrupos ? 'Calculando...' : 'Atualizar prévia dos grupos'}
-                </button>
-              </div>
-              <PreviaClientesTable
-                itens={itensClientes}
-                excluidos={clientesExcluidos}
-                onToggle={(cliente) => toggleSet(clientesExcluidos, cliente, setClientesExcluidos)}
-                onToggleAll={(chaves, checkAll) => {
-                  setClientesExcluidos((prev) => {
-                    const novo = new Set(prev);
-                    chaves.forEach((c) => (checkAll ? novo.delete(c) : novo.add(c)));
-                    return novo;
-                  });
-                }}
-                carregando={carregandoGrupos}
-                empresa={empresaBase}
-                tagsPorCliente={tagsPorCliente}
-                tagsCatalogo={tagsCatalogo}
-                gruposManuais={gruposManuais}
-                onTagsChange={handleTagsClienteChange}
-                onToggleGrupoManual={handleToggleGrupoManual}
-                onCriarGrupoManual={handleCriarGrupoManual}
-                desconsiderarBalcao={desconsiderarBalcao}
-              />
-              <p className="analisador-hint" style={{ width: '100%', marginTop: '0.5rem' }}>
-                Cortes ajustados automaticamente para ≤{maxPorGrupo} por grupo (exceto Demais: até 300 na prévia; contagem total acima).
-              </p>
-              {resumoGrupos(grupos, 'clientes', clientesExcluidosPorGrupo)}
-            </div>
-
-            <div className="glass-card glass-card-flat analisador-stack-inner">
-              <h2 className="analisador-titulo">Grupos de produtos</h2>
-              <div className="analisador-segmentacao-linha">
-                <label className="analisador-campo">
-                  <span>Corte de produtos (%)</span>
-                  <div className="analisador-cortes">
-                    <NumberStepper
-                      value={corteProdutos}
-                      onChange={(v) => setCorteProdutos(v === '' ? 0 : v)}
-                    />
-                  </div>
-                </label>
-              </div>
-              <div className="analisador-check-linha-grupo">
-                <label className="analisador-check-linha">
-                  <input
-                    type="checkbox"
-                    checked={desconsiderarDemaisProdutos}
-                    onChange={(e) => handleToggleDesconsiderarDemais(e.target.checked)}
-                  />
-                  Desconsiderar os demais nos relatórios
-                </label>
-                <label className="analisador-check-linha">
-                  <input
-                    type="checkbox"
-                    checked={desconsiderarNaoHarmonizados}
-                    onChange={(e) => handleToggleDesconsiderarNaoHarmonizados(e.target.checked)}
-                  />
-                  Desconsiderar "não harmonizados"
-                </label>
-              </div>
-              <div className="analisador-acoes">
-                <button
-                  type="button"
-                  onClick={handleSugerirCorteProdutos}
-                  disabled={carregandoProdutos}
-                  className="analisador-btn analisador-btn-sec"
-                  title={`Recalcula o corte para o alto giro caber em ${maxPorGrupo} produtos`}
-                >
-                  {carregandoProdutos ? 'Calculando...' : 'Sugerir corte automaticamente'}
-                </button>
-                <button
-                  type="button"
-                  onClick={handleAtualizarPreviaProdutos}
-                  disabled={carregandoProdutos}
-                  className="analisador-btn analisador-btn-sec"
-                >
-                  {carregandoProdutos ? 'Calculando...' : 'Atualizar prévia dos produtos'}
-                </button>
-              </div>
-              <PreviaProdutosTable
-                itens={itensProdutos}
-                excluidos={produtosExcluidos}
-                onToggle={(produto) => toggleSet(produtosExcluidos, produto, setProdutosExcluidos)}
-                onToggleAll={(chaves, checkAll) => {
-                  setProdutosExcluidos((prev) => {
-                    const novo = new Set(prev);
-                    chaves.forEach((p) => (checkAll ? novo.delete(p) : novo.add(p)));
-                    return novo;
-                  });
-                }}
-                carregando={carregandoProdutos}
-              />
-              <p className="analisador-hint" style={{ width: '100%', marginTop: '0.5rem' }}>
-                O corte % acima é o que manda — ele só muda quando você clica em "Sugerir
-                corte", que o recalcula para o alto giro caber em {maxPorGrupo} produtos
-                (o mesmo máximo por grupo dos clientes). Demais: até 300 na prévia;
-                contagem total abaixo.
-              </p>
-              {resumoGrupos(produtosGrupos, 'produtos', produtosExcluidosPorGrupo)}
-            </div>
-          </div>
-
           <div className="glass-card glass-card-flat analisador-stack-inner">
             <div className="analisador-titulo-linha">
               <h2 className="analisador-titulo">Relatórios a gerar</h2>

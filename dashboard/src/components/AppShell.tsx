@@ -20,6 +20,7 @@ import {
   PackageSearch,
   Receipt,
   Bot,
+  Scissors,
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getToken, clearToken, obterStatusAtualizacao, type StatusAtualizacao } from '../api/client';
@@ -31,6 +32,8 @@ import { SidebarMesesFechadosToggle } from './SidebarMesesFechadosToggle';
 import { TopoVendaMediaSelect } from './TopoVendaMediaSelect';
 import { TopoDespesasPeriodoSelect } from './TopoDespesasPeriodoSelect';
 import { TopoCortesToggle } from './TopoCortesToggle';
+import { TopoGruposClientesFiltro } from './TopoGruposClientesFiltro';
+import { useEscopoAtual } from '../hooks/useEscopoAtual';
 
 const URL_CARTEIRA = 'http://127.0.0.1:3001';
 const LS_SIDEBAR = 'prisma_sidebar_collapsed';
@@ -111,7 +114,9 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const logado = Boolean(getToken());
+  const { empresa: empresaEscopo } = useEscopoAtual();
   const emAnalisador = location.pathname.startsWith('/analisador');
+  const emCortes = location.pathname.startsWith('/cortes');
   const emMonitor = location.pathname.startsWith('/monitor');
   const emClientes = location.pathname.startsWith('/clientes');
   const emVendedores = location.pathname.startsWith('/vendedores');
@@ -241,6 +246,13 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
               onClick={() => navigate('/')}
             />
             <NavItem
+              icon={<Scissors size={17} />}
+              label="Cortes"
+              collapsed={colapsado}
+              ativo={emCortes}
+              onClick={() => navigate('/cortes')}
+            />
+            <NavItem
               icon={<BarChart3 size={17} />}
               label="Relatórios"
               collapsed={colapsado}
@@ -324,7 +336,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
               destaque
               href={URL_CARTEIRA}
             />
-            {emAnalisador && logado && (
+            {(emAnalisador || emCortes) && logado && (
               <NavItem
                 icon={<LogOut size={17} />}
                 label="Sair"
@@ -351,8 +363,16 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
             <div className="app-shell-escopo">
               {emEstoque && <TopoVendaMediaSelect />}
               {emDespesas && <TopoDespesasPeriodoSelect />}
-              <SidebarMesesFechadosToggle desabilitarMesmoPeriodo={emDashboard || emEstoque || emDespesas} />
-              {!emDespesas && <TopoCortesToggle />}
+              {!emAssistente && !emCortes && (
+                <SidebarMesesFechadosToggle desabilitarMesmoPeriodo={emDashboard || emEstoque || emDespesas} />
+              )}
+              {/* Sem empresa selecionada, nenhuma tela aplica corte algum: o
+                  Dashboard cai no summary.json estático (não passa cortes/grupos
+                  para o backend) e Clientes/Vendedores/Estoque nem chegam a
+                  buscar dado. Escondido aqui em vez de só desabilitado — ligado
+                  sem efeito é pior que ausente. */}
+              {!!empresaEscopo && !emDespesas && !emAssistente && !emCortes && <TopoCortesToggle />}
+              {!!empresaEscopo && !emDespesas && !emAssistente && !emCortes && <TopoGruposClientesFiltro />}
               <SidebarEmpresaSelect />
               <SidebarLojaSelect />
             </div>

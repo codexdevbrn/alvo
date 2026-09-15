@@ -8,10 +8,10 @@ import {
   Loader2,
   Percent,
   Search,
-  Users,
 } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
 import { StatCard } from '../components/StatCard';
+import { LeituraFaixa } from '../components/LeituraFaixa';
 import { VendedorEvolucaoChart } from '../components/vendedores/VendedorEvolucaoChart';
 import {
   obterFichaVendedor,
@@ -24,6 +24,9 @@ import {
 import { formatCurrency, formatNumber, formatPercent } from '../utils/formatters';
 import { useEscopoAtual } from '../hooks/useEscopoAtual';
 import { useMesesFechados } from '../hooks/useMesesFechados';
+import { useVersaoCortesRelatorios } from '../hooks/useVersaoCortesRelatorios';
+import { useGruposClientesFiltro } from '../hooks/useGruposClientesFiltro';
+import { gruposClientesParam } from '../utils/gruposClientesFiltro';
 
 function normalizarBusca(valor: string): string {
   return valor.normalize('NFD').replace(/[̀-ͯ]/g, '').toLocaleLowerCase('pt-BR');
@@ -38,8 +41,8 @@ function textoVariacao(valor: number | null | undefined): string {
 /** Igual a `textoVariacao`, mas troca o percentual por um rótulo quando a receita
  *  do mês fica negativa (devolução maior que venda) — nesse caso a queda passa
  *  de -100% e o número deixa de comunicar algo útil. */
-function textoVariacaoDestaque(item: { variacao: number; receita_atual: number } | null | undefined): string {
-  if (item == null) return '—';
+function textoVariacaoDestaque(item: { variacao: number | null; receita_atual: number } | null | undefined): string {
+  if (item == null || item.variacao == null) return '—';
   if (item.receita_atual < 0) return 'Receita negativa no mês';
   return textoVariacao(item.variacao);
 }
@@ -60,6 +63,28 @@ function nomeItem(item: ItemFichaVendedor): string {
   return item.cliente || item.produto || item.fabricante || item.nome || '—';
 }
 
+function pisoExcecao(receitaTime: number): number {
+  return Math.max(3000, receitaTime * 0.02);
+}
+
+function escolherExcecao(
+  itens: ItemRankingVendedor[],
+  piso: number,
+  direcao: 'alta' | 'queda',
+): ItemRankingVendedor | null {
+  const candidatos = itens.filter((item) => {
+    if (item.variacao == null) return false;
+    if (Math.max(item.receita_atual, item.receita_media) < piso) return false;
+    return direcao === 'alta' ? item.variacao > 0 : item.variacao < 0;
+  });
+  if (candidatos.length === 0) return null;
+  return candidatos.reduce((melhor, item) => {
+    const atual = item.variacao ?? 0;
+    const ref = melhor.variacao ?? 0;
+    return direcao === 'alta' ? (atual > ref ? item : melhor) : (atual < ref ? item : melhor);
+  });
+}
+
 const ABAS_ENTIDADE = [
   { id: 'clientes', rotulo: 'Clientes' },
   { id: 'produtos', rotulo: 'Produtos' },
@@ -72,6 +97,9 @@ type AbaEntidade = (typeof ABAS_ENTIDADE)[number]['id'];
 export default function VendedoresPage() {
   const { empresa, loja } = useEscopoAtual();
   const [modoPeriodo] = useMesesFechados();
+  const versaoCortes = useVersaoCortesRelatorios();
+  const gruposClientes = useGruposClientesFiltro();
+  const gruposParam = gruposClientesParam(gruposClientes);
   const [ranking, setRanking] = useState<RankingVendedoresResposta | null>(null);
   const [ficha, setFicha] = useState<FichaVendedorResposta | null>(null);
   const [vendedor, setVendedor] = useState<string | null>(null);
@@ -88,21 +116,28 @@ export default function VendedoresPage() {
       setErro(null);
       return;
     }
-    const controller = new AbortController();
+    let vivo = true;
     setCarregando(true);
     setErro(null);
-    void obterRankingVendedores(empresa, loja, controller.signal, modoPeriodo)
-      .then(setRanking)
+    // Sem AbortController: comCache compartilha a Promise, e o remount do
+    // Strict Mode abortava o 1º fetch — o 2º engolia AbortError e a tela
+    // ficava só o cabeçalho (ranking null, carregando false, sem erro).
+    void obterRankingVendedores(empresa, loja, undefined, modoPeriodo, gruposParam)
+      .then((dados) => {
+        if (vivo) setRanking(dados);
+      })
       .catch((falha) => {
-        if (falha instanceof DOMException && falha.name === 'AbortError') return;
+        if (!vivo) return;
         setRanking(null);
         setErro(falha instanceof Error ? falha.message : 'Falha ao carregar vendedores.');
       })
       .finally(() => {
-        if (!controller.signal.aborted) setCarregando(false);
+        if (vivo) setCarregando(false);
       });
-    return () => controller.abort();
-  }, [empresa, loja, modoPeriodo]);
+    return () => {
+      vivo = false;
+    };
+  }, [empresa, loja, modoPeriodo, versaoCortes, gruposParam]);
 
   useEffect(() => {
     if (!empresa || !vendedor) {
@@ -111,7 +146,7 @@ export default function VendedoresPage() {
     }
     const controller = new AbortController();
     setCarregandoFicha(true);
-    void obterFichaVendedor(empresa, vendedor, loja, controller.signal, modoPeriodo)
+    void obterFichaVendedor(empresa, vendedor, loja, controller.signal, modoPeriodo, gruposParam)
       .then(setFicha)
       .catch((falha) => {
         if (falha instanceof DOMException && falha.name === 'AbortError') return;
@@ -122,7 +157,7 @@ export default function VendedoresPage() {
         if (!controller.signal.aborted) setCarregandoFicha(false);
       });
     return () => controller.abort();
-  }, [empresa, loja, vendedor, modoPeriodo]);
+  }, [empresa, loja, vendedor, modoPeriodo, versaoCortes, gruposParam]);
 
   const visiveis = useMemo(() => {
     const termo = normalizarBusca(busca.trim());
@@ -131,6 +166,14 @@ export default function VendedoresPage() {
     return itens.filter((item) => normalizarBusca(item.vendedor).includes(termo));
   }, [busca, ranking]);
   const maiorReceita = visiveis.reduce((maximo, item) => Math.max(maximo, item.receita_atual), 0);
+  const mediaTime = (ranking?.itens ?? []).reduce((soma, item) => soma + item.receita_media, 0);
+  const receitaAtual = ranking?.resumo?.receita_atual ?? 0;
+  const variacaoTime = ranking && mediaTime > 0
+    ? ((receitaAtual - mediaTime) / mediaTime) * 100
+    : null;
+  const piso = pisoExcecao(receitaAtual);
+  const maiorAlta = ranking ? escolherExcecao(ranking.itens ?? [], piso, 'alta') : null;
+  const maiorQueda = ranking ? escolherExcecao(ranking.itens ?? [], piso, 'queda') : null;
 
   const escolher = (item: ItemRankingVendedor) => {
     setVendedor((atual) => (atual === item.vendedor ? null : item.vendedor));
@@ -184,39 +227,45 @@ export default function VendedoresPage() {
 
         {ranking?.disponivel && (
           <>
+            <LeituraFaixa tom={(variacaoTime ?? 0) < 0 ? 'aviso' : 'normal'}>
+              Time em {ranking.rotulo_periodo ?? 'mês de referência'}: {formatCurrency(receitaAtual)}
+              {variacaoTime != null ? ` (${textoVariacao(variacaoTime)} vs média dos 6 meses)` : ''}.
+              {maiorQueda
+                ? ` Maior exceção: ${maiorQueda.vendedor} (${textoVariacao(maiorQueda.variacao)}).`
+                : maiorAlta
+                  ? ` Maior alta: ${maiorAlta.vendedor} (${textoVariacao(maiorAlta.variacao)}).`
+                  : ''}
+            </LeituraFaixa>
             <section className="vendedores-kpis" aria-label="Resumo de vendedores">
               <article className="glass-card glass-card-flat vendedores-hero">
                 <p className="despesas-hero-rotulo">
                   <Banknote size={14} aria-hidden="true" /> Receita do mês
                 </p>
-                <strong className="despesas-hero-valor">{formatCurrency(ranking.resumo.receita_atual)}</strong>
-                <p className="despesas-hero-nota">
-                  {ranking.resumo.vendedores.toLocaleString('pt-BR')} vendedor(es) · vs {rotuloPeriodo(ranking.periodo_media_inicio, ranking.periodo_media_fim)}
+                <strong className="despesas-hero-valor">{formatCurrency(receitaAtual)}</strong>
+                <p className={`despesas-hero-nota${variacaoTime == null ? '' : variacaoTime >= 0 ? ' is-alta' : ' is-queda'}`}>
+                  {variacaoTime == null
+                    ? `${(ranking.resumo?.vendedores ?? ranking.itens.length).toLocaleString('pt-BR')} vendedor(es) · vs ${rotuloPeriodo(ranking.periodo_media_inicio, ranking.periodo_media_fim)}`
+                    : `${textoVariacao(variacaoTime)} vs média dos 6 meses · ${(ranking.resumo?.vendedores ?? ranking.itens.length).toLocaleString('pt-BR')} vendedores`}
                 </p>
               </article>
               <div className="vendedores-kpis-secundarios">
                 <StatCard
-                  title="Vendedores no período"
-                  value={ranking.resumo.vendedores.toLocaleString('pt-BR')}
-                  icon={Users}
-                />
-                <StatCard
                   title="Maior alta"
-                  value={ranking.resumo.maior_alta?.vendedor ?? '—'}
+                  value={maiorAlta?.vendedor ?? '—'}
                   valueClassName="vendedores-kpi-nome"
                   icon={ArrowUpRight}
-                  trend={textoVariacaoDestaque(ranking.resumo.maior_alta)}
+                  trend={textoVariacaoDestaque(maiorAlta)}
                   trendUp
-                  useTrendColor={ranking.resumo.maior_alta != null}
+                  useTrendColor={maiorAlta != null}
                 />
                 <StatCard
                   title="Maior queda"
-                  value={ranking.resumo.maior_queda?.vendedor ?? '—'}
+                  value={maiorQueda?.vendedor ?? '—'}
                   valueClassName="vendedores-kpi-nome"
                   icon={ArrowDownRight}
-                  trend={textoVariacaoDestaque(ranking.resumo.maior_queda)}
+                  trend={textoVariacaoDestaque(maiorQueda)}
                   trendUp={false}
-                  useTrendColor={ranking.resumo.maior_queda != null}
+                  useTrendColor={maiorQueda != null}
                 />
               </div>
             </section>

@@ -7,7 +7,9 @@ const CACHE_PREFIX = 'prisma_req_cache_';
 const memoriaCache = new Map<string, unknown>();
 /** Pedidos iguais em voo compartilham a Promise. Sem isso, o Strict Mode
  *  (mount → abort → remount) dispara duas idas ao backend síncrono e a
- *  segunda espera a primeira acabar — a aba Escopo fica girando no primeiro open. */
+ *  segunda espera a primeira acabar — a aba Escopo fica girando no primeiro open.
+ *  O fetcher NÃO pode fechar sobre AbortSignal do caller: abort do 1º mount
+ *  rejeita a Promise compartilhada e o remount engole AbortError com tela vazia. */
 const inflight = new Map<string, Promise<unknown>>();
 
 export function getChaveCache(url: string, params?: unknown): string {

@@ -98,21 +98,23 @@ def _serie_mensal_por_categoria(
     janela: pd.DataFrame,
     principais: list[str],
     tem_outras: bool,
-    inicio: int,
-    fim: int,
+    periodos: list[int],
 ) -> dict:
     """Composição mês a mês das categorias principais, para o gráfico empilhado.
 
     `principais` já vem ordenado pelo total no período; o resto (se houver)
     some numa única série "Outras" — mais categorias que isso vira legenda
-    ilegível sem ganhar leitura.
+    ilegível sem ganhar leitura. `periodos` são só os meses com lançamento
+    (o mesmo eixo da série total): mês vazio ou futuro não entra.
     """
+    if not periodos:
+        return {"categorias": [], "pontos": []}
     pivot = janela.groupby(["_periodo", "categoria"])["Valor"].sum().unstack(fill_value=0.0)
-    pivot = pivot.reindex(range(inicio, fim + 1), fill_value=0.0)
+    pivot = pivot.reindex(periodos, fill_value=0.0)
     categorias_legenda = principais + (["Outras"] if tem_outras else [])
 
     pontos = []
-    for indice in range(inicio, fim + 1):
+    for indice in periodos:
         linha = pivot.loc[indice]
         valores = {categoria: _numero(float(linha.get(categoria, 0.0))) for categoria in principais}
         if tem_outras:
@@ -127,19 +129,19 @@ def _serie_mensal_por_categoria(
 
 
 def _tendencia_categorias(
-    janela: pd.DataFrame, principais: list[str], inicio: int, fim: int,
+    janela: pd.DataFrame, principais: list[str], periodos: list[int],
 ) -> dict[str, float | None]:
     """Variação % de cada categoria principal entre a 1ª e a 2ª metade da janela.
 
     Sinaliza categoria subindo/caindo dentro do próprio período selecionado,
     em vez de só o ranking estático por valor total. Janela de 1 mês não tem
-    o que comparar.
+    o que comparar. Parte no meio da lista de meses *com* lançamento — senão
+    uma cauda de zeros futuros vira −100% em tudo.
     """
-    total_periodos = fim - inicio + 1
-    if total_periodos < 2:
+    if len(periodos) < 2:
         return {categoria: None for categoria in principais}
 
-    meio = inicio + total_periodos // 2
+    meio = periodos[len(periodos) // 2]
     primeira = janela.loc[janela["_periodo"] < meio].groupby("categoria")["Valor"].sum()
     segunda = janela.loc[janela["_periodo"] >= meio].groupby("categoria")["Valor"].sum()
 
@@ -229,29 +231,44 @@ def montar_resumo_despesas(
         return _resposta_vazia(meses)
 
     dados["_periodo"] = dados["Ano"].astype(int) * 12 + dados["Mês"].astype(int) - 1
-    if usar_mes_fechado:
-        dados = dados[dados["_periodo"] < _mes_atual_indice()]
+    teto = _mes_atual_indice()
+    # Competência futura (planilha com mês à frente) não entra no recorte —
+    # senão a série ganha uma cauda de zeros até 2027 e todo mundo “cai 100%”.
+    dados = dados[dados["_periodo"] < teto] if usar_mes_fechado else dados[dados["_periodo"] <= teto]
     if dados.empty:
         return _resposta_vazia(meses)
 
-    fim = int(dados["_periodo"].max())
+    por_mes_completo = dados.groupby("_periodo")["Valor"].sum()
+    meses_com_valor = por_mes_completo[por_mes_completo > 0]
+    if meses_com_valor.empty:
+        return _resposta_vazia(meses)
+
+    fim = int(meses_com_valor.index.max())
     inicio = fim - meses + 1
     janela = dados[dados["_periodo"].between(inicio, fim)]
 
     por_mes = janela.groupby("_periodo")["Valor"].sum()
+    periodos = [
+        int(indice)
+        for indice in range(inicio, fim + 1)
+        if float(por_mes.get(indice, 0.0)) > 0
+    ]
+    if not periodos:
+        return _resposta_vazia(meses)
+
     serie_mensal = [
         {
             "periodo": _periodo_rotulo(indice),
             "rotulo": _rotulo_curto(indice),
             "valor": _numero(por_mes.get(indice, 0.0)),
         }
-        for indice in range(inicio, fim + 1)
+        for indice in periodos
     ]
 
     total = float(janela["Valor"].sum())
-    media_mensal = total / (fim - inicio + 1)
-    mes_atual = float(por_mes.get(fim, 0.0))
-    mes_anterior = float(por_mes.get(fim - 1, 0.0))
+    media_mensal = total / len(periodos)
+    mes_atual = float(por_mes.get(periodos[-1], 0.0))
+    mes_anterior = float(por_mes.get(periodos[-2], 0.0)) if len(periodos) > 1 else 0.0
     variacao_pct = (
         (mes_atual - mes_anterior) / mes_anterior * 100 if mes_anterior > 0 else None
     )
@@ -276,7 +293,7 @@ def montar_resumo_despesas(
 
     curva_abc_categorias, grupo_por_categoria = _curva_abc_categorias(por_categoria_serie, cortes)
     tendencia_por_categoria = _tendencia_categorias(
-        janela, list(principais.index), inicio, fim,
+        janela, list(principais.index), periodos,
     )
     for item in por_categoria:
         item["grupo_abc"] = grupo_por_categoria.get(item["categoria"])
@@ -286,8 +303,7 @@ def montar_resumo_despesas(
         janela,
         list(principais.head(LIMITE_SERIE_MENSAL_CATEGORIAS).index),
         len(por_categoria_serie) > LIMITE_SERIE_MENSAL_CATEGORIAS,
-        inicio,
-        fim,
+        periodos,
     )
 
     por_loja = []
@@ -307,8 +323,8 @@ def montar_resumo_despesas(
     )
 
     return {
-        "periodo_inicio": _periodo_rotulo(inicio),
-        "periodo_fim": _periodo_rotulo(fim),
+        "periodo_inicio": _periodo_rotulo(periodos[0]),
+        "periodo_fim": _periodo_rotulo(periodos[-1]),
         "meses": meses,
         "resumo": {
             "total": _numero(total),

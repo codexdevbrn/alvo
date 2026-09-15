@@ -1,6 +1,7 @@
 import type { DashboardData } from '../types/dashboard';
 import type { ModoPeriodo } from '../utils/mesesFechados';
-import { comCache } from '../utils/cacheRequisicoes';
+import { comCache, limparCacheGeral } from '../utils/cacheRequisicoes';
+import { invalidarSummary } from '../utils/cacheSummary';
 
 const TOKEN_KEY = 'prisma_analisador_token';
 
@@ -185,8 +186,10 @@ export async function obterBase(
   if (empresa) params.set('empresa', empresa);
   if (loja) params.set('loja', loja);
   const qs = params.toString() ? `?${params}` : '';
-  const res = await chamar(`/api/base${qs}`, { headers: authHeaders() });
-  return tratarResposta(res);
+  return comCache(`base_${empresa || ''}_${loja || ''}`, async () => {
+    const res = await chamar(`/api/base${qs}`, { headers: authHeaders() });
+    return tratarResposta(res);
+  });
 }
 
 export interface ParametrosAnalise {
@@ -433,7 +436,15 @@ export async function salvarConfiguracaoEmpresa(
       body: JSON.stringify({ dados }),
     },
   );
-  return tratarResposta(res);
+  const resposta = await tratarResposta<{ ok: boolean; caminho: string; loja?: string | null }>(res);
+  // tentarCarregarConfiguracaoEmpresa agora é cacheada (prefetch da tela Cortes) —
+  // sem isto, Relatórios/Cortes releriam os cortes antigos até trocar de empresa.
+  limparCacheGeral();
+  // `cacheSummary` (Dashboard) é um módulo à parte de `cacheRequisicoes` — sem
+  // isto, salvar um novo corte/exclusão aqui deixava o Dashboard da mesma
+  // empresa com o summary antigo até um F5 ou até religar o toggle "Cortes".
+  invalidarSummary(nome);
+  return resposta;
 }
 
 /** Regras salvas em config.json da pasta de trabalho da empresa (por escopo de loja). */
@@ -458,6 +469,13 @@ export type ConfigEmpresaSalva = {
   produtosExcluidos?: string[];
   chavesSelecionadas?: string[];
   granularidade?: string;
+  /** Modo de entrada usado na tela Cortes — os cortes % acima são sempre o que
+   *  vale (config.json e backend só entendem %); isto é só pra reabrir a tela
+   *  já no modo Quantidade, com os números que a pessoa digitou. */
+  modoClientes?: 'percentual' | 'quantidade';
+  quantidadesClientes?: [number, number, number];
+  modoProdutos?: 'percentual' | 'quantidade';
+  quantidadeProdutos?: number;
 };
 
 export async function carregarConfiguracaoEmpresa<T = ConfigEmpresaSalva>(
@@ -475,14 +493,19 @@ export async function carregarConfiguracaoEmpresa<T = ConfigEmpresaSalva>(
 export async function tentarCarregarConfiguracaoEmpresa(
   nome: string,
   loja?: string | null,
+  /** true = ignora o cache (botão "Carregar configuração": recarregar do disco
+   *  precisa valer mesmo que outra máquina tenha editado o config.json). */
+  forcarNovo = false,
 ): Promise<ConfigEmpresaSalva | null> {
-  const res = await chamar(
-    `/api/empresas/${encodeURIComponent(nome)}/configuracao${queryLoja(loja)}`,
-    { headers: authHeaders() },
-  );
-  // Compatibilidade com backends antigos que ainda sinalizam ausência com 404.
-  if (res.status === 404) return null;
-  return tratarResposta<ConfigEmpresaSalva | null>(res);
+  return comCache(`config_empresa_${nome}_${loja || ''}`, async () => {
+    const res = await chamar(
+      `/api/empresas/${encodeURIComponent(nome)}/configuracao${queryLoja(loja)}`,
+      { headers: authHeaders() },
+    );
+    // Compatibilidade com backends antigos que ainda sinalizam ausência com 404.
+    if (res.status === 404) return null;
+    return tratarResposta<ConfigEmpresaSalva | null>(res);
+  }, forcarNovo);
 }
 
 export type TagCliente = string;
@@ -998,9 +1021,14 @@ export async function regenerarBaseEmpresa(
   return tratarResposta(res);
 }
 
-export async function obterSummaryEmpresa(empresa: string, signal?: AbortSignal): Promise<DashboardData> {
+export async function obterSummaryEmpresa(
+  empresa: string,
+  signal?: AbortSignal,
+  grupos?: string,
+): Promise<DashboardData> {
   try {
-    const res = await chamar(`/api/dashboard/summary/${encodeURIComponent(empresa)}`, { signal });
+    const qs = grupos ? `?grupos_clientes=${encodeURIComponent(grupos)}` : '';
+    const res = await chamar(`/api/dashboard/summary/${encodeURIComponent(empresa)}${qs}`, { signal });
     const data = await tratarResposta<DashboardData>(res);
     const ultimo = res.headers.get('X-Ultimo-Movimento');
     if (ultimo) {
@@ -1183,13 +1211,14 @@ export type ResumoEstoqueResposta = {
 
 export async function obterResumoEstoque(
   empresa: string,
-  parametros: { loja?: string | null; meses?: number; usarMesesFechados?: boolean } = {},
+  parametros: { loja?: string | null; meses?: number; usarMesesFechados?: boolean; grupos?: string } = {},
   signal?: AbortSignal,
 ): Promise<ResumoEstoqueResposta> {
   const query = new URLSearchParams();
   if (parametros.loja) query.set('loja', parametros.loja);
   if (parametros.meses) query.set('meses', String(parametros.meses));
   if (parametros.usarMesesFechados === false) query.set('usar_mes_fechado', 'false');
+  if (parametros.grupos) query.set('grupos_clientes', parametros.grupos);
   const qs = query.toString() ? `?${query}` : '';
   const url = `/api/estoque/resumo/${encodeURIComponent(empresa)}${qs}`;
   if (signal?.aborted) {
@@ -1381,7 +1410,7 @@ export async function obterMonitorEmpresas(
   }
   
   return comCache(`monitor_${qs}`, async () => {
-    const res = await chamar(`/api/monitor/empresas?${qs}`, { headers: authHeaders(), signal });
+    const res = await chamar(`/api/monitor/empresas?${qs}`, { headers: authHeaders() });
     return tratarResposta(res);
   });
 }
@@ -1475,17 +1504,19 @@ export type FichaVendedorResposta = {
 export async function obterRankingVendedores(
   empresa: string,
   loja?: string | null,
-  signal?: AbortSignal,
+  _signal?: AbortSignal,
   modoPeriodo: ModoPeriodo = 'fechados',
+  grupos?: string,
 ): Promise<RankingVendedoresResposta> {
   const query = new URLSearchParams();
   if (loja) query.set('loja', loja);
   if (modoPeriodo !== 'fechados') query.set('modo_periodo', modoPeriodo);
+  if (grupos) query.set('grupos_clientes', grupos);
   const qs = query.toString() ? `?${query}` : '';
   const url = `/api/vendedores/${encodeURIComponent(empresa)}${qs}`;
   
   return comCache(`ranking_vendedores_${empresa}_${qs}`, async () => {
-    const res = await chamar(url, { headers: authHeaders(), signal });
+    const res = await chamar(url, { headers: authHeaders() });
     return tratarResposta(res);
   });
 }
@@ -1496,10 +1527,12 @@ export async function obterFichaVendedor(
   loja?: string | null,
   signal?: AbortSignal,
   modoPeriodo: ModoPeriodo = 'fechados',
+  grupos?: string,
 ): Promise<FichaVendedorResposta> {
   const query = new URLSearchParams({ vendedor });
   if (loja) query.set('loja', loja);
   if (modoPeriodo !== 'fechados') query.set('modo_periodo', modoPeriodo);
+  if (grupos) query.set('grupos_clientes', grupos);
   const res = await chamar(
     `/api/vendedores/${encodeURIComponent(empresa)}/ficha?${query}`,
     { headers: authHeaders(), signal },
@@ -1599,19 +1632,21 @@ export type PainelClientesResposta = {
 export async function obterPainelClientes(
   empresa: string,
   loja?: string | null,
-  signal?: AbortSignal,
+  _signal?: AbortSignal,
   modoPeriodo: ModoPeriodo = 'fechados',
+  grupos?: string,
 ): Promise<PainelClientesResposta> {
   const query = new URLSearchParams();
   const loja_ = queryLoja(loja);
   if (modoPeriodo !== 'fechados') query.set('modo_periodo', modoPeriodo);
+  if (grupos) query.set('grupos_clientes', grupos);
   const extra = query.toString();
   const url = loja_
     ? `/api/clientes/${encodeURIComponent(empresa)}/painel${loja_}${extra ? `&${extra}` : ''}`
     : `/api/clientes/${encodeURIComponent(empresa)}/painel${extra ? `?${extra}` : ''}`;
-    
-  return comCache(`painel_clientes_${empresa}_${loja || ''}_${modoPeriodo}`, async () => {
-    const res = await chamar(url, { headers: authHeaders(), signal });
+
+  return comCache(`painel_clientes_${empresa}_${loja || ''}_${modoPeriodo}_${grupos || ''}`, async () => {
+    const res = await chamar(url, { headers: authHeaders() });
     return tratarResposta(res);
   });
 }

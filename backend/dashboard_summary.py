@@ -46,7 +46,10 @@ import pandas as pd
 from engine.analise_funil import (
     MESES_ABREV,
     classificar_produtos_agregado,
+    curva_pareto,
     eh_produto_nao_harmonizado,
+    faixa_por_curva,
+    mascara_clientes_balcao,
 )
 
 MESES_NOME = {
@@ -350,6 +353,11 @@ def aplicar_cortes_no_summary(summary: dict, cortes: dict) -> dict:
 
     drop_c = {str(n).strip() for n in (cortes.get("clientes_excluidos") or []) if str(n).strip()}
     drop_d = {str(n).strip() for n in (cortes.get("produtos_excluidos") or []) if str(n).strip()}
+    if cortes.get("desconsiderar_balcao") and clientes:
+        mascara_balcao_geral = mascara_clientes_balcao(
+            pd.Series(clientes), cortes.get("clientes_balcao_extra") or [],
+        )
+        drop_c |= set(pd.Series(clientes)[mascara_balcao_geral])
     if cortes.get("desconsiderar_nao_harmonizados"):
         drop_d |= {nome for nome in produtos if eh_produto_nao_harmonizado(nome)}
 
@@ -374,6 +382,51 @@ def aplicar_cortes_no_summary(summary: dict, cortes: dict) -> dict:
                 str(nome)
                 for nome in classificado.loc[classificado["Faixa"] == "Demais", "descricao"]
             }
+
+    grupos_clientes = cortes.get("grupos_clientes")
+    if grupos_clientes and clientes:
+        rev_por_cliente: dict[str, float] = defaultdict(float)
+        for row in rows:
+            try:
+                nome = clientes[int(row[2])]
+            except (IndexError, TypeError, ValueError):
+                continue
+            if nome in drop_c:
+                continue
+            try:
+                nome_produto = produtos[int(row[4])]
+            except (IndexError, TypeError, ValueError):
+                nome_produto = None
+            if nome_produto is not None and nome_produto in drop_d:
+                continue
+            rev_por_cliente[nome] += float(row[6] or 0)
+        if rev_por_cliente:
+            desconsiderar_balcao = bool(cortes.get("desconsiderar_balcao"))
+            balcao_extra = cortes.get("clientes_balcao_extra") or []
+            cortes_pct = cortes.get("cortes_clientes") or [30.0, 50.0, 60.0]
+            nomes_serie = pd.Series(list(rev_por_cliente.keys()))
+            if desconsiderar_balcao:
+                mascara = mascara_clientes_balcao(nomes_serie, balcao_extra)
+                balcao_nomes = set(nomes_serie[mascara])
+            else:
+                balcao_nomes = set()
+            normais = {n: v for n, v in rev_por_cliente.items() if n not in balcao_nomes}
+            mapa_faixa: dict[str, str] = {}
+            if normais:
+                curva = curva_pareto(pd.Series(normais))
+                faixas = faixa_por_curva(curva, cortes_pct)
+                mapa_faixa = dict(zip(curva.index, faixas))
+            mantidos: set[str] = set()
+            for nome in normais:
+                faixa = mapa_faixa.get(nome, "Demais")
+                token = "X" if faixa == "Demais" else (
+                    faixa.split(" ")[-1] if faixa.startswith("Grupo ") else "X"
+                )
+                if token in grupos_clientes:
+                    mantidos.add(nome)
+            if "B" in grupos_clientes:
+                mantidos |= balcao_nomes
+            drop_c |= set(rev_por_cliente.keys()) - mantidos
 
     if not drop_c and not drop_d:
         return summary

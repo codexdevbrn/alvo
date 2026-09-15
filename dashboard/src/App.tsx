@@ -3,6 +3,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import DashboardPage from './pages/DashboardPage';
 import LoginPage from './pages/LoginPage';
 import AnalisadorPage from './pages/AnalisadorPage';
+import CortesPage from './pages/CortesPage';
 import ConfiguracoesPage from './pages/ConfiguracoesPage';
 import MonitorPage from './pages/MonitorPage';
 import MercadologicoPage from './pages/MercadologicoPage';
@@ -25,6 +26,7 @@ export default function App() {
           <Route path="/config" element={<ConfiguracoesPage />} />
           <Route path="/monitor" element={<MonitorPage />} />
           <Route path="/analisador" element={<AnalisadorPage />} />
+          <Route path="/cortes" element={<CortesPage />} />
           <Route path="/clientes" element={<ClientesPage />} />
           <Route path="/vendedores" element={<VendedoresPage />} />
           <Route path="/estoque" element={<EstoquePage />} />

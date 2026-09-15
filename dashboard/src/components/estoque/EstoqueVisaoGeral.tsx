@@ -3,6 +3,7 @@ import { AlertTriangle, Boxes, Clock, Loader2, PackageX, Snowflake, TrendingDown
 import { Cell, Label, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import { DonutFuro } from '../DonutFuro';
 import { StatCard } from '../StatCard';
+import { LeituraFaixa } from '../LeituraFaixa';
 import { CORES_STATUS, ROTULOS_STATUS, classeStatus, numero, textoCobertura } from './estoqueStatus';
 import {
   obterResumoEstoque,
@@ -12,6 +13,9 @@ import {
 } from '../../api/client';
 import { formatCurrency, formatPercent } from '../../utils/formatters';
 import { useMesesFechados } from '../../hooks/useMesesFechados';
+import { useVersaoCortesRelatorios } from '../../hooks/useVersaoCortesRelatorios';
+import { useGruposClientesFiltro } from '../../hooks/useGruposClientesFiltro';
+import { gruposClientesParam } from '../../utils/gruposClientesFiltro';
 import { modoParaBooleano } from '../../utils/mesesFechados';
 
 type Props = {
@@ -82,12 +86,15 @@ export function EstoqueVisaoGeral({ empresa, loja, meses }: Props) {
   const [erro, setErro] = useState<string | null>(null);
   const [modoPeriodo] = useMesesFechados();
   const usarMesesFechados = modoParaBooleano(modoPeriodo);
+  const versaoCortes = useVersaoCortesRelatorios();
+  const gruposClientes = useGruposClientesFiltro();
+  const gruposParam = gruposClientesParam(gruposClientes);
 
   useEffect(() => {
     let vivo = true;
     setCarregando(true);
     setErro(null);
-    void obterResumoEstoque(empresa, { loja, meses, usarMesesFechados })
+    void obterResumoEstoque(empresa, { loja, meses, usarMesesFechados, grupos: gruposParam })
       .then((resposta) => {
         if (vivo) setDados(resposta);
       })
@@ -102,12 +109,13 @@ export function EstoqueVisaoGeral({ empresa, loja, meses }: Props) {
     return () => {
       vivo = false;
     };
-  }, [empresa, loja, meses, usarMesesFechados]);
+  }, [empresa, loja, meses, usarMesesFechados, versaoCortes, gruposParam]);
 
   const fatias = useMemo<FatiaSituacao[]>(() => {
     const total = dados?.resumo.valor_estoque ?? 0;
     return (dados?.por_situacao ?? [])
       .filter((item) => item.valor_estoque > 0)
+      .filter((item) => total <= 0 || item.valor_estoque / total >= 0.005)
       .map((item) => ({
         status: item.status,
         nome: ROTULOS_STATUS[item.status] ?? item.status,
@@ -162,34 +170,40 @@ export function EstoqueVisaoGeral({ empresa, loja, meses }: Props) {
         Venda média de <strong>{periodo}</strong> · {numero(resumo.produtos)} produtos em estoque.
       </p>
 
-      <section className="estoque-visao-kpis" aria-label="Indicadores de estoque">
-        <StatCard
-          title="Capital em estoque"
-          value={formatCurrency(resumo.valor_estoque)}
-          icon={Boxes}
-        />
-        <StatCard
-          title="Capital parado"
-          value={formatCurrency(resumo.valor_parado)}
-          icon={Snowflake}
-          trend={`${formatPercent(parte_parada, 1)} do estoque · excesso e sem giro`}
-          trendUp={false}
-          useTrendColor
-        />
-        <StatCard
-          title="Risco de ruptura"
-          value={numero(resumo.ruptura)}
-          icon={PackageX}
-          trend="produtos sem cobertura para o mês"
-          trendUp={false}
-          useTrendColor
-        />
-        <StatCard
-          title="Cobertura média"
-          value={resumo.cobertura_media == null ? '—' : `${numero(resumo.cobertura_media, 1)} meses`}
-          icon={Clock}
-          trend="capital ÷ saída mensal, a custo"
-        />
+      <LeituraFaixa tom={parte_parada >= 40 ? 'aviso' : 'normal'}>
+        {formatPercent(parte_parada, 0)} do capital parado (excesso e sem giro).
+        {' '}{numero(resumo.ruptura)} produtos sem cobertura.
+      </LeituraFaixa>
+
+      <section className="vendedores-kpis" aria-label="Indicadores de estoque">
+        <article className="glass-card glass-card-flat vendedores-hero">
+          <p className="despesas-hero-rotulo">
+            <Snowflake size={14} aria-hidden="true" /> Capital parado
+          </p>
+          <strong className="despesas-hero-valor">{formatCurrency(resumo.valor_parado)}</strong>
+          <p className="despesas-hero-nota is-queda">
+            {formatPercent(parte_parada, 1)} do estoque · excesso e sem giro
+          </p>
+        </article>
+        <div className="vendedores-kpis-secundarios">
+          <StatCard
+            title="Capital em estoque"
+            value={formatCurrency(resumo.valor_estoque)}
+            icon={Boxes}
+          />
+          <StatCard
+            title="Sem cobertura"
+            value={numero(resumo.ruptura)}
+            icon={PackageX}
+            trend="ruptura, sem estoque e negativo"
+          />
+          <StatCard
+            title="Cobertura média"
+            value={resumo.cobertura_media == null ? '—' : `${numero(resumo.cobertura_media, 1)} meses`}
+            icon={Clock}
+            trend="régua: sem cobertura < 0,5 mês · alvo 3 · excesso > 6"
+          />
+        </div>
       </section>
 
       <div className="estoque-visao-grade">
@@ -197,7 +211,7 @@ export function EstoqueVisaoGeral({ empresa, loja, meses }: Props) {
           <header className="estoque-card-topo">
             <div>
               <h2>Capital por situação</h2>
-              <p>Onde o dinheiro do estoque está hoje.</p>
+              <p>Onde o dinheiro do estoque está hoje. Régua: sem cobertura abaixo de 0,5 mês, alvo 3, excesso acima de 6.</p>
             </div>
             <span className="estoque-card-nota">{numero(resumo.produtos)} produtos</span>
           </header>

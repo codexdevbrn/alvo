@@ -2,11 +2,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import {
   Bar,
   BarChart,
-  Cell,
   CartesianGrid,
-  Label,
-  Pie,
-  PieChart,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -23,8 +19,8 @@ import {
   UserPlus,
   UsersRound,
 } from 'lucide-react';
-import { DonutFuro } from '../DonutFuro';
 import { StatCard } from '../StatCard';
+import { LeituraFaixa } from '../LeituraFaixa';
 import {
   obterPainelClientes,
   type EventoCarteira,
@@ -32,6 +28,9 @@ import {
 } from '../../api/client';
 import { formatCompacto, formatCurrency, formatNumber, formatPercent } from '../../utils/formatters';
 import { useMesesFechados } from '../../hooks/useMesesFechados';
+import { useVersaoCortesRelatorios } from '../../hooks/useVersaoCortesRelatorios';
+import { useGruposClientesFiltro } from '../../hooks/useGruposClientesFiltro';
+import { gruposClientesParam } from '../../utils/gruposClientesFiltro';
 
 interface Props {
   empresa: string;
@@ -96,25 +95,14 @@ function TooltipMovimento({
   );
 }
 
-function TooltipFaixa({
-  active,
-  payload,
-}: {
-  active?: boolean;
-  payload?: Array<{ payload?: { nome: string; clientes: number; receita: number; participacao: number } }>;
-}) {
-  const ponto = payload?.[0]?.payload;
-  if (!active || !ponto) return null;
-  return (
-    <div className="vendedores-chart-tooltip">
-      <strong>{ponto.nome}</strong>
-      <dl>
-        <div><dt>Clientes</dt><dd>{formatNumber(ponto.clientes)}</dd></div>
-        <div><dt>Receita</dt><dd>{formatCurrency(ponto.receita)}</dd></div>
-        <div><dt>Participação</dt><dd>{formatPercent(ponto.participacao, 1)}</dd></div>
-      </dl>
-    </div>
-  );
+function maiorFamilia(resumo: { perdidos: number; novos: number; recuperados: number }): AbaEvento {
+  const familias: [AbaEvento, number][] = [
+    ['perdidos', resumo.perdidos],
+    ['novos', resumo.novos],
+    ['recuperados', resumo.recuperados],
+  ];
+  familias.sort((a, b) => b[1] - a[1]);
+  return familias[0][0];
 }
 
 function ListaEventos({ itens, evento }: { itens: EventoCarteira[]; evento: AbaEvento }) {
@@ -139,29 +127,40 @@ export function ClientesVisaoGeral({ empresa, loja = null, onCarregandoChange }:
   const [dados, setDados] = useState<PainelClientesResposta | null>(null);
   const [carregando, setCarregando] = useState(false);
   const [erro, setErro] = useState<string | null>(null);
-  const [abaEvento, setAbaEvento] = useState<AbaEvento>('recuperados');
+  const [abaEvento, setAbaEvento] = useState<AbaEvento>('perdidos');
   const [modoPeriodo] = useMesesFechados();
+  const versaoCortes = useVersaoCortesRelatorios();
+  const gruposClientes = useGruposClientesFiltro();
+  const gruposParam = gruposClientesParam(gruposClientes);
 
   useEffect(() => {
     onCarregandoChange?.(carregando);
   }, [carregando, onCarregandoChange]);
 
   useEffect(() => {
-    const controller = new AbortController();
+    let vivo = true;
     setCarregando(true);
     setErro(null);
-    void obterPainelClientes(empresa, loja, controller.signal, modoPeriodo)
-      .then(setDados)
+    void obterPainelClientes(empresa, loja, undefined, modoPeriodo, gruposParam)
+      .then((resposta) => {
+        if (vivo) setDados(resposta);
+      })
       .catch((falha) => {
-        if (falha instanceof DOMException && falha.name === 'AbortError') return;
+        if (!vivo) return;
         setDados(null);
         setErro(falha instanceof Error ? falha.message : 'Falha ao carregar o painel de clientes.');
       })
       .finally(() => {
-        if (!controller.signal.aborted) setCarregando(false);
+        if (vivo) setCarregando(false);
       });
-    return () => controller.abort();
-  }, [empresa, loja, modoPeriodo]);
+    return () => {
+      vivo = false;
+    };
+  }, [empresa, loja, modoPeriodo, versaoCortes, gruposParam]);
+
+  useEffect(() => {
+    if (dados?.resumo) setAbaEvento(maiorFamilia(dados.resumo));
+  }, [dados]);
 
   const movimento = useMemo(
     () => (dados?.movimento ?? []).map((mes) => ({
@@ -205,6 +204,9 @@ export function ClientesVisaoGeral({ empresa, loja = null, onCarregandoChange }:
 
   const { resumo, concentracao } = dados;
   const eventos = dados.eventos[abaEvento];
+  const familiaDestaque = maiorFamilia(resumo);
+  const avisoAberto = modoPeriodo === 'completo' && (resumo.variacao_receita ?? 0) <= -40;
+  const maiorFaixa = Math.max(0, ...concentracao.faixas.map((faixa) => faixa.receita));
 
   return (
     <div className="clientes-visao">
@@ -214,51 +216,59 @@ export function ClientesVisaoGeral({ empresa, loja = null, onCarregandoChange }:
         {dados.balcao_excluidos > 0 && ` ${formatNumber(dados.balcao_excluidos)} cliente(s) de balcão fora do painel.`}
       </p>
 
-      {modoPeriodo === 'completo' && (resumo.variacao_receita ?? 0) <= -40 && (
-        <p className="clientes-visao-aviso" role="status">
-          <AlertTriangle size={15} aria-hidden="true" />
-          Queda forte contra a média. {dados.rotulo_periodo} ainda pode estar em aberto e sendo
-          {' '}comparado contra meses fechados — troque para "Meses fechados" ou "Mesmo período"
-          na barra lateral pra ver se a queda se sustenta com uma comparação justa.
-        </p>
-      )}
+      <LeituraFaixa tom={avisoAberto ? 'aviso' : (resumo.saldo < 0 ? 'aviso' : 'normal')}>
+        {avisoAberto
+          ? `${dados.rotulo_periodo} ainda pode estar em aberto e comparado contra meses fechados. `
+          : ''}
+        Saldo {resumo.saldo > 0 ? '+' : ''}{formatNumber(resumo.saldo)}:
+        {' '}{formatNumber(resumo.perdidos)} perdidos, {formatNumber(resumo.novos)} novos, {formatNumber(resumo.recuperados)} recuperados.
+        {' '}Maior movimento: {ROTULOS_EVENTO[familiaDestaque].toLowerCase()}.
+      </LeituraFaixa>
 
-      <section className="clientes-visao-kpis" aria-label="Indicadores da carteira">
-        <StatCard
-          title="Clientes ativos"
-          value={formatNumber(resumo.clientes_ativos)}
-          icon={UsersRound}
-          trend={resumo.variacao_clientes == null
-            ? undefined
-            : `${textoVariacao(resumo.variacao_clientes)} vs média (${formatNumber(Math.round(resumo.clientes_media))})`}
-          trendUp={(resumo.variacao_clientes ?? 0) >= 0}
-        />
-        <StatCard
-          title={`Receita de ${dados.rotulo_periodo}`}
-          value={formatCurrency(resumo.receita_atual)}
-          icon={Banknote}
-          trend={resumo.variacao_receita == null
-            ? undefined
-            : `${textoVariacao(resumo.variacao_receita)} vs ${formatCurrency(resumo.receita_media)}`}
-          trendUp={(resumo.variacao_receita ?? 0) >= 0}
-        />
-        <StatCard
-          title="Ticket médio por cliente"
-          value={formatCurrency(resumo.ticket_medio)}
-          icon={Receipt}
-          trend={resumo.variacao_ticket == null
-            ? undefined
-            : `${textoVariacao(resumo.variacao_ticket)} vs ${formatCurrency(resumo.ticket_medio_media)}`}
-          trendUp={(resumo.variacao_ticket ?? 0) >= 0}
-        />
-        <StatCard
-          title="Saldo da carteira"
-          value={`${resumo.saldo > 0 ? '+' : ''}${formatNumber(resumo.saldo)}`}
-          icon={UserPlus}
-          trend={`${formatNumber(resumo.novos)} novos · ${formatNumber(resumo.recuperados)} recuperados · ${formatNumber(resumo.perdidos)} perdidos`}
-          trendUp={resumo.saldo >= 0}
-          useTrendColor
-        />
+      <section className="vendedores-kpis" aria-label="Indicadores da carteira">
+        <article className="glass-card glass-card-flat vendedores-hero">
+          <p className="despesas-hero-rotulo">
+            <UserPlus size={14} aria-hidden="true" /> Saldo da carteira
+          </p>
+          <strong className="despesas-hero-valor">
+            {resumo.saldo > 0 ? '+' : ''}{formatNumber(resumo.saldo)}
+          </strong>
+          <p className={`despesas-hero-nota${resumo.saldo >= 0 ? ' is-alta' : ' is-queda'}`}>
+            {formatNumber(resumo.novos)} novos · {formatNumber(resumo.recuperados)} recuperados · {formatNumber(resumo.perdidos)} perdidos
+          </p>
+        </article>
+        <div className="vendedores-kpis-secundarios">
+          <StatCard
+            title="Clientes ativos"
+            value={formatNumber(resumo.clientes_ativos)}
+            icon={UsersRound}
+            trend={resumo.variacao_clientes == null
+              ? undefined
+              : `${textoVariacao(resumo.variacao_clientes)} vs média (${formatNumber(Math.round(resumo.clientes_media))})`}
+            trendUp={(resumo.variacao_clientes ?? 0) >= 0}
+            useTrendColor={resumo.variacao_clientes != null}
+          />
+          <StatCard
+            title={`Receita de ${dados.rotulo_periodo}`}
+            value={formatCurrency(resumo.receita_atual)}
+            icon={Banknote}
+            trend={resumo.variacao_receita == null
+              ? undefined
+              : `${textoVariacao(resumo.variacao_receita)} vs ${formatCurrency(resumo.receita_media)}`}
+            trendUp={(resumo.variacao_receita ?? 0) >= 0}
+            useTrendColor={resumo.variacao_receita != null}
+          />
+          <StatCard
+            title="Ticket médio por cliente"
+            value={formatCurrency(resumo.ticket_medio)}
+            icon={Receipt}
+            trend={resumo.variacao_ticket == null
+              ? undefined
+              : `${textoVariacao(resumo.variacao_ticket)} vs ${formatCurrency(resumo.ticket_medio_media)}`}
+            trendUp={(resumo.variacao_ticket ?? 0) >= 0}
+            useTrendColor={resumo.variacao_ticket != null}
+          />
+        </div>
       </section>
 
       <div className="clientes-visao-grade">
@@ -273,54 +283,30 @@ export function ClientesVisaoGeral({ empresa, loja = null, onCarregandoChange }:
           {concentracao.faixas.length === 0 ? (
             <p className="analisador-hint">Sem receita na janela da curva.</p>
           ) : (
-            <div className="donut-linha">
-              <div className="donut">
-                <ResponsiveContainer width="100%" height={168}>
-                  <PieChart>
-                    <Pie
-                      data={concentracao.faixas}
-                      dataKey="receita"
-                      nameKey="nome"
-                      cx="50%"
-                      cy="50%"
-                      innerRadius={52}
-                      outerRadius={78}
-                      paddingAngle={2}
-                      stroke="var(--bg-card)"
-                      strokeWidth={2}
-                    >
-                      {concentracao.faixas.map((faixa, indice) => (
-                        <Cell key={faixa.nome} fill={CORES_FAIXA[indice % CORES_FAIXA.length]} />
-                      ))}
-                    </Pie>
-                    <Label
-                      content={(props) => (
-                        <DonutFuro
-                          valor={formatNumber(concentracao.clientes_80)}
-                          legenda="clientes fazem 80%"
-                          viewBox={props.viewBox as { cx?: number; cy?: number } | undefined}
-                        />
-                      )}
-                    />
-                    <Tooltip content={<TooltipFaixa />} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </div>
-              <ul className="donut-legenda">
+            <>
+              <p className="clientes-concentracao-punch">
+                <strong>{formatNumber(concentracao.clientes_80)}</strong>
+                <span>clientes fazem 80% da receita</span>
+                <em>{formatPercent(concentracao.participacao_clientes_80, 1)} da carteira</em>
+              </p>
+              <ul className="estoque-barras">
                 {concentracao.faixas.map((faixa, indice) => (
                   <li key={faixa.nome}>
-                    <i style={{ background: CORES_FAIXA[indice % CORES_FAIXA.length] }} aria-hidden="true" />
-                    <span>{faixa.nome}</span>
+                    <span title={faixa.nome}>{faixa.nome}</span>
+                    <i aria-hidden="true">
+                      <b style={{
+                        width: `${maiorFaixa > 0 ? (faixa.receita / maiorFaixa) * 100 : 0}%`,
+                        background: CORES_FAIXA[indice % CORES_FAIXA.length],
+                      }}
+                      />
+                    </i>
                     <strong>{formatNumber(faixa.clientes)}</strong>
                     <em>{formatPercent(faixa.participacao, 1)}</em>
                   </li>
                 ))}
               </ul>
-            </div>
+            </>
           )}
-          <p className="analisador-hint">
-            {formatPercent(concentracao.participacao_clientes_80, 1)} da carteira responde por 80% da receita.
-          </p>
 
           {dados.tags.length > 0 && (
             <div className="clientes-visao-tags clientes-visao-card-rodape">

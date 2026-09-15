@@ -31,6 +31,10 @@ PrismSystem/
 # Logs do agendador noturno
 logs_agendador/
 
+# Log de runtime (uvicorn / executável) e lixo local de build
+backend/logs/
+build_run.log
+
 # Artefatos de empacotamento (PyInstaller / release)
 dist_pyinstaller/
 build_pyinstaller/

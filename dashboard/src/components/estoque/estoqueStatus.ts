@@ -4,7 +4,7 @@ import type { StatusCoberturaEstoque } from '../../api/client';
  *  precisam nomear e colorir a mesma situação do mesmo jeito. */
 export const ROTULOS_STATUS: Record<StatusCoberturaEstoque, string> = {
   normal: 'Saudável',
-  rupture: 'Risco de ruptura',
+  rupture: 'Sem cobertura',
   out_of_stock: 'Sem estoque',
   negative: 'Estoque negativo',
   stalled: 'Perdendo força',

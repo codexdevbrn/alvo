@@ -14,15 +14,28 @@ import type { DashboardData } from '../types/dashboard';
  */
 const cache = new Map<string, DashboardData>();
 
-export function lerSummaryCache(empresa: string): DashboardData | null {
-  return cache.get(empresa) ?? null;
+/** `chave` normalmente é a empresa; inclua o filtro de grupos de clientes nela
+ *  (ex.: `${empresa}::${grupos}`) quando ele puder mudar o resultado, senão
+ *  trocar de grupo mostraria o summary do grupo anterior. */
+export function lerSummaryCache(chave: string): DashboardData | null {
+  return cache.get(chave) ?? null;
 }
 
-export function gravarSummaryCache(empresa: string, dados: DashboardData): void {
-  cache.set(empresa, dados);
+export function gravarSummaryCache(chave: string, dados: DashboardData): void {
+  cache.set(chave, dados);
 }
 
+/** Sem argumento: limpa tudo. Com `empresa`: limpa essa empresa em qualquer
+ *  filtro de grupos — a chave vira `${empresa}::${grupos}`, então o match é
+ *  por prefixo, não igualdade exata. */
 export function invalidarSummary(empresa?: string): void {
-  if (empresa === undefined) cache.clear();
-  else cache.delete(empresa);
+  if (empresa === undefined) {
+    cache.clear();
+    return;
+  }
+  for (const chave of cache.keys()) {
+    if (chave === empresa || chave.startsWith(`${empresa}::`)) {
+      cache.delete(chave);
+    }
+  }
 }
