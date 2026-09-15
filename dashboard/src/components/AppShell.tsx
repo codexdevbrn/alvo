@@ -29,6 +29,8 @@ import { SidebarEmpresaSelect } from './SidebarEmpresaSelect';
 import { SidebarLojaSelect } from './SidebarLojaSelect';
 import { SidebarMesesFechadosToggle } from './SidebarMesesFechadosToggle';
 import { TopoVendaMediaSelect } from './TopoVendaMediaSelect';
+import { TopoDespesasPeriodoSelect } from './TopoDespesasPeriodoSelect';
+import { TopoCortesToggle } from './TopoCortesToggle';
 
 const URL_CARTEIRA = 'http://127.0.0.1:3001';
 const LS_SIDEBAR = 'prisma_sidebar_collapsed';
@@ -228,8 +230,6 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
           </button>
         </div>
 
-        <SidebarMesesFechadosToggle desabilitarMesmoPeriodo={emDashboard || emEstoque || emDespesas} />
-
         <nav className="app-sidebar-nav">
           <div className="app-sidebar-nav-grupo" aria-labelledby="sidebar-grupo-analises">
             <span id="sidebar-grupo-analises" className="app-sidebar-nav-label">Análises</span>
@@ -349,6 +349,9 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
         <div className="app-shell-topo">
           <div className="app-shell-escopo">
             {emEstoque && <TopoVendaMediaSelect />}
+            {emDespesas && <TopoDespesasPeriodoSelect />}
+            <SidebarMesesFechadosToggle desabilitarMesmoPeriodo={emDashboard || emEstoque || emDespesas} />
+            {!emDespesas && <TopoCortesToggle />}
             <SidebarEmpresaSelect />
             <SidebarLojaSelect />
           </div>

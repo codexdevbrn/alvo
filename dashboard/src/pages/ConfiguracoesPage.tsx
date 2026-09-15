@@ -19,8 +19,6 @@ import {
   definirDadosNoDisco,
   definirRegeneracao,
   definirInicioAutomatico,
-  obterAplicarCortesRelatorios,
-  definirAplicarCortesRelatorios,
   obterCaminhoAtualizacoes,
   obterDadosNoDisco,
   obterRegeneracao,
@@ -40,8 +38,6 @@ import {
   type TagCatalogoItem,
 } from '../api/client';
 import { invalidarSummary } from '../utils/cacheSummary';
-import { avisarCortesRelatorios } from '../utils/cortesRelatorios';
-import { limparCacheGeral } from '../utils/cacheRequisicoes';
 
 const LS_CAMINHO_FONTE = 'prisma_caminho_fonte';
 const LS_CAMINHO_TRABALHO = 'prisma_caminho_trabalho';
@@ -123,8 +119,6 @@ export default function ConfiguracoesPage() {
   const [dadosDisco, setDadosDisco] = useState<DadosNoDisco | null>(null);
   const [salvandoDisco, setSalvandoDisco] = useState(false);
   const [podeRegenerar, setPodeRegenerar] = useState(false);
-  const [aplicarCortesRelatorios, setAplicarCortesRelatorios] = useState(false);
-  const [salvandoCortesRelatorios, setSalvandoCortesRelatorios] = useState(false);
   const [salvandoRegen, setSalvandoRegen] = useState(false);
   const [horarioInicio, setHorarioInicio] = useState('08:00');
   const [comHorario, setComHorario] = useState(false);
@@ -190,24 +184,6 @@ export default function ConfiguracoesPage() {
     }
   };
 
-  const alternarCortesRelatorios = async (ativo: boolean) => {
-    setAplicarCortesRelatorios(ativo);
-    setFeedbackDados(null);
-    setSalvandoCortesRelatorios(true);
-    try {
-      const gravada = await definirAplicarCortesRelatorios(ativo);
-      setAplicarCortesRelatorios(gravada);
-      avisarCortesRelatorios(gravada);
-      invalidarSummary();
-      limparCacheGeral();
-    } catch (e) {
-      setAplicarCortesRelatorios(!ativo);
-      setFeedbackDados({ tipo: 'erro', texto: e instanceof Error ? e.message : 'Falha ao salvar os cortes do Relatórios.' });
-    } finally {
-      setSalvandoCortesRelatorios(false);
-    }
-  };
-
   useEffect(() => {
     // Versão é informativa: se a chamada falhar, o rodapé simplesmente não
     // aparece — nada aqui depende dela.
@@ -230,7 +206,6 @@ export default function ConfiguracoesPage() {
   useEffect(() => {
     void obterDadosNoDisco().then(setDadosDisco).catch(() => setDadosDisco(null));
     void obterRegeneracao().then(setPodeRegenerar).catch(() => setPodeRegenerar(false));
-    void obterAplicarCortesRelatorios().then(setAplicarCortesRelatorios).catch(() => setAplicarCortesRelatorios(false));
   }, []);
 
   const alternarRegeneracao = async (permitida: boolean) => {
@@ -663,21 +638,6 @@ export default function ConfiguracoesPage() {
               />
               Aguardando montagem da base de dados (mostra aviso no Dashboard público)
             </label>
-
-            <label className="analisador-check-linha">
-              <input
-                type="checkbox"
-                checked={aplicarCortesRelatorios}
-                onChange={(e) => void alternarCortesRelatorios(e.target.checked)}
-                disabled={salvandoCortesRelatorios}
-              />
-              Aplicar cortes do Relatórios nas outras telas
-            </label>
-            <p className="analisador-hint">
-              Usa exclusões e regras de cliente/produto do Relatórios (config.json do
-              escopo) também no Dashboard, Clientes, Vendedores e Estoque. Despesas
-              não entra: a fonte é a Controladoria, não a base de vendas.
-            </p>
 
             {feedbackDados && (
               <p

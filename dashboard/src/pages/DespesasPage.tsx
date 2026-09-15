@@ -4,6 +4,7 @@ import { AppShell } from '../components/AppShell';
 import { DespesasVisaoGeral } from '../components/despesas/DespesasVisaoGeral';
 import { DespesasLancamentos } from '../components/despesas/DespesasLancamentos';
 import { useEscopoAtual } from '../hooks/useEscopoAtual';
+import { useDespesasPeriodo } from '../hooks/useDespesasPeriodo';
 
 type AbaDespesas = 'visao' | 'lancamentos';
 
@@ -17,7 +18,7 @@ const ABAS: { id: AbaDespesas; rotulo: string }[] = [
  *  recebe 404 do backend e cada aba mostra o próprio estado vazio. */
 export default function DespesasPage() {
   const { empresa, loja } = useEscopoAtual();
-  const [meses, setMeses] = useState(12);
+  const [meses] = useDespesasPeriodo();
   const [aba, setAba] = useState<AbaDespesas>('visao');
 
   return (
@@ -28,18 +29,6 @@ export default function DespesasPage() {
             <h1>Despesas{empresa && <span className="analisador-header-empresa"> · {empresa}</span>}</h1>
             <p>Lançamentos da Controladoria: total, evolução mensal e categorias.</p>
           </div>
-          {empresa && (
-            <div className="estoque-header-filtros">
-              <label className="analisador-campo">
-                <span>Período</span>
-                <select className="custom-select analisador-select" value={meses} onChange={(e) => setMeses(Number(e.target.value))}>
-                  <option value={6}>Últimos 6 meses</option>
-                  <option value={12}>Últimos 12 meses</option>
-                  <option value={24}>Últimos 24 meses</option>
-                </select>
-              </label>
-            </div>
-          )}
         </header>
 
         {!empresa && (

@@ -11,8 +11,8 @@ import {
 
 const ROTA_ETAPA: Record<string, string> = {
   Dashboard: '/',
-  'Visão Geral': '/clientes',
-  Clientes: '/clientes',
+  'Clientes: Visão geral': '/clientes',
+  'Clientes: Base e tags': '/clientes',
   Vendedores: '/vendedores',
   Estoque: '/estoque',
   Despesas: '/despesas',

@@ -111,12 +111,12 @@ async function rodarFila(empresa: string, motivo: MotivoPrefetch = 'empresa') {
         const d = await obterSummaryEmpresa(empresaAtual);
         gravarSummaryCache(empresaAtual, d);
     }},
-    { nome: 'Visão Geral', fn: async () => {
+    { nome: 'Clientes: Visão geral', fn: async () => {
         for (const modo of MODOS_PERIODO) {
           await obterPainelClientes(empresaAtual, loja, undefined, modo);
         }
     }},
-    { nome: 'Clientes', fn: async () => { await obterBaseClientes(empresaAtual); await obterTagsClientes(empresaAtual); } },
+    { nome: 'Clientes: Base e tags', fn: async () => { await obterBaseClientes(empresaAtual); await obterTagsClientes(empresaAtual); } },
     { nome: 'Vendedores', fn: async () => {
         for (const modo of MODOS_PERIODO) {
           await obterRankingVendedores(empresaAtual, loja, undefined, modo);
