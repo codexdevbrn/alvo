@@ -346,16 +346,18 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
       </aside>
 
       <main ref={mainRef} className="app-shell-main">
-        <div className="app-shell-topo">
-          <div className="app-shell-escopo">
-            {emEstoque && <TopoVendaMediaSelect />}
-            {emDespesas && <TopoDespesasPeriodoSelect />}
-            <SidebarMesesFechadosToggle desabilitarMesmoPeriodo={emDashboard || emEstoque || emDespesas} />
-            {!emDespesas && <TopoCortesToggle />}
-            <SidebarEmpresaSelect />
-            <SidebarLojaSelect />
+        {!emMonitor && !emMercadologico && (
+          <div className="app-shell-topo">
+            <div className="app-shell-escopo">
+              {emEstoque && <TopoVendaMediaSelect />}
+              {emDespesas && <TopoDespesasPeriodoSelect />}
+              <SidebarMesesFechadosToggle desabilitarMesmoPeriodo={emDashboard || emEstoque || emDespesas} />
+              {!emDespesas && <TopoCortesToggle />}
+              <SidebarEmpresaSelect />
+              <SidebarLojaSelect />
+            </div>
           </div>
-        </div>
+        )}
         {statusAtualizacao && <BannerAtualizacao status={statusAtualizacao} />}
         {children}
       </main>
