@@ -1375,6 +1375,35 @@ export type PontoSeriePrecificacao = {
 
 export type SituacoesPrecificacao = Record<SituacaoPrecificacao, number>;
 
+export type ChaveJanelaFixa = 'semana' | 'quinzena' | 'mes';
+
+export type JanelaFixaPrecificacao = {
+  dias: number;
+  /** false = a janela "depois" ainda não fechou (corte recente demais). */
+  completa: boolean;
+  receita_antes: number;
+  receita_depois: number;
+  lucro_antes: number;
+  lucro_depois: number;
+  qtd_antes: number;
+  qtd_depois: number;
+  margem_antes: number | null;
+  margem_depois: number | null;
+  dias_venda_antes: number;
+  dias_venda_depois: number;
+  lucro_dia_antes: number | null;
+  lucro_dia_depois: number | null;
+  qtd_dia_antes: number | null;
+  qtd_dia_depois: number | null;
+  variacao_receita_pct: number | null;
+  variacao_lucro_pct: number | null;
+  variacao_qtd_pct: number | null;
+  margem_alvo: number | null;
+  gap_alvo_pp: number | null;
+};
+
+export type JanelasFixasPrecificacao = Record<ChaveJanelaFixa, JanelaFixaPrecificacao>;
+
 export type ItemPosPrecificacao = {
   nome: string;
   skus_dump: number;
@@ -1401,6 +1430,8 @@ export type ItemPosPrecificacao = {
   gap_alvo_pp: number | null;
   situacao: SituacaoPrecificacao;
   serie_mensal: PontoSeriePrecificacao[];
+  serie_diaria: PontoSeriePrecificacao[];
+  janelas: JanelasFixasPrecificacao;
 };
 
 export type ResumoPosPrecificacao = {
@@ -1426,6 +1457,7 @@ export type ResumoPosPrecificacao = {
   variacao_qtd_pct: number | null;
   gap_alvo_pp: number | null;
   situacoes: SituacoesPrecificacao;
+  janelas: JanelasFixasPrecificacao;
 };
 
 export type PosPrecificacaoResposta = {
@@ -1444,6 +1476,7 @@ export type PosPrecificacaoResposta = {
   tem_movimento_depois: boolean;
   resumo: ResumoPosPrecificacao;
   serie_mensal: PontoSeriePrecificacao[];
+  serie_diaria: PontoSeriePrecificacao[];
   produtos: ItemPosPrecificacao[];
   fabricantes: ItemPosPrecificacao[];
 };

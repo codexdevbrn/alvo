@@ -8728,45 +8728,13 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   min-width: 0;
 }
 
-.pos-precificacao-carrossel-seta {
-  position: absolute;
-  top: 50%;
-  z-index: 2;
-  display: grid;
-  place-items: center;
-  width: 2rem;
-  height: 2rem;
-  padding: 0;
-  border: 1px solid var(--border-strong);
-  border-radius: 50%;
-  background: var(--surface-2);
-  color: var(--text-primary);
-  cursor: pointer;
-  transform: translateY(-50%);
-}
-
-.pos-precificacao-carrossel-seta.is-antes {
-  left: 0.35rem;
-}
-
-.pos-precificacao-carrossel-seta.is-depois {
-  right: 0.35rem;
-}
-
-.pos-precificacao-carrossel-seta:hover {
-  background: var(--surface-3);
-  border-color: var(--accent);
-}
-
 .pos-precificacao-destaques {
   display: flex;
   gap: 0.55rem;
   overflow-x: auto;
   scroll-behavior: auto;
-  scroll-padding-inline: 2.6rem;
   scrollbar-width: none;
-  padding: 0.1rem 2.6rem;
-  mask-image: linear-gradient(90deg, transparent 0, #000 2.4rem, #000 calc(100% - 2.4rem), transparent);
+  padding: 0.1rem 0;
 }
 
 .pos-precificacao-destaques::-webkit-scrollbar {
@@ -8774,12 +8742,12 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 }
 
 .pos-precificacao-destaque {
-  flex: 0 0 14.5rem;
+  flex: 0 0 12rem;
   display: grid;
-  grid-template-rows: auto auto auto;
-  gap: 0.12rem;
-  min-height: 4.6rem;
-  padding: 0.55rem 0.8rem 0.5rem;
+  grid-template-rows: auto auto;
+  gap: 0.3rem;
+  min-height: 3.3rem;
+  padding: 0.35rem 0.65rem 0.32rem;
   border: 1px solid var(--border);
   border-radius: var(--raio-controle);
   background: var(--bg-card);
@@ -8795,29 +8763,66 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 
 .pos-precificacao-destaque span {
   color: var(--text-primary);
-  font-size: 0.74rem;
+  font-size: 0.7rem;
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+.pos-precificacao-destaque-linha {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.4rem;
+  min-width: 0;
+}
+
 .pos-precificacao-destaque strong {
   color: var(--text-primary);
-  font-size: 1.02rem;
+  font-size: 0.9rem;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pos-precificacao-destaque em {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
   font-style: normal;
-  font-size: 0.7rem;
+  font-size: 0.62rem;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
   color: var(--text-muted);
+  white-space: nowrap;
 }
 
-.pos-precificacao-destaque em.is-alta { color: var(--success); }
-.pos-precificacao-destaque em.is-queda { color: var(--danger); }
+.pos-precificacao-destaque em.is-neutro {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+}
+
+.pos-precificacao-destaque em.is-alta,
+.pos-precificacao-destaque em.is-queda {
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+}
+
+.pos-precificacao-destaque em.is-alta {
+  color: var(--success);
+  background: color-mix(in srgb, var(--success) 18%, var(--bg-card));
+}
+
+.pos-precificacao-destaque em.is-queda {
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 18%, var(--bg-card));
+}
 
 .pos-precificacao-destaque.is-ativo {
   background: var(--accent);
@@ -8829,21 +8834,24 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   color: var(--accent-contrast);
 }
 
-.pos-precificacao-destaque.is-ativo em {
-  color: var(--accent-contrast);
-}
-
-.pos-precificacao-destaque.is-ativo em.is-alta,
-.pos-precificacao-destaque.is-ativo em.is-queda {
+/* Pílula de alta/queda mantém as próprias cores mesmo no card ativo (dourado)
+   — tem fundo próprio (color-mix abaixo), então herdar accent-contrast só
+   deixava a seta ilegível em cima do verde/vermelho escuro. */
+.pos-precificacao-destaque.is-ativo em:not(.is-alta):not(.is-queda) {
   color: var(--accent-contrast);
 }
 
 .pos-precificacao-carrossel-trilho {
-  height: 3px;
-  margin: 0 2.6rem;
+  height: 1.1rem;
+  margin: 0;
+  padding: 0.45rem 0;
   overflow: hidden;
   border-radius: 2px;
   background: var(--surface-3);
+  background-clip: content-box;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
 }
 
 .pos-precificacao-carrossel-trilho > i {
@@ -8852,6 +8860,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   width: 28%;
   border-radius: 2px;
   background: var(--accent);
+  pointer-events: none;
 }
 
 .pos-precificacao-metros {
@@ -8906,10 +8915,73 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 .pos-precificacao-metros em.is-alta { color: var(--success); }
 .pos-precificacao-metros em.is-queda { color: var(--danger); }
 
+.pos-precificacao-janelas {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.pos-precificacao-janela-card {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.75rem 0.9rem 0.65rem;
+}
+
+.pos-precificacao-janela-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.pos-precificacao-janela-card h2 {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.pos-precificacao-janela-aberta {
+  flex: 0 0 auto;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: 0.62rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
+.pos-precificacao-janela-corpo.pos-precificacao-metros {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  border: none;
+  background: transparent;
+}
+
+.pos-precificacao-janela-corpo.pos-precificacao-metros > div {
+  padding: 0 0.7rem;
+}
+
 .pos-precificacao-graficos {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
+}
+
+.pos-precificacao-graficos-topo {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+
+.pos-precificacao-graficos-nota {
+  font-size: 0.75rem;
+  color: var(--text-muted);
 }
 
 .pos-precificacao-grafico {
@@ -9005,6 +9077,10 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
     grid-template-columns: minmax(0, 1fr);
   }
 
+  .pos-precificacao-janelas {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .pos-precificacao-metros {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -9016,22 +9092,21 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   .pos-precificacao-metros > div:nth-child(n + 3) {
     border-top: 1px solid var(--border);
   }
+
+  .pos-precificacao-janela-corpo.pos-precificacao-metros {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .pos-precificacao-janela-corpo.pos-precificacao-metros > div:nth-child(odd) {
+    border-left: none;
+  }
+
+  .pos-precificacao-janela-corpo.pos-precificacao-metros > div:nth-child(n + 3) {
+    border-top: none;
+  }
 }
 
 @media (max-width: 720px) {
-  .pos-precificacao-carrossel-seta {
-    display: none;
-  }
-
-  .pos-precificacao-destaques {
-    padding: 0.1rem 0;
-    mask-image: none;
-  }
-
-  .pos-precificacao-carrossel-trilho {
-    margin: 0;
-  }
-
   .pos-precificacao-metros {
     grid-template-columns: minmax(0, 1fr);
   }
@@ -9042,6 +9117,10 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   }
 
   .pos-precificacao-metros > div:first-child {
+    border-top: none;
+  }
+
+  .pos-precificacao-janela-corpo.pos-precificacao-metros > div {
     border-top: none;
   }
 }

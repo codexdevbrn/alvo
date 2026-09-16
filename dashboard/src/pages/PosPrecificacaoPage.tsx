@@ -2,11 +2,15 @@ import { BadgePercent } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
 import { PosPrecificacaoVisao } from '../components/precificacao/PosPrecificacaoVisao';
 import { useEscopoAtual } from '../hooks/useEscopoAtual';
+import { useModoGraficoPrecificacao } from '../hooks/useModoGraficoPrecificacao';
 
 /** Casca da tela Pós precificação: dump da última rodada + desempenho no movimento.
- *  Fonte `{empresa}_PRECIFICACAO.csv`, opcional — 404 vira estado vazio na visão. */
+ *  Fonte `{empresa}_PRECIFICACAO.csv`, opcional — 404 vira estado vazio na visão.
+ *  O toggle Sintética/Detalhada vive na topbar (`TopoPosPrecificacaoModoToggle`,
+ *  AppShell) — aqui só lê o mesmo estado global. */
 export default function PosPrecificacaoPage() {
   const { empresa, loja } = useEscopoAtual();
+  const [modoGrafico] = useModoGraficoPrecificacao();
 
   return (
     <AppShell>
@@ -28,7 +32,7 @@ export default function PosPrecificacaoPage() {
           </div>
         )}
 
-        {empresa && <PosPrecificacaoVisao empresa={empresa} loja={loja} />}
+        {empresa && <PosPrecificacaoVisao empresa={empresa} loja={loja} modoGrafico={modoGrafico} />}
       </div>
     </AppShell>
   );

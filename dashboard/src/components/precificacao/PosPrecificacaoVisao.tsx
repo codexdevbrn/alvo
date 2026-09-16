@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   AlertTriangle,
+  ArrowDown,
+  ArrowUp,
   BadgePercent,
-  ChevronLeft,
-  ChevronRight,
   Loader2,
   Search,
 } from 'lucide-react';
@@ -11,6 +11,7 @@ import {
   Area,
   AreaChart,
   CartesianGrid,
+  LabelList,
   ReferenceLine,
   ResponsiveContainer,
   Tooltip,
@@ -20,7 +21,9 @@ import {
 import { LeituraFaixa } from '../LeituraFaixa';
 import {
   obterPosPrecificacao,
+  type ChaveJanelaFixa,
   type ItemPosPrecificacao,
+  type JanelaFixaPrecificacao,
   type PontoSeriePrecificacao,
   type PosPrecificacaoResposta,
   type ResumoPosPrecificacao,
@@ -33,11 +36,16 @@ import { modoParaBooleano } from '../../utils/mesesFechados';
 type Props = {
   empresa: string;
   loja: string | null;
+  modoGrafico: 'sintetica' | 'detalhada';
 };
 
 type AbaLista = 'produtos' | 'fabricantes';
 
 const TODOS = '__todos__';
+
+// Espelha `JANELA_DETALHE_DIAS` do backend (precificacao.py) — só pra legenda,
+// a janela real quem decide é o servidor.
+const JANELA_DETALHE_DIAS = 20;
 
 const ABAS: { id: AbaLista; rotulo: string }[] = [
   { id: 'produtos', rotulo: 'Produtos' },
@@ -51,6 +59,14 @@ const ROTULO_SITUACAO: Record<SituacaoPrecificacao, string> = {
   sem_venda: 'sem venda depois',
   sem_alvo: 'sem alvo',
 };
+
+const DIAS_SEMANA_ABREV = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+
+function diaSemanaAbrev(periodo: string): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(periodo)) return null;
+  const [ano, mes, dia] = periodo.split('-').map(Number);
+  return DIAS_SEMANA_ABREV[new Date(ano, mes - 1, dia).getDay()];
+}
 
 function dataBr(iso: string | null | undefined): string {
   if (!iso) return '—';
@@ -112,7 +128,7 @@ function variacaoMomCampo(serie: PontoSeriePrecificacao[], chave: 'margem' | 'lu
   return ((atual - anterior) / anterior) * 100;
 }
 
-export function PosPrecificacaoVisao({ empresa, loja }: Props) {
+export function PosPrecificacaoVisao({ empresa, loja, modoGrafico }: Props) {
   const [dados, setDados] = useState<PosPrecificacaoResposta | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
@@ -196,6 +212,10 @@ export function PosPrecificacaoVisao({ empresa, loja }: Props) {
   const itemAtivo = nomeAtivo === TODOS ? null : (itens.find((item) => item.nome === nomeAtivo) ?? null);
   const serie = itemAtivo?.serie_mensal?.length ? itemAtivo.serie_mensal : dados.serie_mensal;
   const rotuloCorte = serie.find((ponto) => ponto.periodo === dados.periodo_corte)?.rotulo;
+  const serieDiaria = itemAtivo?.serie_diaria?.length ? itemAtivo.serie_diaria : dados.serie_diaria;
+  const rotuloCorteDia = serieDiaria.find((ponto) => ponto.periodo === dados.data_precificacao)?.rotulo;
+  const serieGrafico = modoGrafico === 'detalhada' ? serieDiaria : serie;
+  const rotuloCorteGrafico = modoGrafico === 'detalhada' ? rotuloCorteDia : rotuloCorte;
   const kpis = itemAtivo ?? resumoComoKpis(dados.resumo);
   const avisoAberto = !dados.tem_movimento_depois;
   const gap = kpis.gap_alvo_pp;
@@ -223,38 +243,48 @@ export function PosPrecificacaoVisao({ empresa, loja }: Props) {
       />
 
       <section className="pos-precificacao-graficos" aria-label={`Séries de ${rotuloEscopo}`}>
+        {modoGrafico === 'detalhada' && (
+          <div className="pos-precificacao-graficos-topo">
+            <span className="pos-precificacao-graficos-nota">
+              Dia a dia, {JANELA_DETALHE_DIAS} dias antes e depois de {dataBr(dados.data_precificacao)}. Dias sem venda ficam fora.
+            </span>
+          </div>
+        )}
         <GraficoSerie
           titulo="Margem %"
           nota={itemAtivo ? itemAtivo.nome : 'Pares do dump'}
-          serie={serie}
+          serie={serieGrafico}
           dataKey="margem"
           cor="var(--accent)"
           formato={(valor) => `${Number(valor).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`}
           valorTopo={ultimoCampo(serie, 'margem') == null ? '—' : formatPercent(ultimoCampo(serie, 'margem') as number, 1)}
           deltaTopo={variacaoMomCampo(serie, 'margem') == null ? null : textoSinal(variacaoMomCampo(serie, 'margem'), 'pp')}
-          rotuloCorte={rotuloCorte}
+          rotuloCorte={rotuloCorteGrafico}
+          mostrarRotulos={modoGrafico === 'sintetica'}
         />
         <GraficoSerie
           titulo="Lucro bruto / dia"
-          nota="Lucro do mês ÷ dias com venda"
-          serie={serie}
+          nota={modoGrafico === 'detalhada' ? 'Lucro do dia' : 'Lucro do mês ÷ dias com venda'}
+          serie={serieGrafico}
           dataKey="lucro_dia"
           cor="var(--accent-secondary-bright)"
           formato={(valor) => formatCompacto(Number(valor), true)}
           valorTopo={ultimoCampo(serie, 'lucro_dia') == null ? '—' : formatCurrency(ultimoCampo(serie, 'lucro_dia') as number)}
           deltaTopo={textoSinal(variacaoMomCampo(serie, 'lucro_dia'))}
-          rotuloCorte={rotuloCorte}
+          rotuloCorte={rotuloCorteGrafico}
+          mostrarRotulos={modoGrafico === 'sintetica'}
         />
         <GraficoSerie
           titulo="Qtd. vendas / dia"
-          nota="Quantidade do mês ÷ dias com venda"
-          serie={serie}
+          nota={modoGrafico === 'detalhada' ? 'Quantidade do dia' : 'Quantidade do mês ÷ dias com venda'}
+          serie={serieGrafico}
           dataKey="qtd_dia"
           cor="var(--alert-warm)"
           formato={(valor) => formatQtd(Number(valor))}
           valorTopo={formatQtd(ultimoCampo(serie, 'qtd_dia'))}
           deltaTopo={textoSinal(variacaoMomCampo(serie, 'qtd_dia'))}
-          rotuloCorte={rotuloCorte}
+          rotuloCorte={rotuloCorteGrafico}
+          mostrarRotulos={modoGrafico === 'sintetica'}
         />
       </section>
 
@@ -268,6 +298,12 @@ export function PosPrecificacaoVisao({ empresa, loja }: Props) {
           delta={kpis.margem_depois == null ? 'sem venda' : `${formatPercent(kpis.margem_depois, 1)} · alvo ${kpis.margem_alvo != null ? formatPercent(kpis.margem_alvo, 1) : '—'}`}
           alta={gap == null ? undefined : gap >= 0}
         />
+      </section>
+
+      <section className="pos-precificacao-janelas" aria-label={`Semana, quinzena e mês pós precificação de ${rotuloEscopo}`}>
+        {JANELAS_FIXAS_UI.map(({ chave, titulo }) => (
+          <JanelaFixaCard key={chave} titulo={titulo} janela={kpis.janelas[chave]} />
+        ))}
       </section>
 
       <section className="glass-card glass-card-flat estoque-visao-card">
@@ -352,6 +388,8 @@ function resumoComoKpis(resumo: ResumoPosPrecificacao): ItemPosPrecificacao {
     gap_alvo_pp: resumo.gap_alvo_pp,
     situacao: 'sem_alvo',
     serie_mensal: [],
+    serie_diaria: [],
+    janelas: resumo.janelas,
   };
 }
 
@@ -375,19 +413,55 @@ function Metro({
   );
 }
 
+const JANELAS_FIXAS_UI: { chave: ChaveJanelaFixa; titulo: string }[] = [
+  { chave: 'semana', titulo: 'Semana pós precificação' },
+  { chave: 'quinzena', titulo: 'Quinzena pós precificação' },
+  { chave: 'mes', titulo: 'Mês pós precificação' },
+];
+
+/** Compara N dias depois do corte contra os N dias imediatamente antes —
+ *  mesmo comprimento nos dois lados, ao contrário do card "Lucro depois"
+ *  (que usa a janela antes/depois inteira). Responde "melhorou logo na
+ *  largada?", não "melhorou no total". */
+function JanelaFixaCard({ titulo, janela }: { titulo: string; janela: JanelaFixaPrecificacao }) {
+  const gap = janela.gap_alvo_pp;
+  const semVenda = janela.receita_depois <= 0;
+  return (
+    <article className="glass-card glass-card-flat pos-precificacao-janela-card">
+      <header>
+        <h2>{titulo}</h2>
+        {!janela.completa && <span className="pos-precificacao-janela-aberta">em andamento</span>}
+      </header>
+      <div className="pos-precificacao-metros pos-precificacao-janela-corpo">
+        <Metro
+          rotulo="Lucro"
+          valor={formatCurrency(janela.lucro_depois)}
+          delta={semVenda ? 'sem venda' : textoSinal(janela.variacao_lucro_pct)}
+          alta={semVenda ? undefined : (janela.variacao_lucro_pct ?? 0) >= 0}
+        />
+        <Metro
+          rotulo="Margem vs alvo"
+          valor={gap == null ? '—' : textoSinal(gap, 'pp')}
+          delta={janela.margem_depois == null ? 'sem venda' : `${formatPercent(janela.margem_depois, 1)} · alvo ${janela.margem_alvo != null ? formatPercent(janela.margem_alvo, 1) : '—'}`}
+          alta={gap == null ? undefined : gap >= 0}
+        />
+        <Metro
+          rotulo="Quantidade"
+          valor={formatQtd(janela.qtd_depois)}
+          delta={semVenda ? 'sem venda' : textoSinal(janela.variacao_qtd_pct)}
+          alta={semVenda ? undefined : (janela.variacao_qtd_pct ?? 0) >= 0}
+        />
+      </div>
+    </article>
+  );
+}
+
 type Destaque = {
   nome: string;
   id: string;
   lucroDia: number | null;
   mom: number | null;
 };
-
-function passoCarrossel(faixa: HTMLDivElement): number {
-  const card = faixa.querySelector('.pos-precificacao-destaque');
-  if (!(card instanceof HTMLElement)) return 200;
-  const gap = Number.parseFloat(getComputedStyle(faixa).columnGap || getComputedStyle(faixa).gap) || 10;
-  return card.getBoundingClientRect().width + gap;
-}
 
 function medirTrilho(el: HTMLDivElement): { thumb: number; left: number } {
   const total = el.scrollWidth;
@@ -416,6 +490,8 @@ function FaixaDestaques({
 }) {
   const faixa = useRef<HTMLDivElement>(null);
   const trilhoRef = useRef<HTMLElement>(null);
+  const trilhoBarraRef = useRef<HTMLDivElement>(null);
+  const arrastandoTrilho = useRef(false);
   const direcao = useRef(1);
   const pausadoAte = useRef(0);
   const nomeAnterior = useRef(nomeAtivo);
@@ -447,17 +523,41 @@ function FaixaDestaques({
     pausadoAte.current = Date.now() + ms;
   };
 
-  const rolar = (dir: number) => {
+  const pausarNoHover = () => {
+    pausadoAte.current = Number.POSITIVE_INFINITY;
+  };
+
+  const retomarDoHover = () => {
+    pausadoAte.current = 0;
+  };
+
+  const moverTrilhoPara = (clienteX: number) => {
+    const barra = trilhoBarraRef.current;
     const el = faixa.current;
-    if (!el) return;
-    direcao.current = dir;
-    pausar();
-    const passo = passoCarrossel(el);
+    if (!barra || !el) return;
+    const rect = barra.getBoundingClientRect();
+    const fracao = rect.width <= 0 ? 0 : (clienteX - rect.left) / rect.width;
     const max = Math.max(0, el.scrollWidth - el.clientWidth);
-    const alvo = Math.min(max, Math.max(0, el.scrollLeft + dir * passo));
-    if (alvo >= max - 2) direcao.current = -1;
-    if (alvo <= 2) direcao.current = 1;
-    el.scrollTo({ left: alvo, behavior: 'smooth' });
+    el.scrollLeft = Math.min(max, Math.max(0, fracao * el.scrollWidth - el.clientWidth * fracao));
+  };
+
+  const iniciarArrasteTrilho = (evento: ReactPointerEvent<HTMLDivElement>) => {
+    arrastandoTrilho.current = true;
+    pausarNoHover();
+    evento.currentTarget.setPointerCapture(evento.pointerId);
+    moverTrilhoPara(evento.clientX);
+  };
+
+  const arrastarTrilho = (evento: ReactPointerEvent<HTMLDivElement>) => {
+    if (!arrastandoTrilho.current) return;
+    moverTrilhoPara(evento.clientX);
+  };
+
+  const encerrarArrasteTrilho = (evento: ReactPointerEvent<HTMLDivElement>) => {
+    if (!arrastandoTrilho.current) return;
+    arrastandoTrilho.current = false;
+    evento.currentTarget.releasePointerCapture(evento.pointerId);
+    retomarDoHover();
   };
 
   useEffect(() => {
@@ -529,9 +629,6 @@ function FaixaDestaques({
   return (
     <section className="pos-precificacao-destaques-bloco" aria-label="Destaques por lucro bruto diário">
       <div className="pos-precificacao-carrossel">
-        <button type="button" className="pos-precificacao-carrossel-seta is-antes" aria-label="Anterior" onClick={() => rolar(-1)}>
-          <ChevronLeft size={16} />
-        </button>
         <div
           className="pos-precificacao-destaques"
           ref={faixa}
@@ -540,6 +637,8 @@ function FaixaDestaques({
           tabIndex={-1}
           onPointerDown={() => pausar()}
           onWheel={() => pausar(6000)}
+          onMouseEnter={pausarNoHover}
+          onMouseLeave={retomarDoHover}
         >
           {destaques.map((item) => {
             const ativo = item.id === nomeAtivo;
@@ -557,19 +656,31 @@ function FaixaDestaques({
                 }}
               >
                 <span>{item.nome}</span>
-                <strong>{item.lucroDia == null ? '—' : formatCurrency(item.lucroDia)}</strong>
-                <em className={item.mom == null ? '' : momUp ? 'is-alta' : 'is-queda'}>
-                  {item.mom == null ? 'sem mês anterior' : textoSinal(item.mom)}
-                </em>
+                <div className="pos-precificacao-destaque-linha">
+                  <strong>{item.lucroDia == null ? '—' : formatCurrency(item.lucroDia)}</strong>
+                  {item.mom == null ? (
+                    <em className="is-neutro">sem mês anterior</em>
+                  ) : (
+                    <em className={momUp ? 'is-alta' : 'is-queda'}>
+                      {momUp ? <ArrowUp size={10} /> : <ArrowDown size={10} />}
+                      {textoSinal(item.mom).replace('+', '')}
+                    </em>
+                  )}
+                </div>
               </button>
             );
           })}
         </div>
-        <button type="button" className="pos-precificacao-carrossel-seta is-depois" aria-label="Próximo" onClick={() => rolar(1)}>
-          <ChevronRight size={16} />
-        </button>
       </div>
-      <div className="pos-precificacao-carrossel-trilho" aria-hidden="true">
+      <div
+        className="pos-precificacao-carrossel-trilho"
+        ref={trilhoBarraRef}
+        aria-label="Rolar destaques"
+        onPointerDown={iniciarArrasteTrilho}
+        onPointerMove={arrastarTrilho}
+        onPointerUp={encerrarArrasteTrilho}
+        onPointerCancel={encerrarArrasteTrilho}
+      >
         <i ref={trilhoRef} />
       </div>
     </section>
@@ -586,6 +697,7 @@ function GraficoSerie({
   valorTopo,
   deltaTopo,
   rotuloCorte,
+  mostrarRotulos = true,
 }: {
   titulo: string;
   nota: string;
@@ -596,6 +708,7 @@ function GraficoSerie({
   valorTopo: string;
   deltaTopo: string | null;
   rotuloCorte?: string;
+  mostrarRotulos?: boolean;
 }) {
   const fillId = `pos-prec-${dataKey}`;
   const deltaAlta = deltaTopo != null && !deltaTopo.startsWith('−') && !deltaTopo.startsWith('-') && deltaTopo !== '—';
@@ -618,7 +731,7 @@ function GraficoSerie({
           <p className="pos-precificacao-grafico-vazio">Sem série neste recorte.</p>
         ) : (
           <ResponsiveContainer width="100%" height={200}>
-            <AreaChart data={serie} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+            <AreaChart data={serie} margin={{ top: 20, right: 14, left: 14, bottom: 4 }}>
               <defs>
                 <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={cor} stopOpacity={0.35} />
@@ -627,23 +740,30 @@ function GraficoSerie({
               </defs>
               <CartesianGrid stroke="var(--border)" vertical={false} />
               <XAxis dataKey="rotulo" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis
-                tickFormatter={(valor) => formato(Number(valor))}
-                tick={{ fill: 'var(--text-muted)', fontSize: 11 }}
-                axisLine={false}
-                tickLine={false}
-                width={56}
-              />
+              <YAxis hide />
               {rotuloCorte && (
-                <ReferenceLine x={rotuloCorte} stroke="var(--border-strong)" strokeDasharray="4 4" />
+                <ReferenceLine
+                  x={rotuloCorte}
+                  stroke="var(--accent)"
+                  strokeWidth={1.5}
+                  strokeDasharray="4 4"
+                  label={{
+                    value: 'Precificação',
+                    position: 'insideBottomLeft',
+                    fill: 'var(--accent)',
+                    fontSize: 10,
+                    offset: 4,
+                  }}
+                />
               )}
               <Tooltip
                 content={({ active, payload, label }) => {
                   if (!active || !payload?.length) return null;
                   const ponto = payload[0]?.payload as PontoSeriePrecificacao;
+                  const diaSemana = diaSemanaAbrev(ponto.periodo);
                   return (
                     <div className="vendedores-chart-tooltip">
-                      <strong>{label}</strong>
+                      <strong>{label}{diaSemana ? ` · ${diaSemana}` : ''}</strong>
                       <dl>
                         <div><dt>Margem</dt><dd>{ponto.margem == null ? '—' : formatPercent(ponto.margem, 1)}</dd></div>
                         <div><dt>Lucro / dia</dt><dd>{ponto.lucro_dia == null ? '—' : formatCurrency(ponto.lucro_dia)}</dd></div>
@@ -662,10 +782,33 @@ function GraficoSerie({
                 strokeWidth={2}
                 fill={`url(#${fillId})`}
                 connectNulls={false}
-                dot={{ r: 3, fill: cor, strokeWidth: 0 }}
+                dot={{ r: mostrarRotulos ? 3 : 2, fill: cor, strokeWidth: 0 }}
                 activeDot={{ r: 5 }}
                 isAnimationActive={false}
-              />
+              >
+                {mostrarRotulos ? (
+                  <LabelList
+                    dataKey={dataKey}
+                    position="top"
+                    formatter={(valor: unknown) => (typeof valor === 'number' ? formato(valor) : '')}
+                    style={{ fill: 'var(--text-primary)', fontSize: 11 }}
+                  />
+                ) : (
+                  <LabelList
+                    dataKey={dataKey}
+                    position="top"
+                    content={({ x, y, value, index }) => {
+                      const ponto = index != null ? serie[Number(index)] : undefined;
+                      if (!ponto || ponto.rotulo !== rotuloCorte || typeof value !== 'number') return null;
+                      return (
+                        <text x={x} y={Number(y) - 6} textAnchor="middle" fontSize={11} fill="var(--accent)">
+                          {formato(value)}
+                        </text>
+                      );
+                    }}
+                  />
+                )}
+              </Area>
             </AreaChart>
           </ResponsiveContainer>
         )}

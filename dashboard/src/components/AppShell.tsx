@@ -34,6 +34,7 @@ import { TopoVendaMediaSelect } from './TopoVendaMediaSelect';
 import { TopoDespesasPeriodoSelect } from './TopoDespesasPeriodoSelect';
 import { TopoCortesToggle } from './TopoCortesToggle';
 import { TopoGruposClientesFiltro } from './TopoGruposClientesFiltro';
+import { TopoPosPrecificacaoModoToggle } from './TopoPosPrecificacaoModoToggle';
 import { useEscopoAtual } from '../hooks/useEscopoAtual';
 
 const URL_CARTEIRA = 'http://127.0.0.1:3001';
@@ -372,6 +373,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
             <div className="app-shell-escopo">
               {emEstoque && <TopoVendaMediaSelect />}
               {emDespesas && <TopoDespesasPeriodoSelect />}
+              {emPosPrecificacao && <TopoPosPrecificacaoModoToggle />}
               {!emAssistente && !emCortes && (
                 <SidebarMesesFechadosToggle desabilitarMesmoPeriodo={emDashboard || emEstoque || emDespesas || emPosPrecificacao} />
               )}
