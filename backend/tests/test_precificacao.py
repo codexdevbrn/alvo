@@ -162,6 +162,71 @@ def test_montar_sem_venda_depois_marca_sem_venda():
     assert resultado["resumo"]["receita_depois"] == 0.0
 
 
+def test_serie_diaria_cobre_janela_curta_ao_redor_do_corte():
+    dump = pd.DataFrame([_dump()])
+    movimento = pd.DataFrame([
+        _mov("Filtro Lubrificante", "TECFIL", "2026-05-10", 100.0, 70.0, qtd=2),
+        _mov("Filtro Lubrificante", "TECFIL", "2026-05-12", 140.0, 84.0, qtd=3),
+        _mov("Filtro Lubrificante", "TECFIL", "2026-05-14", 90.0, 60.0, qtd=1),
+    ])
+    resultado = montar_pos_precificacao(
+        dump, movimento, usar_mes_fechado=False, hoje=date(2026, 5, 20),
+    )
+    periodos = [ponto["periodo"] for ponto in resultado["serie_diaria"]]
+    assert "2026-05-10" in periodos
+    assert "2026-05-12" in periodos
+    assert "2026-05-14" in periodos
+    dia_12 = next(p for p in resultado["serie_diaria"] if p["periodo"] == "2026-05-12")
+    assert dia_12["rotulo"] == "12/05"
+    assert dia_12["lucro"] == pytest.approx(56.0)
+    assert dia_12["lucro_dia"] == pytest.approx(56.0)
+    # Dia sem venda não entra na série — não é dado zero, é ausência de movimento.
+    assert not any(p["periodo"] == "2026-05-11" for p in resultado["serie_diaria"])
+    serie_prod_dia = resultado["produtos"][0]["serie_diaria"]
+    assert any(p["periodo"] == "2026-05-14" and p["qtd"] == pytest.approx(1.0) for p in serie_prod_dia)
+
+
+def test_janelas_fixas_semana_quinzena_mes():
+    dump = pd.DataFrame([_dump()])
+    # Corte 12/mai. Semana (7d): compara 05/mai-12/mai vs 12/mai-19/mai.
+    movimento = pd.DataFrame([
+        _mov("Filtro Lubrificante", "TECFIL", "2026-05-08", 100.0, 70.0, qtd=2),  # antes da semana
+        _mov("Filtro Lubrificante", "TECFIL", "2026-05-15", 200.0, 100.0, qtd=4),  # depois da semana
+        _mov("Filtro Lubrificante", "TECFIL", "2026-05-20", 50.0, 40.0, qtd=1),  # depois da quinzena, dentro do mês
+    ])
+    resultado = montar_pos_precificacao(
+        dump, movimento, usar_mes_fechado=False, hoje=date(2026, 6, 20),
+    )
+    semana = resultado["resumo"]["janelas"]["semana"]
+    assert semana["dias"] == 7
+    assert semana["receita_antes"] == pytest.approx(100.0)
+    assert semana["receita_depois"] == pytest.approx(200.0)
+    assert semana["variacao_receita_pct"] == pytest.approx(100.0)
+    assert semana["completa"] is True
+
+    quinzena = resultado["resumo"]["janelas"]["quinzena"]
+    assert quinzena["receita_depois"] == pytest.approx(250.0)  # 15 e 20 entram nos 15 dias (12..27/mai)
+
+    mes = resultado["resumo"]["janelas"]["mes"]
+    assert mes["receita_depois"] == pytest.approx(250.0)  # 15 e 20 também entram nos 30 dias
+
+    produto = resultado["produtos"][0]
+    assert produto["janelas"]["semana"]["receita_depois"] == pytest.approx(200.0)
+
+
+def test_janela_fixa_incompleta_quando_falta_dado_recente():
+    dump = pd.DataFrame([_dump()])
+    movimento = pd.DataFrame([
+        _mov("Filtro Lubrificante", "TECFIL", "2026-05-14", 100.0, 70.0),
+    ])
+    # "Hoje" 3 dias depois do corte: a janela de 1 semana ainda não fechou.
+    resultado = montar_pos_precificacao(
+        dump, movimento, usar_mes_fechado=False, hoje=date(2026, 5, 15),
+    )
+    semana = resultado["resumo"]["janelas"]["semana"]
+    assert semana["completa"] is False
+
+
 def test_mes_aberto_nao_entra_na_janela_depois():
     dump = pd.DataFrame([_dump()])
     movimento = pd.DataFrame([
