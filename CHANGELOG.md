@@ -4,6 +4,27 @@ Formato: uma seção por versão publicada, mais recente no topo. Histórico é
 incremental — entradas antigas nunca são apagadas. O estado atual das telas e
 funcionalidades vive em `DOC_TEC.md`, não aqui.
 
+## 1.7.14 — 2026-09-16
+
+### Adicionado
+
+- Pós precificação ganha visão **Detalhada**: dia a dia num zoom de 20 dias
+  antes/depois do corte, pulando dias sem venda (fim de semana e feriado não
+  viram ponto zerado). Toggle Sintética/Detalhada sai da tela e vira controle
+  global na topbar, só nesta tela.
+- Cartões de **semana / quinzena / mês pós precificação**: compara o mesmo
+  número de dias antes e depois do corte, por produto/fabricante e agregado,
+  com aviso de janela ainda em andamento.
+
+### Alterado
+
+- Carrossel de destaques: cards mais finos, setas removidas, trilho vira
+  barra de rolagem arrastável, pausa no hover, pílula de variação com seta e
+  cor.
+- Gráficos: rótulos de valor em texto claro, mês de corte sem sobrepor
+  rótulo, primeiro/último mês do eixo sem cortar, dia da semana no tooltip
+  da visão diária.
+
 ## 1.7.13 — 2026-09-15
 
 ### Adicionado

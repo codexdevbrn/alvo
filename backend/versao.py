@@ -12,7 +12,7 @@ Não confundir com `engine.recursos.VERSAO_ATUAL`: aquela versiona o app desktop
 histórico de releases diferente — compartilhar o número confundiria o suporte.
 """
 
-VERSAO = "1.7.13"
+VERSAO = "1.7.14"
 
 # Nome exibido ao usuário: título da janela, bandeja, instalador, interface.
 NOME_APP = "2D Prisma"
