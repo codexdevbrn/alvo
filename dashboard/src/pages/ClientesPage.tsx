@@ -3,6 +3,8 @@ import { AlertTriangle, Loader2, Search, Tag, UsersRound } from 'lucide-react';
 import { AppShell } from '../components/AppShell';
 import { ClientesAlertaCard } from '../components/analisador/ClientesAlertaCard';
 import { ClientesRitmoAlertas } from '../components/clientes/ClientesRitmoAlertas';
+import { ClientesPotencialCompra } from '../components/clientes/ClientesPotencialCompra';
+import { ClientesScoreMigracao } from '../components/clientes/ClientesScoreMigracao';
 import { ClientesVisaoGeral } from '../components/clientes/ClientesVisaoGeral';
 import {
 
@@ -17,10 +19,13 @@ import {
 import { formatCurrency } from '../utils/formatters';
 import { useEscopoAtual } from '../hooks/useEscopoAtual';
 
-type AbaClientes = 'visao' | 'base';
+type AbaClientes = 'visao' | 'score' | 'potencial' | 'alertas' | 'base';
 
 const ABAS: { id: AbaClientes; rotulo: string }[] = [
   { id: 'visao', rotulo: 'Visão geral' },
+  { id: 'score', rotulo: 'Score e migração' },
+  { id: 'potencial', rotulo: 'Potencial de compra' },
+  { id: 'alertas', rotulo: 'Alertas' },
   { id: 'base', rotulo: 'Base e tags' },
 ];
 
@@ -45,6 +50,8 @@ export default function ClientesPage() {
   const [erro, setErro] = useState<string | null>(null);
   const [aba, setAba] = useState<AbaClientes>('visao');
   const [carregandoVisao, setCarregandoVisao] = useState(false);
+  const [carregandoScore, setCarregandoScore] = useState(false);
+  const [carregandoPotencial, setCarregandoPotencial] = useState(false);
 
   useEffect(() => {
     if (!empresa) {
@@ -162,7 +169,11 @@ export default function ClientesPage() {
                   {item.rotulo}
                 </button>
               ))}
-              {carregandoVisao && (
+              {(
+                (aba === 'visao' && carregandoVisao)
+                || (aba === 'score' && carregandoScore)
+                || (aba === 'potencial' && carregandoPotencial)
+              ) && (
                 <span className="dashboard-header-filter-loading" aria-live="polite" aria-busy="true">
                   <Loader2 size={14} className="dashboard-filter-spinner" /> Atualizando…
                 </span>
@@ -170,8 +181,19 @@ export default function ClientesPage() {
             </div>
 
             {aba === 'visao' && (
+              <ClientesVisaoGeral empresa={empresa} loja={loja} onCarregandoChange={setCarregandoVisao} />
+            )}
+
+            {aba === 'score' && (
+              <ClientesScoreMigracao empresa={empresa} loja={loja} onCarregandoChange={setCarregandoScore} />
+            )}
+
+            {aba === 'potencial' && (
+              <ClientesPotencialCompra empresa={empresa} loja={loja} onCarregandoChange={setCarregandoPotencial} />
+            )}
+
+            {aba === 'alertas' && (
               <>
-                <ClientesVisaoGeral empresa={empresa} loja={loja} onCarregandoChange={setCarregandoVisao} />
                 <ClientesRitmoAlertas empresa={empresa} loja={loja} catalogo={catalogo} />
                 <ClientesAlertaCard empresa={empresa} loja={loja} itensClientes={clientesCompletos} tagsPorCliente={tagsPorCliente} tagsCatalogo={catalogo} clientesBalcao={clientesBalcao} />
               </>
@@ -181,11 +203,19 @@ export default function ClientesPage() {
               <>
                 <section className="clientes-tag-resumo" aria-label="Resumo por tag">
                   <button type="button" className={`glass-card clientes-tag-card${tagFiltro === '' ? ' is-ativo' : ''}`} onClick={() => setTagFiltro('')}>
-                    <UsersRound size={18} /><span>Base de clientes</span><strong>{totalClientes.toLocaleString('pt-BR')}</strong>
+                    <span className="clientes-tag-card-topo">
+                      <span className="clientes-tag-card-titulo">Base de clientes</span>
+                      <span className="clientes-tag-card-icone"><UsersRound size={16} /></span>
+                    </span>
+                    <strong>{totalClientes.toLocaleString('pt-BR')}</strong>
                   </button>
                   {tagsAtivas.map((tag) => (
                     <button key={tag.id} type="button" className={`glass-card clientes-tag-card${tagFiltro === tag.id ? ' is-ativo' : ''}`} style={{ '--tag-cor': tag.cor } as CSSProperties} onClick={() => setTagFiltro((atual) => atual === tag.id ? '' : tag.id)}>
-                      <Tag size={17} /><span>{tag.rotulo}</span><strong>{totaisTags[tag.id] ?? 0}</strong>
+                      <span className="clientes-tag-card-topo">
+                        <span className="clientes-tag-card-titulo">{tag.rotulo}</span>
+                        <span className="clientes-tag-card-icone"><Tag size={15} /></span>
+                      </span>
+                      <strong>{totaisTags[tag.id] ?? 0}</strong>
                     </button>
                   ))}
                 </section>

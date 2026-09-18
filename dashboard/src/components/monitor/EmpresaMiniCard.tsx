@@ -4,6 +4,7 @@ import { ArrowDown, ArrowUp, Star } from 'lucide-react';
 import type { EmpresaMonitor, MetricaMonitor } from '../../api/client';
 import { formatCompacto, formatCurrency, formatNumber, formatPercent } from '../../utils/formatters';
 import { COR_ANO_RECENTE } from '../../utils/coresAno';
+import { GaugeMonitor } from './GaugeMonitor';
 
 const ROTULOS_METRICA: Record<MetricaMonitor, string> = {
   receita: 'Receita',
@@ -12,6 +13,7 @@ const ROTULOS_METRICA: Record<MetricaMonitor, string> = {
   receita_dia: 'Receita / dia com venda',
   lucro: 'Lucro bruto',
   lucro_dia: 'Lucro bruto / dia com venda',
+  nao_harmonizado: 'Receita não harmonizada',
 };
 
 const METRICAS_MOEDA: MetricaMonitor[] = ['receita', 'receita_dia', 'lucro', 'lucro_dia'];
@@ -58,6 +60,46 @@ function RotuloUltimo(props: {
     >
       {formatCompacto(valor, moeda)}
     </text>
+  );
+}
+
+/** Badge de variação, reaproveitado no card normal (sparkline) e no de
+ *  velocímetro — a leitura "subiu/desceu quanto" é a mesma nos dois. */
+function VariacaoBadge({
+  variacao,
+  classe,
+  item,
+}: {
+  variacao: number | null | undefined;
+  classe: string;
+  item: EmpresaMonitor;
+}) {
+  if (variacao == null) {
+    return (
+      <span
+        className="monitor-variacao is-neutra"
+        title={
+          item.base_comparavel === false
+            ? 'O ano anterior teve movimento irrisório nesses meses — o percentual não ajudaria a decidir.'
+            : 'Sem os mesmos meses no ano anterior para comparar.'
+        }
+      >
+        sem base
+      </span>
+    );
+  }
+  return (
+    <span
+      className={`monitor-variacao ${classe}`}
+      title={
+        item.ano_comparado
+          ? `${item.meses_comparados} ${item.meses_comparados === 1 ? 'mês' : 'meses'} de ${item.ano_comparado} vs ${item.ano_comparado - 1}`
+          : undefined
+      }
+    >
+      {variacao >= 0 ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
+      {formatPercent(variacao)}
+    </span>
   );
 }
 
@@ -180,6 +222,11 @@ interface Props {
   favorita: boolean;
   /** Bloqueia a estrela durante o POST para não disparar dois salvamentos. */
   salvandoFavorita?: boolean;
+  /** '' = todas as lojas somadas. */
+  loja: string;
+  /** Card recalculando para a loja escolhida — desabilita a combobox. */
+  carregandoLoja?: boolean;
+  onSelecionarLoja: (empresa: string, loja: string) => void;
   onAlternarFavorita: (empresa: string) => void;
   onAbrir: (empresa: string) => void;
 }
@@ -189,11 +236,16 @@ function EmpresaMiniCardInterno({
   metrica,
   favorita,
   salvandoFavorita = false,
+  loja,
+  carregandoLoja = false,
+  onSelecionarLoja,
   onAlternarFavorita,
   onAbrir,
 }: Props) {
   const moeda = ehMoeda(metrica);
   const semBase = item.estado !== 'ok';
+  const gauge = metrica === 'nao_harmonizado';
+  const lojas = item.lojas ?? [];
 
   const pontos: PontoSparkline[] = (item.valores ?? []).map((valor, indice) => ({
     rotulo: String(item.rotulos?.[indice] ?? ''),
@@ -219,8 +271,15 @@ function EmpresaMiniCardInterno({
   const destaque = (ehMedia ? item.media : item.total) ?? 0;
 
   const variacao = item.variacao_pct;
+  // "Receita não harmonizada" é bom quando cai — o sinal da cor é invertido em
+  // relação às métricas de receita/quantidade, onde subir é bom.
+  const quedaEBoa = metrica === 'nao_harmonizado';
   const classeVariacao =
-    variacao == null ? 'is-neutra' : variacao >= 0 ? 'is-positiva' : 'is-negativa';
+    variacao == null
+      ? 'is-neutra'
+      : (quedaEBoa ? variacao <= 0 : variacao >= 0)
+        ? 'is-positiva'
+        : 'is-negativa';
 
   const classes = [
     'glass-card',
@@ -243,27 +302,89 @@ function EmpresaMiniCardInterno({
         <Star size={16} fill={favorita ? 'currentColor' : 'none'} />
       </button>
 
-      {/* O card inteiro é o alvo de clique (abre o Dashboard da empresa), mas a
-          estrela fica FORA dele: aninhar botão em botão é HTML inválido e o
-          clique na estrela abriria o Dashboard sem querer. */}
-      <button type="button" className="monitor-card-link" onClick={() => onAbrir(item.empresa)}>
-        <div className="monitor-card-topo">
-          <h2 title={item.empresa}>{item.empresa}</h2>
-          {favorita && <span className="monitor-favorita-tag">favorita</span>}
-          {/* Data na linha do nome, e não num rodapé próprio: é metadado do card, e
-              uma linha inteira só para ela custava altura em dezenas de cards. */}
-          {item.updated_at && (
-            <span className="monitor-card-data" title="Última atualização">
-              {item.updated_at}
-            </span>
-          )}
-        </div>
+      {/* Topo fora do botão de abrir: a combobox de loja precisa de <select>, que
+          não pode ficar aninhado num <button> (mesmo motivo da estrela). */}
+      <div className="monitor-card-topo">
+        <h2 title={item.empresa}>{item.empresa}</h2>
+        {/* Só aparece com mais de uma loja — mesma regra do seletor da sidebar
+            (ver useEscopoAtual): empresa de loja única não precisa do combobox. */}
+        {lojas.length > 1 && (
+          <select
+            className="monitor-loja-select"
+            value={loja}
+            disabled={carregandoLoja}
+            onClick={(evento) => evento.stopPropagation()}
+            onChange={(evento) => onSelecionarLoja(item.empresa, evento.target.value)}
+            title={carregandoLoja ? 'Recalculando…' : 'Filtrar por loja'}
+            aria-label={`Loja de ${item.empresa}`}
+          >
+            <option value="">Todas as lojas</option>
+            {lojas.map((nome) => (
+              <option key={nome} value={nome}>{nome}</option>
+            ))}
+          </select>
+        )}
+        {favorita && <span className="monitor-favorita-tag">favorita</span>}
+        {/* Data na linha do nome, e não num rodapé próprio: é metadado do card, e
+            uma linha inteira só para ela custava altura em dezenas de cards. */}
+        {item.updated_at && (
+          <span className="monitor-card-data" title="Última atualização">
+            {item.updated_at}
+          </span>
+        )}
+      </div>
 
+      {/* O restante do card é o alvo de clique (abre o Dashboard da empresa), mas a
+          estrela e a combobox ficam FORA dele: aninhar botão/select em botão é HTML
+          inválido e o clique neles abriria o Dashboard sem querer. */}
+      <button type="button" className="monitor-card-link" onClick={() => onAbrir(item.empresa)}>
         {semBase ? (
           <div className="monitor-card-sem-base">
             <strong>{item.estado === 'sem_base' ? 'Base não gerada' : 'Erro ao ler'}</strong>
             <span>{item.detalhe ?? 'Dados indisponíveis para esta empresa.'}</span>
           </div>
+        ) : item.indisponivel_por_loja ? (
+          // Lucro bruto não é filtrável por loja — o summary só soma CMV por
+          // período no agregado geral (ver monitor_empresas.py no backend).
+          <div className="monitor-card-sem-base">
+            <strong>Indisponível para esta loja</strong>
+            <span>{item.detalhe ?? 'Lucro bruto só é calculado para a empresa inteira.'}</span>
+          </div>
+        ) : gauge ? (
+          // Velocímetro é o próprio hero do card: o número já aparece grande
+          // dentro dele, então o topo só precisa do rótulo e da variação — repetir
+          // o valor nas duas alturas do card seria redundante.
+          <>
+            <div className="monitor-kpi monitor-kpi-gauge">
+              <span>{ROTULOS_METRICA[metrica]}</span>
+              <VariacaoBadge variacao={variacao} classe={classeVariacao} item={item} />
+            </div>
+            <GaugeMonitor valor={destaque} />
+
+            <div className="monitor-card-metricas" aria-label="Resumo de receita não harmonizada">
+              <div className="monitor-card-metrica">
+                <span>Receita não harm.</span>
+                <strong title={formatCurrency(item.receita_nao_harmonizada ?? 0)}>
+                  {formatCompacto(item.receita_nao_harmonizada ?? 0, true)}
+                </strong>
+                <small>de {formatCompacto(item.receita_total ?? 0, true)}</small>
+              </div>
+              <div className="monitor-card-metrica">
+                <span>Produtos</span>
+                <strong title={`${item.produtos_nao_harmonizados ?? 0} de ${item.produtos_total ?? 0} produtos sem harmonização`}>
+                  {item.produtos_nao_harmonizados ?? 0} de {item.produtos_total ?? 0}
+                </strong>
+                <small>sem harmonização</small>
+              </div>
+              <div className="monitor-card-metrica">
+                <span>Último</span>
+                <strong title={ultimoPonto ? formatPercent(ultimoPonto.valor, 1) : undefined}>
+                  {ultimoPonto ? formatPercent(ultimoPonto.valor, 1) : '—'}
+                </strong>
+                <small>{ultimoPonto?.rotulo || 'sem período'}</small>
+              </div>
+            </div>
+          </>
         ) : (
           <>
             <div className="monitor-kpi">
@@ -274,30 +395,7 @@ function EmpresaMiniCardInterno({
                   lê junto — quanto foi e se subiu ou caiu. */}
               <div className="monitor-kpi-linha">
                 <strong>{moeda ? formatCurrency(destaque) : formatNumber(destaque)}</strong>
-                {variacao != null ? (
-                  <span
-                    className={`monitor-variacao ${classeVariacao}`}
-                    title={
-                      item.ano_comparado
-                        ? `${item.meses_comparados} ${item.meses_comparados === 1 ? 'mês' : 'meses'} de ${item.ano_comparado} vs ${item.ano_comparado - 1}`
-                        : undefined
-                    }
-                  >
-                    {variacao >= 0 ? <ArrowUp size={12} /> : <ArrowDown size={12} />}
-                    {formatPercent(variacao)}
-                  </span>
-                ) : (
-                  <span
-                    className="monitor-variacao is-neutra"
-                    title={
-                      item.base_comparavel === false
-                        ? 'O ano anterior teve movimento irrisório nesses meses — o percentual não ajudaria a decidir.'
-                        : 'Sem os mesmos meses no ano anterior para comparar.'
-                    }
-                  >
-                    sem base
-                  </span>
-                )}
+                <VariacaoBadge variacao={variacao} classe={classeVariacao} item={item} />
               </div>
             </div>
 
@@ -326,7 +424,6 @@ function EmpresaMiniCardInterno({
                 <small>{picoPonto?.rotulo || 'sem período'}</small>
               </div>
             </div>
-
           </>
         )}
       </button>

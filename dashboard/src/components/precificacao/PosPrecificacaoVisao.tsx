@@ -21,7 +21,6 @@ import {
 import { LeituraFaixa } from '../LeituraFaixa';
 import {
   obterPosPrecificacao,
-  type ChaveJanelaFixa,
   type ItemPosPrecificacao,
   type JanelaFixaPrecificacao,
   type PontoSeriePrecificacao,
@@ -300,12 +299,6 @@ export function PosPrecificacaoVisao({ empresa, loja, modoGrafico }: Props) {
         />
       </section>
 
-      <section className="pos-precificacao-janelas" aria-label={`Semana, quinzena e mês pós precificação de ${rotuloEscopo}`}>
-        {JANELAS_FIXAS_UI.map(({ chave, titulo }) => (
-          <JanelaFixaCard key={chave} titulo={titulo} janela={kpis.janelas[chave]} />
-        ))}
-      </section>
-
       <section className="glass-card glass-card-flat estoque-visao-card">
         <header className="estoque-card-topo pos-precificacao-lista-topo">
           <div>
@@ -410,49 +403,6 @@ function Metro({
       <strong>{valor}</strong>
       <em className={alta == null ? '' : alta ? 'is-alta' : 'is-queda'}>{delta}</em>
     </div>
-  );
-}
-
-const JANELAS_FIXAS_UI: { chave: ChaveJanelaFixa; titulo: string }[] = [
-  { chave: 'semana', titulo: 'Semana pós precificação' },
-  { chave: 'quinzena', titulo: 'Quinzena pós precificação' },
-  { chave: 'mes', titulo: 'Mês pós precificação' },
-];
-
-/** Compara N dias depois do corte contra os N dias imediatamente antes —
- *  mesmo comprimento nos dois lados, ao contrário do card "Lucro depois"
- *  (que usa a janela antes/depois inteira). Responde "melhorou logo na
- *  largada?", não "melhorou no total". */
-function JanelaFixaCard({ titulo, janela }: { titulo: string; janela: JanelaFixaPrecificacao }) {
-  const gap = janela.gap_alvo_pp;
-  const semVenda = janela.receita_depois <= 0;
-  return (
-    <article className="glass-card glass-card-flat pos-precificacao-janela-card">
-      <header>
-        <h2>{titulo}</h2>
-        {!janela.completa && <span className="pos-precificacao-janela-aberta">em andamento</span>}
-      </header>
-      <div className="pos-precificacao-metros pos-precificacao-janela-corpo">
-        <Metro
-          rotulo="Lucro"
-          valor={formatCurrency(janela.lucro_depois)}
-          delta={semVenda ? 'sem venda' : textoSinal(janela.variacao_lucro_pct)}
-          alta={semVenda ? undefined : (janela.variacao_lucro_pct ?? 0) >= 0}
-        />
-        <Metro
-          rotulo="Margem vs alvo"
-          valor={gap == null ? '—' : textoSinal(gap, 'pp')}
-          delta={janela.margem_depois == null ? 'sem venda' : `${formatPercent(janela.margem_depois, 1)} · alvo ${janela.margem_alvo != null ? formatPercent(janela.margem_alvo, 1) : '—'}`}
-          alta={gap == null ? undefined : gap >= 0}
-        />
-        <Metro
-          rotulo="Quantidade"
-          valor={formatQtd(janela.qtd_depois)}
-          delta={semVenda ? 'sem venda' : textoSinal(janela.variacao_qtd_pct)}
-          alta={semVenda ? undefined : (janela.variacao_qtd_pct ?? 0) >= 0}
-        />
-      </div>
-    </article>
   );
 }
 
@@ -817,6 +767,21 @@ function GraficoSerie({
   );
 }
 
+function JanelaMini({ titulo, janela }: { titulo: string; janela: JanelaFixaPrecificacao }) {
+  const semVenda = janela.receita_depois <= 0;
+  const alta = !semVenda && (janela.variacao_lucro_pct ?? 0) >= 0;
+  return (
+    <div className={`pos-precificacao-linha-janela${semVenda ? ' is-neutro' : alta ? ' is-alta' : ' is-queda'}`}>
+      <span className="pos-precificacao-linha-janela-titulo">
+        {titulo}
+        {!janela.completa && <i>em andamento</i>}
+      </span>
+      <strong>{formatCurrency(janela.lucro_depois)}</strong>
+      <em>{semVenda ? 'sem venda' : textoSinal(janela.variacao_lucro_pct)}</em>
+    </div>
+  );
+}
+
 function LinhaPrecificada({
   item,
   maxReceita,
@@ -857,6 +822,10 @@ function LinhaPrecificada({
             {' · '}
             {ROTULO_SITUACAO[item.situacao]}
           </span>
+        </div>
+        <div className="pos-precificacao-linha-janelas">
+          <JanelaMini titulo="Semana" janela={item.janelas.semana} />
+          <JanelaMini titulo="Mês" janela={item.janelas.mes} />
         </div>
       </button>
     </li>

@@ -2,6 +2,9 @@ fastapi
 uvicorn[standard]
 pandas
 numpy
+# Motor de leitura/escrita parquet do pandas — cache do parse de CSV por empresa
+# (ver backend/cache_atacado.py).
+pyarrow
 openpyxl
 # Leitor de xlsx ~7x mais rapido que o openpyxl (98s -> 13s numa base de
 # 54 MB). Custa 1,6 MB no pacote; ver engine.analise_funil._engine_excel.

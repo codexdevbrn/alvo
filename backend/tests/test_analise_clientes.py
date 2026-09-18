@@ -5,7 +5,7 @@ import datetime as _dt
 import pandas as pd
 
 import periodo_mensal
-from analise_clientes import montar_painel_clientes
+from analise_clientes import causa_migracao_cliente, montar_painel_clientes
 
 
 class _DataFixa:
@@ -201,3 +201,41 @@ def test_base_sem_cliente_responde_indisponivel():
     assert painel["disponivel"] is False
     assert "Cliente" in painel["mensagem"]
     assert painel["movimento"] == []
+
+
+def test_causa_migracao_cliente_aponta_produto_abandonado_e_novo():
+    """ALVO cai de faixa ao abandonar o produto que era toda a receita dele,
+    e sobe de volta ao retomá-lo — cada evento com a causa provável."""
+    meses = ("2026-01", "2026-02", "2026-03")
+    linhas = [
+        {
+            "Cliente": f"Filler {indice}", "Periodo_Mensal": mes,
+            "Receita": 10, "QTD": 1, "descricao": "Produto Base",
+        }
+        for indice in range(10) for mes in meses
+    ]
+    linhas += [
+        {"Cliente": "ALVO", "Periodo_Mensal": "2026-01", "Receita": 90, "QTD": 9, "descricao": "Lubrificante Premium"},
+        {"Cliente": "ALVO", "Periodo_Mensal": "2026-02", "Receita": 5, "QTD": 1, "descricao": "Filtro Oleo"},
+        {"Cliente": "ALVO", "Periodo_Mensal": "2026-03", "Receita": 90, "QTD": 9, "descricao": "Lubrificante Premium"},
+    ]
+    df = pd.DataFrame(linhas)
+
+    resultado = causa_migracao_cliente(df, "ALVO", cortes=(30.0, 50.0, 60.0), modo_periodo="completo")
+
+    assert resultado["disponivel"] is True
+    eventos = resultado["eventos"]
+    assert [evento["direcao"] for evento in eventos] == ["Desceu", "Subiu"]
+
+    desceu = eventos[0]
+    assert (desceu["faixa_anterior"], desceu["faixa_atual"]) == ("Grupo 1", "Demais")
+    assert "Lubrificante Premium" in desceu["causa"]
+
+    subiu = eventos[1]
+    assert (subiu["faixa_anterior"], subiu["faixa_atual"]) == ("Demais", "Grupo 1")
+    assert "Lubrificante Premium" in subiu["causa"]
+
+
+def test_causa_migracao_cliente_sem_dados_responde_indisponivel():
+    resultado = causa_migracao_cliente(pd.DataFrame(), "ALVO", cortes=(30.0, 50.0, 60.0))
+    assert resultado == {"disponivel": False, "cliente": "ALVO", "eventos": []}

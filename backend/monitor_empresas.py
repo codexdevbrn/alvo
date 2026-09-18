@@ -29,6 +29,7 @@ from dashboard_summary import (
     caminho_summary_dashboard,
     caminho_summary_dashboard_gz,
 )
+from engine.analise_funil import eh_produto_nao_harmonizado
 
 logger = logging.getLogger(__name__)
 
@@ -39,8 +40,9 @@ NOME_RESUMO_MONITOR = "resumo_monitor.json"
 #: Bumpar invalida todo `resumo_monitor.json` já gravado, que é regerado do
 #: summary na primeira leitura. 2: passou a carregar a lista de lojas.
 #: 3: passou a carregar CMV/lucro bruto por período. 4: passou a carregar dias
-#: com venda real por período (`dias_venda`).
-VERSAO_RESUMO = 4
+#: com venda real por período (`dias_venda`). 5: passou a carregar receita não
+#: harmonizada (total e por loja) e série por loja de receita/quantidade/clientes.
+VERSAO_RESUMO = 5
 
 #: Métricas oferecidas pela tela. A chave é o que vem do filtro; o valor é o campo
 #: correspondente na série do resumo. `receita_dia`/`lucro_dia` são DERIVADAS
@@ -56,13 +58,23 @@ METRICAS_MONITOR = {
     "lucro_dia": "lucro",
 }
 
+#: Métrica calculada à parte (ver `_montar_card_nao_harmonizado`) — não tem campo
+#: fixo na série porque o valor exibido é uma razão (receita não harmonizada ÷
+#: receita total da janela), não um campo somável ponto a ponto.
+METRICA_NAO_HARMONIZADO = "nao_harmonizado"
+
+#: Todas as métricas que o endpoint aceita — usado só para validar o parâmetro.
+METRICAS_VALIDAS = frozenset(METRICAS_MONITOR) | {METRICA_NAO_HARMONIZADO}
+
 #: Métricas cuja soma não faz sentido (média não se soma) — o card mostra a média
 #: ponderada da janela em vez do total.
 METRICAS_MEDIA = {"receita_dia", "lucro_dia"}
 
 #: Métricas que exigem CMV na base — empresa sem a coluna some do card em vez de
 #: mostrar lucro == receita (CMV ausente vira 0 no summary, o que mascararia o
-#: dado em vez de sinalizar a ausência).
+#: dado em vez de sinalizar a ausência). Também são as métricas que não podem
+#: ser filtradas por loja: o summary só soma CMV por período no agregado geral
+#: (`dashboard_summary.gerar_summary`), sem dimensão de loja.
 METRICAS_COM_CMV = {"lucro", "lucro_dia"}
 
 
@@ -133,33 +145,93 @@ def _ler_summary(caminho: Path) -> dict:
 
 
 def _resumo_de_summary(summary: dict) -> dict:
-    """Extrai a série por período e os totais do summary completo.
+    """Extrai a série por período (geral e por loja) e os totais do summary completo.
 
-    `monthly` já traz receita por mês. Quantidade e clientes distintos saem de
-    `rows` ([p, s, c, m, d, r, rev, qty]), agregando pelo índice de período — é o
-    único lugar onde esses valores existem por mês.
+    `monthly` já traz receita/CMV por mês (agregado geral, sem dimensão de loja).
+    Quantidade, clientes distintos e os números de "não harmonizado" saem de
+    `rows` ([p, s, c, m, d, r, rev, qty]), varrendo linha a linha — é o único
+    lugar onde esses cruzamentos (por loja, por produto) existem.
+
+    A dimensão de loja cobre receita/quantidade/clientes/não-harmonizado, mas
+    NÃO cmv/lucro: `dashboard_summary.gerar_summary` só soma CMV por período no
+    agregado geral, então lucro por loja não é uma conta possível com o summary
+    atual (ver `METRICAS_COM_CMV` e `montar_card`).
     """
     monthly = summary.get("monthly") or []
     periodos = summary.get("maps", {}).get("p") or []
+    lojas_mapa = [str(nome) for nome in (summary.get("maps", {}).get("s") or [])]
+    produtos_mapa = summary.get("maps", {}).get("d") or []
     rows = summary.get("rows") or []
 
+    # Regra única de harmonização (mesma do Analisador/Dashboard), calculada uma
+    # vez por produto do catálogo (índice `d`), não por linha da base.
+    produto_nao_harmonizado = [eh_produto_nao_harmonizado(nome) for nome in produtos_mapa]
+
     qtd_por_periodo: dict[int, int] = {}
-    clientes_por_periodo: dict[int, set[int]] = {}
+    clientes_por_periodo: dict[int, set] = {}
+
+    produtos_vistos: set[int] = set()
+    produtos_nh_vistos: set[int] = set()
+    rev_total = 0.0
+    rev_nh_total = 0.0
+    rev_nh_por_periodo: dict[int, float] = {}
+
+    produtos_vistos_por_loja: dict[str, set[int]] = {}
+    produtos_nh_vistos_por_loja: dict[str, set[int]] = {}
+    rev_por_loja: dict[str, float] = {}
+    rev_nh_por_loja: dict[str, float] = {}
+    rev_por_loja_periodo: dict[tuple[str, int], float] = {}
+    rev_nh_por_loja_periodo: dict[tuple[str, int], float] = {}
+    qtd_por_loja_periodo: dict[tuple[str, int], int] = {}
+    clientes_por_loja_periodo: dict[tuple[str, int], set] = {}
+
     for linha in rows:
-        # Linhas curtas (formato antigo) não têm qty: conta cliente e ignora qty.
         indice_periodo = linha[0]
         periodo = periodos[indice_periodo] if indice_periodo < len(periodos) else None
         if periodo is None:
             continue
+
+        indice_loja = linha[1]
+        loja_nome = lojas_mapa[indice_loja] if indice_loja < len(lojas_mapa) else None
+        indice_produto = linha[4]
+        rev_linha = float(linha[6] or 0)
+        # Linhas curtas (formato antigo) não têm qty: conta cliente/receita e ignora qty.
+        qty_linha = int(linha[7]) if len(linha) > 7 else 0
+        nao_harmonizado = (
+            indice_produto < len(produto_nao_harmonizado)
+            and produto_nao_harmonizado[indice_produto]
+        )
+
         if len(linha) > 7:
-            qtd_por_periodo[periodo] = qtd_por_periodo.get(periodo, 0) + int(linha[7])
+            qtd_por_periodo[periodo] = qtd_por_periodo.get(periodo, 0) + qty_linha
         clientes_por_periodo.setdefault(periodo, set()).add(linha[2])
+
+        produtos_vistos.add(indice_produto)
+        rev_total += rev_linha
+        if nao_harmonizado:
+            produtos_nh_vistos.add(indice_produto)
+            rev_nh_total += rev_linha
+            rev_nh_por_periodo[periodo] = rev_nh_por_periodo.get(periodo, 0.0) + rev_linha
+
+        if loja_nome is not None:
+            chave = (loja_nome, periodo)
+            if len(linha) > 7:
+                qtd_por_loja_periodo[chave] = qtd_por_loja_periodo.get(chave, 0) + qty_linha
+            clientes_por_loja_periodo.setdefault(chave, set()).add(linha[2])
+            rev_por_loja_periodo[chave] = rev_por_loja_periodo.get(chave, 0.0) + rev_linha
+            rev_por_loja[loja_nome] = rev_por_loja.get(loja_nome, 0.0) + rev_linha
+            produtos_vistos_por_loja.setdefault(loja_nome, set()).add(indice_produto)
+            if nao_harmonizado:
+                produtos_nh_vistos_por_loja.setdefault(loja_nome, set()).add(indice_produto)
+                rev_nh_por_loja[loja_nome] = rev_nh_por_loja.get(loja_nome, 0.0) + rev_linha
+                rev_nh_por_loja_periodo[chave] = rev_nh_por_loja_periodo.get(chave, 0.0) + rev_linha
 
     serie = []
     for mes in monthly:
         periodo = mes.get("pid")
         rev = round(float(mes.get("rev") or 0.0), 2)
         cmv = round(float(mes.get("cmv") or 0.0), 2)
+        rev_nh_mes = round(rev_nh_por_periodo.get(periodo, 0.0), 2)
         entrada = {
             "periodo": periodo,
             "rotulo": mes.get("name"),
@@ -168,6 +240,8 @@ def _resumo_de_summary(summary: dict) -> dict:
             "clientes": len(clientes_por_periodo.get(periodo, ())),
             "cmv": cmv,
             "lucro": round(rev - cmv, 2),
+            "rev_nao_harmonizada": rev_nh_mes,
+            "pct_nao_harmonizado": round(rev_nh_mes / rev * 100, 2) if rev else 0.0,
         }
         dias_venda = mes.get("dias_com_venda")
         if dias_venda is not None:
@@ -175,30 +249,70 @@ def _resumo_de_summary(summary: dict) -> dict:
         serie.append(entrada)
     serie.sort(key=lambda item: item["periodo"] or 0)
 
+    # Série por loja: mesmo grão temporal do agregado, sem cmv/lucro (ver
+    # docstring). `rotulo` vem do mesmo `monthly`, casado pelo período.
+    rotulo_por_periodo = {mes.get("pid"): mes.get("name") for mes in monthly}
+    series_por_loja: dict[str, list[dict]] = {}
+    for loja_nome in lojas_mapa:
+        pontos = []
+        for periodo in periodos:
+            chave = (loja_nome, periodo)
+            if chave not in rev_por_loja_periodo and chave not in qtd_por_loja_periodo:
+                continue
+            rev_ponto = round(rev_por_loja_periodo.get(chave, 0.0), 2)
+            rev_nh_ponto = round(rev_nh_por_loja_periodo.get(chave, 0.0), 2)
+            pontos.append({
+                "periodo": periodo,
+                "rotulo": rotulo_por_periodo.get(periodo, str(periodo)),
+                "rev": rev_ponto,
+                "qty": int(qtd_por_loja_periodo.get(chave, 0)),
+                "clientes": len(clientes_por_loja_periodo.get(chave, ())),
+                "rev_nao_harmonizada": rev_nh_ponto,
+                "pct_nao_harmonizado": round(rev_nh_ponto / rev_ponto * 100, 2) if rev_ponto else 0.0,
+            })
+        pontos.sort(key=lambda item: item["periodo"] or 0)
+        series_por_loja[loja_nome] = pontos
+
+    nao_harmonizado_por_loja = {
+        loja_nome: {
+            "produtos_total": len(produtos_vistos_por_loja.get(loja_nome, ())),
+            "produtos_nao_harmonizados": len(produtos_nh_vistos_por_loja.get(loja_nome, ())),
+            "receita_total": round(rev_por_loja.get(loja_nome, 0.0), 2),
+            "receita_nao_harmonizada": round(rev_nh_por_loja.get(loja_nome, 0.0), 2),
+        }
+        for loja_nome in lojas_mapa
+    }
+
     kpis = summary.get("kpis") or {}
-    # `maps.s` é a lista de lojas ordenada por receita. Vem junto porque o
-    # seletor de loja da sidebar aparece em toda tela, inclusive no Dashboard
-    # público: tirar a lista da base carregaria o XLSX inteiro só para preencher
-    # um combobox, e é justamente isso que o summary pré-gerado evita.
-    lojas = [str(nome) for nome in (summary.get("maps", {}).get("s") or [])]
     cmv_total = round(float(kpis.get("cmv") or 0.0), 2)
-    rev_total = round(float(kpis.get("rev") or 0.0), 2)
+    rev_total_kpi = round(float(kpis.get("rev") or 0.0), 2)
     return {
         "versao": VERSAO_RESUMO,
         "updated_at": summary.get("updated_at"),
-        "lojas": lojas,
+        # `maps.s` é a lista de lojas ordenada por receita. Vem junto porque o
+        # seletor de loja (sidebar e, agora, o card do Monitoramento) precisa
+        # dela sem carregar o XLSX/summary inteiro para preencher um combobox.
+        "lojas": lojas_mapa,
         "serie": serie,
+        "series_por_loja": series_por_loja,
         # Empresa sem coluna CMV no CSV chega com cmv == 0 em todo período (ver
         # dashboard_summary.py) — sem essa flag, lucro apareceria == receita, o
         # que é dado errado apresentado como se fosse certo.
         "tem_cmv": cmv_total > 0,
         "totais": {
-            "rev": rev_total,
+            "rev": rev_total_kpi,
             "qty": int(kpis.get("qty") or 0),
             "clientes": len(set().union(*clientes_por_periodo.values())) if clientes_por_periodo else 0,
             "cmv": cmv_total,
-            "lucro": round(rev_total - cmv_total, 2),
+            "lucro": round(rev_total_kpi - cmv_total, 2),
         },
+        "nao_harmonizado": {
+            "produtos_total": len(produtos_vistos),
+            "produtos_nao_harmonizados": len(produtos_nh_vistos),
+            "receita_total": round(rev_total, 2),
+            "receita_nao_harmonizada": round(rev_nh_total, 2),
+        },
+        "nao_harmonizado_por_loja": nao_harmonizado_por_loja,
     }
 
 
@@ -262,6 +376,19 @@ def _janela(serie: list[dict], meses: int | None) -> list[dict]:
     return serie[-meses:]
 
 
+def _serie_da_janela(
+    resumo: dict, *, loja: str | None,
+) -> list[dict]:
+    """Série-fonte para `montar_card`: agregado geral ou de uma loja específica.
+
+    Loja sem dado no período (ou nome que não existe mais na fonte) devolve
+    série vazia — o card mostra "sem período no intervalo" em vez de quebrar.
+    """
+    if loja:
+        return (resumo.get("series_por_loja") or {}).get(loja) or []
+    return resumo.get("serie") or []
+
+
 def montar_card(
     empresa: str,
     resumo: dict,
@@ -269,6 +396,7 @@ def montar_card(
     metrica: str = "receita",
     meses: int | None = 12,
     hoje: date | None = None,
+    loja: str | None = None,
 ) -> dict:
     """Dados de um minicard: série da métrica pedida, total e variação vs ano anterior.
 
@@ -276,11 +404,30 @@ def montar_card(
     contra jan–ago, não contra o ano fechado). Comparar janela parcial com ano cheio
     faz o ano anterior parecer maior só por ter mais meses — erro que já apareceu no
     explorador do Analisador.
+
+    `loja`, quando informada, restringe a série a uma loja (ver `_serie_da_janela`).
+    Lucro/lucro bruto por dia não são filtráveis por loja — o summary só soma CMV
+    por período no agregado geral — e o card volta com `indisponivel_por_loja`
+    em vez de mostrar lucro == receita da loja (dado errado disfarçado de certo).
     """
+    if metrica == METRICA_NAO_HARMONIZADO:
+        return _montar_card_nao_harmonizado(empresa, resumo, meses=meses, hoje=hoje, loja=loja)
+
+    if loja and metrica in METRICAS_COM_CMV:
+        return {
+            "empresa": empresa,
+            "estado": "ok",
+            "metrica": metrica,
+            "indisponivel_por_loja": True,
+            "detalhe": "Lucro bruto não é calculado por loja — o CMV só existe agregado por empresa.",
+            "updated_at": resumo.get("updated_at"),
+            "lojas": resumo.get("lojas") or [],
+        }
+
     campo = METRICAS_MONITOR.get(metrica, "rev")
     inteiro = campo in ("qty", "clientes")
     eh_media = metrica in METRICAS_MEDIA
-    serie = resumo.get("serie") or []
+    serie = _serie_da_janela(resumo, loja=loja)
     janela = _janela(serie, meses)
 
     def valor(ponto: dict) -> float | int:
@@ -380,4 +527,90 @@ def montar_card(
         ),
         "dias_venda_janela": dias_venda_janela if eh_media else None,
         "meses_serie": len(serie),
+        "lojas": resumo.get("lojas") or [],
+    }
+
+
+def _montar_card_nao_harmonizado(
+    empresa: str,
+    resumo: dict,
+    *,
+    meses: int | None,
+    hoje: date | None,
+    loja: str | None = None,
+) -> dict:
+    """Card da métrica "% receita não harmonizada" (ver `METRICA_NAO_HARMONIZADO`).
+
+    O valor exibido é receita não harmonizada ÷ receita total da janela — uma
+    razão entre duas somas, não um campo que se soma ponto a ponto — por isso o
+    card é montado à parte em vez de reaproveitar a matemática genérica de
+    `montar_card`. "Não harmonizado" segue a MESMA regra do Analisador/Dashboard
+    (`engine.analise_funil.eh_produto_nao_harmonizado`), aplicada por produto do
+    catálogo (`maps.d`), não por linha de venda.
+    """
+    serie = _serie_da_janela(resumo, loja=loja)
+    if loja:
+        nh_info = (resumo.get("nao_harmonizado_por_loja") or {}).get(loja) or {}
+    else:
+        nh_info = resumo.get("nao_harmonizado") or {}
+
+    janela = _janela(serie, meses)
+    valores = [round(float(p.get("pct_nao_harmonizado") or 0.0), 2) for p in janela]
+    rotulos = [p.get("rotulo") for p in janela]
+
+    rev_nh_janela = sum(float(p.get("rev_nao_harmonizada") or 0.0) for p in janela)
+    rev_janela = sum(float(p.get("rev") or 0.0) for p in janela)
+    total = round(rev_nh_janela / rev_janela * 100, 2) if rev_janela else 0.0
+
+    periodos_janela = [int(p["periodo"]) for p in janela if p.get("periodo")]
+    ano_atual = max((p // 100 for p in periodos_janela), default=None)
+    meses_atuais = {p % 100 for p in periodos_janela if p // 100 == ano_atual}
+
+    pontos_atuais: list[dict] = []
+    pontos_anteriores: list[dict] = []
+    tem_anterior = False
+    if ano_atual is not None:
+        for ponto in serie:
+            periodo = int(ponto.get("periodo") or 0)
+            ano, mes = periodo // 100, periodo % 100
+            if mes not in meses_atuais:
+                continue
+            if ano == ano_atual:
+                pontos_atuais.append(ponto)
+            elif ano == ano_atual - 1:
+                pontos_anteriores.append(ponto)
+                tem_anterior = True
+
+    def pct_agregado(pontos: list[dict]) -> float:
+        rev = sum(float(p.get("rev") or 0) for p in pontos)
+        nh = sum(float(p.get("rev_nao_harmonizada") or 0) for p in pontos)
+        return round(nh / rev * 100, 2) if rev else 0.0
+
+    # Variação em PONTOS percentuais (18% − 14% = +4), não variação relativa: a
+    # métrica já é um percentual, então "subiu 4 pontos" é a leitura certa —
+    # diferente de tratar 14%→18% como "+28%", que é o que a fórmula genérica
+    # (usada por receita/qtd/etc.) daria.
+    variacao = round(pct_agregado(pontos_atuais) - pct_agregado(pontos_anteriores), 2) if tem_anterior else None
+
+    return {
+        "empresa": empresa,
+        "estado": "ok",
+        "metrica": METRICA_NAO_HARMONIZADO,
+        "rotulos": rotulos,
+        "valores": valores,
+        "total": total,
+        "media": total,
+        "variacao_pct": variacao,
+        "base_comparavel": tem_anterior or None,
+        "updated_at": resumo.get("updated_at"),
+        "ultimo_periodo": janela[-1].get("periodo") if janela else None,
+        "ultimo_periodo_parcial": _eh_mes_corrente(
+            janela[-1].get("periodo") if janela else None, hoje
+        ),
+        "meses_serie": len(serie),
+        "produtos_total": int(nh_info.get("produtos_total") or 0),
+        "produtos_nao_harmonizados": int(nh_info.get("produtos_nao_harmonizados") or 0),
+        "receita_nao_harmonizada": round(float(nh_info.get("receita_nao_harmonizada") or 0.0), 2),
+        "receita_total": round(float(nh_info.get("receita_total") or 0.0), 2),
+        "lojas": resumo.get("lojas") or [],
     }

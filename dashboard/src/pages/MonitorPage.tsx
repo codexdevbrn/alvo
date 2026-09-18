@@ -23,7 +23,9 @@ const MESES_PADRAO = 12;
 type OrdenacaoMonitor = 'nome' | 'valor' | 'variacao';
 type EscopoMonitor = 'favoritas' | 'todas';
 
-const METRICAS_VALIDAS: MetricaMonitor[] = ['receita', 'qtd', 'clientes', 'receita_dia', 'lucro', 'lucro_dia'];
+const METRICAS_VALIDAS: MetricaMonitor[] = [
+  'receita', 'qtd', 'clientes', 'receita_dia', 'lucro', 'lucro_dia', 'nao_harmonizado',
+];
 
 function lerMetrica(): MetricaMonitor {
   const valor = localStorage.getItem(LS_METRICA);
@@ -64,6 +66,13 @@ export default function MonitorPage() {
   const [favoritas, setFavoritas] = useState<string[]>([]);
   const [salvandoFavorita, setSalvandoFavorita] = useState(false);
 
+  // Loja escolhida por empresa (combobox no card) e o card recalculado para
+  // ela — guardado à parte do `dados` da métrica geral, que continua servindo
+  // "todas as lojas" pros cards sem seleção.
+  const [lojaPorEmpresa, setLojaPorEmpresa] = useState<Record<string, string>>({});
+  const [cardPorLojaOverride, setCardPorLojaOverride] = useState<Record<string, EmpresaMonitor>>({});
+  const [carregandoLoja, setCarregandoLoja] = useState<Record<string, boolean>>({});
+
   useEffect(() => {
     localStorage.setItem(LS_METRICA, metrica);
     localStorage.setItem(LS_MESES, String(meses));
@@ -91,6 +100,44 @@ export default function MonitorPage() {
   useEffect(() => {
     void carregar(false);
   }, [carregar]);
+
+  // Troca de métrica ou período invalida os cards recalculados por loja (eram
+  // números de outro contexto) — cada combobox volta para "Todas as lojas" em
+  // vez de continuar mostrando um valor que não corresponde mais ao filtro.
+  useEffect(() => {
+    setLojaPorEmpresa({});
+    setCardPorLojaOverride({});
+    setCarregandoLoja({});
+  }, [metrica, meses]);
+
+  /** Combobox de loja do card: 'todas' volta a mostrar o card da métrica geral;
+   *  uma loja específica busca só aquela empresa recalculada para a loja. */
+  const selecionarLoja = useCallback((empresa: string, loja: string) => {
+    setLojaPorEmpresa((prev) => ({ ...prev, [empresa]: loja }));
+
+    if (!loja) {
+      setCardPorLojaOverride((prev) => {
+        if (!(empresa in prev)) return prev;
+        const proximo = { ...prev };
+        delete proximo[empresa];
+        return proximo;
+      });
+      return;
+    }
+
+    setCarregandoLoja((prev) => ({ ...prev, [empresa]: true }));
+    obterMonitorEmpresas({ metrica, meses, empresa, loja })
+      .then((resposta) => {
+        const card = resposta.empresas[0];
+        if (card) setCardPorLojaOverride((prev) => ({ ...prev, [empresa]: card }));
+      })
+      .catch((e) => {
+        setErro(e instanceof Error ? e.message : `Não foi possível carregar ${empresa} · ${loja}.`);
+      })
+      .finally(() => {
+        setCarregandoLoja((prev) => ({ ...prev, [empresa]: false }));
+      });
+  }, [metrica, meses]);
 
   /** Atualização otimista: estrela reage sem esperar rede e reverte se salvar falhar. */
   const alternarFavorita = async (empresa: string) => {
@@ -120,7 +167,12 @@ export default function MonitorPage() {
     navigate('/');
   }, [navigate]);
 
-  const empresas = useMemo<EmpresaMonitor[]>(() => dados?.empresas ?? [], [dados]);
+  const empresas = useMemo(() => dados?.empresas ?? [], [dados]);
+  // Posição no grid usa sempre o card da métrica geral (todas as lojas), nunca
+  // o recalculado por loja — senão trocar a loja de UM card reordenava o grid
+  // inteiro (a variação daquele card mudava, "Maior queda" reordenava tudo) e
+  // parecia a tela inteira recarregando. A loja só afeta o que aparece DENTRO
+  // do card, não a posição dele na lista.
   const empresasVisiveis = useMemo(() => {
     const termo = normalizarBusca(busca.trim());
     return empresas
@@ -135,8 +187,9 @@ export default function MonitorPage() {
             - (b.variacao_pct ?? Number.POSITIVE_INFINITY);
         }
         return a.empresa.localeCompare(b.empresa, 'pt-BR', { sensitivity: 'base' });
-      });
-  }, [busca, empresas, escopo, favoritas, metrica, ordenacao]);
+      })
+      .map((item) => cardPorLojaOverride[item.empresa] ?? item);
+  }, [busca, empresas, escopo, favoritas, metrica, ordenacao, cardPorLojaOverride]);
 
   const emQueda = empresasVisiveis.filter((item) => (item.variacao_pct ?? 0) < 0).length;
   const emAlta = empresasVisiveis.filter((item) => (item.variacao_pct ?? 0) > 0).length;
@@ -195,6 +248,7 @@ export default function MonitorPage() {
               <option value="clientes">Clientes</option>
               <option value="lucro">Lucro bruto</option>
               <option value="lucro_dia">Média de lucro bruto por dia com venda</option>
+              <option value="nao_harmonizado">% receita não harmonizada</option>
             </select>
           </label>
 
@@ -267,7 +321,15 @@ export default function MonitorPage() {
         {(metrica === 'lucro' || metrica === 'lucro_dia') && (
           <p className="monitor-nota">
             Lucro bruto = receita − CMV. Empresas sem CMV cadastrado na fonte não
-            aparecem nesta métrica.
+            aparecem nesta métrica, e a métrica não é filtrável por loja (o CMV só
+            existe agregado por empresa).
+          </p>
+        )}
+
+        {metrica === 'nao_harmonizado' && (
+          <p className="monitor-nota">
+            Receita de produtos sem descrição harmonizada (PRODUTO.csv) ÷ receita
+            total do período. A variação é em pontos percentuais, não relativa.
           </p>
         )}
 
@@ -315,6 +377,9 @@ export default function MonitorPage() {
                 metrica={metrica}
                 favorita={favoritas.includes(item.empresa)}
                 salvandoFavorita={salvandoFavorita}
+                loja={lojaPorEmpresa[item.empresa] ?? ''}
+                carregandoLoja={carregandoLoja[item.empresa] ?? false}
+                onSelecionarLoja={selecionarLoja}
                 onAlternarFavorita={(empresa) => void alternarFavorita(empresa)}
                 onAbrir={abrirDashboard}
               />

@@ -10,6 +10,7 @@ import MercadologicoPage from './pages/MercadologicoPage';
 import ClientesPage from './pages/ClientesPage';
 import VendedoresPage from './pages/VendedoresPage';
 import EstoquePage from './pages/EstoquePage';
+import DiagnosticoPage from './pages/DiagnosticoPage';
 import DespesasPage from './pages/DespesasPage';
 import AssistenteIAPage from './pages/AssistenteIAPage';
 import PosPrecificacaoPage from './pages/PosPrecificacaoPage';
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/clientes" element={<ClientesPage />} />
           <Route path="/vendedores" element={<VendedoresPage />} />
           <Route path="/estoque" element={<EstoquePage />} />
+          <Route path="/diagnostico" element={<DiagnosticoPage />} />
           <Route path="/despesas" element={<DespesasPage />} />
           <Route path="/pos-precificacao" element={<PosPrecificacaoPage />} />
           <Route path="/assistente" element={<AssistenteIAPage />} />

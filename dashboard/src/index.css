@@ -58,6 +58,29 @@
   --danger-bg: rgba(224, 100, 92, 0.14);
   --warning: #d69a3c;
   --warning-bg: rgba(214, 154, 60, 0.14);
+
+  /* Cores de gráfico. Validadas com o validador de paleta contra --bg-card
+     (#131316): banda de luminosidade, piso de croma, separação sob protanopia
+     e deuteranopia, e contraste >= 3:1. Não trocar no olho — revalidar.
+     O ouro --accent NÃO é slot de série (L 0.80 fica fora da banda): ele segue
+     sendo o acento de destaque, para a série que a leitura quer isolar. */
+  --viz-1: #366bd3;
+  --viz-2: #13a3a5;
+  --viz-3: #964bb4;
+  --viz-4: #db5b94;
+  --viz-5: #b2790d;
+  /* Sequencial (magnitude), hue do ouro da marca — claro = mais intenso. */
+  --viz-seq-1: #5f4a06;
+  --viz-seq-2: #81650d;
+  --viz-seq-3: #a38115;
+  --viz-seq-4: #c5a032;
+  --viz-seq-5: #e6bf57;
+  /* Divergente para área grande (heatmap): azul <-> laranja passa sob CVD,
+     ao contrário de verde/vermelho, que colapsa (ΔE 4,4 em deuteranopia).
+     Verde/vermelho seguem só em delta pontual, sempre com seta ou posição. */
+  --viz-div-neg: #c9690d;
+  --viz-div-mid: #26262d;
+  --viz-div-pos: #366bd3;
 }
 
 * {
@@ -2905,6 +2928,113 @@ h3 {
   width: min(520px, 100%);
 }
 
+/* Top produtos por trás de uma linha de "Maiores potenciais de compra" —
+   card inline, aberto logo abaixo do cliente clicado na própria lista (não
+   um modal: pedido explícito de não interromper o fluxo com uma camada por
+   cima da tela). */
+.clientes-potencial-detalhe {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--raio-controle);
+  background: var(--surface-2);
+}
+
+/* Nome, nota (meses + potencial) e botão de fechar, tudo numa linha só —
+   antes eram duas linhas (nome sozinho em cima, nota embaixo) e sobrava
+   altura vazia pra uma informação curta. Nota trunca com "…" antes de deixar
+   o botão de fechar espremer ou o nome cortar. */
+.clientes-potencial-detalhe-topo {
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.clientes-potencial-detalhe-topo h3 {
+  flex: none;
+  max-width: 45%;
+  margin: 0;
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 0.85rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+.clientes-potencial-detalhe-nota {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clientes-potencial-detalhe-nota strong {
+  color: var(--text-primary);
+}
+
+/* Os três produtos lado a lado, um por coluna: são no máximo 3 e cada um é
+   curto (nome, valor, nota) — empilhados viravam uma lista comprida dentro
+   de um card que já está dentro de outra lista. */
+.clientes-potencial-detalhe-produtos {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clientes-potencial-detalhe-produtos li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  font-size: 0.8rem;
+}
+
+.clientes-potencial-detalhe-produto-topo {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  margin: 0;
+  min-width: 0;
+}
+
+.clientes-potencial-detalhe-produto-topo strong {
+  min-width: 0;
+  color: var(--text-primary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clientes-potencial-detalhe-produtos .clientes-ranking-valor {
+  font-size: 0.95rem;
+}
+
+.clientes-potencial-detalhe-produto-nota {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+@media (max-width: 900px) {
+  .clientes-potencial-detalhe-produtos { grid-template-columns: 1fr; }
+}
+
 /* Faixa de totais acima da tabela de resultado (ver ResultTable) */
 .analisador-faixa-totais {
   display: flex;
@@ -5486,29 +5616,77 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   --tag-cor: var(--accent);
   appearance: none;
   min-height: 92px;
-  padding: 1rem;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  grid-template-rows: auto 1fr;
-  align-items: center;
-  gap: 0.35rem 0.65rem;
+  padding: 0.85rem 1rem;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 0.6rem;
   color: var(--text-secondary);
   text-align: left;
   cursor: pointer;
-  border-color: color-mix(in srgb, var(--tag-cor) 22%, var(--border));
+  overflow: hidden;
+}
+
+/* Mesmo filete de 3px do StatCard (ver stat-card-container::before) — acento
+   semântico na lateral, nunca a borda inteira tingida. */
+.clientes-tag-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.85rem;
+  bottom: 0.85rem;
+  width: 3px;
+  border-radius: var(--raio-pill);
+  background: var(--tag-cor);
+}
+
+.clientes-tag-card-topo {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.clientes-tag-card-titulo {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.clientes-tag-card-icone {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border-radius: var(--raio-controle);
+  background: color-mix(in srgb, var(--tag-cor) 18%, transparent);
+  color: var(--tag-cor);
 }
 
 .clientes-tag-card strong {
-  grid-column: 1 / -1;
   color: var(--text-primary);
   font-size: 1.65rem;
   line-height: 1;
 }
 
-.clientes-tag-card:hover,
-.clientes-tag-card.is-ativo {
-  border-color: var(--tag-cor);
+.clientes-tag-card:hover {
   background: color-mix(in srgb, var(--tag-cor) 9%, var(--bg-card));
+}
+
+.clientes-tag-card.is-ativo {
+  background: color-mix(in srgb, var(--tag-cor) 9%, var(--bg-card));
+  border-color: var(--tag-cor);
+}
+
+.clientes-tag-card.is-ativo .clientes-tag-card-icone {
+  background: var(--tag-cor);
+  color: var(--accent-contrast);
 }
 
 .clientes-base-card {
@@ -5548,6 +5726,12 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 .clientes-tabela .col-nome {
   min-width: 230px;
   max-width: 440px;
+}
+
+/* Base tem clientes com receita de 7 dígitos (R$ 1.906.910,51); os 7rem
+   herdados de .analisador-tabela .col-num truncavam em "R$ 900.373,..." */
+.clientes-tabela .col-num {
+  width: 9.5rem;
 }
 
 .clientes-tags-acoes {
@@ -6076,7 +6260,11 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   display: flex;
   flex-direction: column;
   min-height: inherit;
-  padding: 0.95rem 1rem;
+  /* Sem padding-top: quem abre o respiro de cima agora é .monitor-card-topo,
+     que ficou fora deste botão (o <select> de loja não pode ficar aninhado
+     num <button>). Duplicar o padding-top aqui empurraria o conteúdo pra
+     baixo de novo. */
+  padding: 0 1rem 0.95rem;
   color: inherit;
   text-decoration: none;
 }
@@ -6117,7 +6305,15 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   align-items: center;
   gap: 0.45rem;
   min-width: 0;
-  padding-right: 2rem;
+  /* Mesmo padding lateral/superior que .monitor-card-link tinha antes de o
+     combobox de loja tirar este bloco de dentro do botão — sem isso o nome
+     e a loja ficavam colados na borda do card, desalinhados do resto. Sem
+     padding-bottom: o respiro até o KPI/gauge já vem do margin-top deles.
+     padding-right cobre o espaço da estrela (right:0.7rem + largura 2rem =
+     2.7rem) com uma folga — 2rem sozinho (o valor de quando este bloco vivia
+     dentro do botão, que tinha +1rem de padding próprio somado) deixava a
+     data ("setembro/2026") por baixo do ícone. */
+  padding: 0.95rem 3rem 0 1rem;
 }
 
 .monitor-card h2 {
@@ -6265,6 +6461,94 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
      colunas e a linha de baixo saíram a pedido — com rótulo e período em cada
      coluna, o alinhamento já separa, e as bordas só somavam ruído. */
   border-top: 1px solid var(--border);
+}
+
+/* Combobox de loja: pequena e discreta, ao lado do nome da empresa. Só some
+   quando a empresa tem 1 loja só (ver EmpresaMiniCard). */
+.monitor-loja-select {
+  flex: 0 0 auto;
+  max-width: 7rem;
+  padding: 0.1rem 0.3rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  color: var(--text-secondary);
+  background: var(--surface-2);
+  font-size: 0.62rem;
+  cursor: pointer;
+}
+
+.monitor-loja-select:hover,
+.monitor-loja-select:focus-visible {
+  border-color: var(--border-strong);
+  outline: none;
+}
+
+.monitor-loja-select:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+/* Velocímetro (meio-donut) da métrica "% receita não harmonizada". Altura
+   fixa: o raio do arco é em px (não %), então a área do desenho precisa bater
+   com o `cy`/`outerRadius` do GaugeMonitor — mudar um sem o outro corta o arco. */
+.monitor-gauge {
+  position: relative;
+  height: 8.8rem;
+  min-height: 8.8rem;
+  margin: 0.4rem -0.35rem 0;
+}
+
+/* "0%"/"100%" nas pontas do arco, na mesma altura da linha de base (90px de
+   cy, container de 140,8px ⇒ ~3,2rem do rodapé). */
+.monitor-gauge-marca {
+  position: absolute;
+  bottom: 3.2rem;
+  color: var(--text-muted);
+  font-size: 0.6rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.monitor-gauge-marca-min {
+  left: 0.3rem;
+}
+
+.monitor-gauge-marca-max {
+  right: 0.3rem;
+}
+
+.monitor-gauge-leitura {
+  position: absolute;
+  bottom: 0.35rem;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+  width: 100%;
+}
+
+.monitor-gauge-leitura strong {
+  font-size: 1.5rem;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.monitor-gauge-selo {
+  padding: 0.05rem 0.5rem;
+  border: 1px solid;
+  border-radius: var(--raio-pill);
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.monitor-kpi-gauge {
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 0.5rem;
 }
 
 .monitor-card-metrica {
@@ -6742,10 +7026,15 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 }
 
 /* Barras por fabricante: trilho na coluna elástica, números em colunas
-   próprias — assim os valores alinham em vez de seguir o fim da barra. */
+   próprias — assim os valores alinham em vez de seguir o fim da barra.
+   Colunas vivem no <ul> e cada <li> as herda por subgrid; com o grid
+   declarado no próprio <li>, coluna `auto` se dimensiona pelo conteúdo
+   daquela linha — "11" e "53.642" davam larguras diferentes e desalinhavam
+   contagem, barra e percentual entre as linhas. */
 .estoque-barras {
   display: grid;
-  gap: 0.45rem;
+  grid-template-columns: minmax(6rem, 0.9fr) minmax(0, 1fr) auto auto;
+  gap: 0.45rem 0.6rem;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -6757,6 +7046,13 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   align-items: center;
   gap: 0.6rem;
   font-size: 0.76rem;
+}
+
+@supports (grid-template-columns: subgrid) {
+  .estoque-barras li {
+    grid-column: 1 / -1;
+    grid-template-columns: subgrid;
+  }
 }
 
 .estoque-barras span {
@@ -7493,7 +7789,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 
 .vendedores-kpis {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr);
   gap: 1rem;
   align-items: stretch;
   margin-bottom: 0.85rem;
@@ -7501,17 +7797,107 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 
 .vendedores-hero {
   display: grid;
-  align-content: start;
+  align-content: center;
   gap: 0.3rem;
   min-width: 0;
   padding: 1.1rem 1.25rem;
 }
 
+/* Variante com faixa de série ao fundo (mesmo mecanismo do despesas-hero):
+   o texto vira linha fixa no topo e o spark ocupa o restante do card. */
+.vendedores-hero-com-spark {
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: normal;
+  gap: 0.75rem;
+  padding: 1.1rem 1.25rem 0.6rem;
+}
+
+/* Cards de KPI mais baixos (pedido do usuário): menos padding no card e no
+   spark, ícone menor. Escopado em .vendedores-kpis pra não mexer no
+   glass-card/stat-card genérico usado em outras telas. */
+.vendedores-kpis .glass-card {
+  padding: 1rem 1.15rem;
+}
+
+/* Spark vira camada de fundo atrás do texto (em vez de empilhado embaixo) —
+   é só ilustração, então pode ficar por trás sem atrapalhar leitura, e o
+   card encolhe porque não reserva mais uma linha inteira pra ele. */
+.vendedores-kpis .vendedores-hero-com-spark {
+  display: block;
+  position: relative;
+  padding: 1rem 1.15rem;
+}
+
+.vendedores-kpis .despesas-hero-texto {
+  position: relative;
+  z-index: 1;
+}
+
+.vendedores-kpis .despesas-hero-spark {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+  margin: 0;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.vendedores-kpis .despesas-hero-valor {
+  font-size: clamp(1.3rem, 2.4vw, 1.7rem);
+}
+
 .vendedores-kpis-secundarios {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 1rem;
   min-width: 0;
+}
+
+.vendedores-kpis-secundarios .stat-card-icon-container {
+  padding: 0.4rem;
+}
+
+.vendedores-kpis-secundarios .stat-icon {
+  width: 15px;
+  height: 15px;
+}
+
+.vendedores-kpis-secundarios .stat-card-title {
+  margin-bottom: 0.2rem;
+}
+
+.vendedores-kpis-secundarios .stat-card-trend {
+  margin-top: 0.25rem;
+}
+
+.vendedores-kpis-secundarios > * {
+  height: 100%;
+}
+
+/* StatCard genérico trunca título e valor em 1 linha — bom pro caso curto
+   ("Clientes ativos"), ruim quando o rótulo carrega o período ("Receita de
+   Setembro/2026") ou o valor é moeda longa: ambos cortavam no meio da
+   palavra/número ("CLIENTES A...", "R$ 6...."). Aqui a coluna é estreita
+   (3 cards ao lado da hero), então título quebra em 2 linhas e o valor
+   encolhe em vez de truncar. */
+.vendedores-kpis-secundarios .stat-card-title {
+  white-space: normal;
+  overflow: hidden;
+  text-overflow: clip;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  line-height: 1.3;
+  /* Quebrar por palavra não basta: uma palavra só maior que a coluna
+     ("CONCENTRAÇÃO") era cortada no meio pelo overflow, sem reticências.
+     O documento é pt-BR, então `hyphens` separa na sílaba; `anywhere` é a
+     reserva para quando o navegador não tiver o dicionário. */
+  hyphens: auto;
+  overflow-wrap: anywhere;
+}
+
+.vendedores-kpis-secundarios .stat-card-value {
+  font-size: clamp(1.15rem, 1vw + 0.9rem, 1.5rem);
 }
 
 /* Nome de vendedor é texto, não número — precisa quebrar em até 2 linhas em
@@ -7790,9 +8176,9 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   color: var(--text-muted);
 }
 
-@media (max-width: 1100px) {
+@media (max-width: 1340px) {
   .vendedores-kpis { grid-template-columns: 1fr; }
-  .vendedores-kpis-secundarios { grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); }
+  .vendedores-kpis-secundarios { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .vendedores-ficha-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .vendedores-tabela-topo,
   .vendedores-entidade-card .estoque-card-topo,
@@ -8008,24 +8394,6 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   height: 15rem;
 }
 
-.clientes-visao-tabela {
-  flex: 1;
-  min-height: 0;
-  max-height: none;
-  width: 100%;
-}
-
-.clientes-visao-tabela .analisador-tabela {
-  /* A tabela do Analisador pede min-width 640px; em meia largura isso
-     cria barra horizontal e corta Receita/Média/Variação. */
-  min-width: 0;
-}
-
-.clientes-visao-tabela .col-nome {
-  min-width: 0;
-  max-width: none;
-}
-
 .clientes-visao-card-nota {
   flex: none;
   color: var(--text-muted);
@@ -8123,7 +8491,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 
 .clientes-eventos-lista {
   display: grid;
-  gap: 0.3rem;
+  gap: 0.4rem;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -8132,25 +8500,97 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   overflow-y: auto;
 }
 
-.clientes-eventos-lista li {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.4rem 0.55rem;
+/* Ranking: número de posição + barra proporcional ao maior valor da lista —
+   "Movimento" e "Maiores clientes" usam a mesma régua visual, herdada do
+   leaderboard de barras já existente em Estoque (.estoque-barras). Comunica
+   grandeza num piscar de olho em vez de obrigar a ler 20 valores um a um.
+
+   `> li` e não `li`: a lista hospeda cards que abrem inline (o detalhe de
+   potencial tem uma <ul> de produtos dentro), e o seletor descendente pegava
+   também os <li> de dentro — mesma especificidade, declarado depois, ganhava
+   do grid dos produtos e empilhava tudo centralizado. */
+.clientes-eventos-lista > li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.5rem 0.65rem;
   border: 1px solid var(--border);
   border-radius: var(--raio-controle);
   background: var(--surface-1);
   font-size: 0.76rem;
 }
 
-.clientes-eventos-lista strong {
+.clientes-ranking-topo {
+  display: flex;
+  align-items: baseline;
+  gap: 0.55rem;
+}
+
+.clientes-ranking-numero {
+  flex: none;
+  width: 1.2rem;
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.clientes-ranking-topo strong {
+  flex: 1;
+  min-width: 0;
   color: var(--text-primary);
   font-weight: 500;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+.clientes-ranking-valor {
+  flex: none;
+  color: var(--text-primary);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Recuada para começar sob o nome, não sob o número da posição. */
+.clientes-ranking-barra {
+  height: 0.3rem;
+  margin-left: 1.75rem;
+  border-radius: 3px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.clientes-ranking-barra i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+
+.clientes-ranking-rodape {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  margin-left: 1.75rem;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+}
+
+.clientes-ranking-rodape span {
+  font-variant-numeric: tabular-nums;
+}
+
+.clientes-ranking-rodape em {
+  display: inline-flex;
+  align-items: center;
+  font-style: normal;
+  font-variant-numeric: tabular-nums;
+}
+
+.clientes-ranking-rodape em.is-alta { color: var(--success); }
+.clientes-ranking-rodape em.is-queda { color: var(--danger); }
 
 .clientes-evento-selo {
   padding: 0.1rem 0.4rem;
@@ -8161,35 +8601,246 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   white-space: nowrap;
 }
 
-.clientes-evento-valor {
-  /* Coluna fixa: linha sem selo não pode puxar o valor para o meio. */
-  grid-column: 3;
-  text-align: right;
-  color: var(--text-secondary);
+.clientes-eventos-lista > li.is-alerta {
+  border-left: 3px solid var(--danger);
+  padding-left: 0.8rem;
+}
+
+.clientes-eventos-lista > li.is-destaque {
+  border-left: 3px solid var(--success);
+  padding-left: 0.8rem;
+}
+
+/* Linha de ranking que abre detalhe ao clicar ("Maiores potenciais de
+   compra" e, com o variant .clientes-score-linha-btn abaixo, "Pior cauda"/
+   "Melhores scores"): a caixa (borda/fundo/padding) migra do <li> pro
+   <button> interno, que vira o alvo real do clique/foco — o <li> some
+   visualmente (padding e borda zerados), só segue existindo pra manter a
+   lista semântica. */
+.clientes-eventos-lista > li.clientes-ranking-linha-clicavel,
+.clientes-score-tabela > li.clientes-ranking-linha-clicavel {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: none;
+}
+
+.clientes-ranking-linha-btn {
+  all: unset;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  width: 100%;
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  font-size: 0.76rem;
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
+}
+
+.clientes-ranking-linha-btn:hover {
+  background: var(--card-hover);
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+
+.clientes-ranking-linha-btn:active {
+  transform: translateY(0);
+}
+
+.clientes-ranking-linha-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Estado aberto: mesma pista visual do hover, só que persistente — sem isso
+   nada indica qual linha o card logo abaixo pertence depois que o mouse sai. */
+.clientes-ranking-linha-btn.is-aberto {
+  background: var(--card-hover);
+  border-color: var(--accent);
+}
+
+.clientes-ranking-topo svg {
+  flex: none;
+  color: var(--text-muted);
+}
+
+/* Score de migração: grupo solto (sem borda própria) entre os dois pares de
+   cards da carteira — os pares continuam sendo o card, este é só um título
+   com dois StatCard e dois clientes-visao-grade por baixo. */
+.clientes-score-secao {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.clientes-score-kpis {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+/* Linhas de ranking do score: número, cliente, score colorido, subiu/desceu
+   e permanência — sem barra de grandeza (score vai a negativo, e a faixa é
+   estreita demais pra uma barra proporcional dizer algo). */
+.clientes-score-tabela {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* `> li` + `:not(...)`: a lista hospeda o card de causa provável aberto
+   inline (com sua própria lista de eventos por dentro, `.clientes-potencial-
+   detalhe` reaproveitado de ClientePotencialDetalhe) — sem o `:not`, este
+   grid de 5 colunas + borda/fundo vazaria pro card de detalhe (que já tem o
+   próprio layout) e pros <li> de dentro dele. Mesma classe de bug já
+   corrigido em .clientes-eventos-lista (ver comentário lá). */
+.clientes-score-tabela > li:not(.clientes-ranking-linha-clicavel):not(.clientes-potencial-detalhe) {
+  display: grid;
+  grid-template-columns: 1.2rem minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 0.55rem;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  font-size: 0.76rem;
+}
+
+.clientes-score-tabela strong {
+  color: var(--text-primary);
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clientes-score-valor {
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 
-.clientes-tabela td.col-num.is-alta {
-  color: var(--success);
+.clientes-score-valor.is-alta { color: var(--success); }
+.clientes-score-valor.is-queda { color: var(--danger); }
+
+.clientes-score-migra {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
-.clientes-tabela td.col-num.is-queda {
-  color: var(--danger);
+.clientes-score-migra svg:first-child { color: var(--success); }
+.clientes-score-migra svg:last-child { color: var(--danger); margin-left: 0.35rem; }
+
+.clientes-score-permanencia {
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  white-space: nowrap;
 }
 
-.clientes-tabela td.col-num svg {
-  vertical-align: -0.15em;
-  margin-right: 0.15rem;
+/* Botão que abre a causa provável — mesma caixa/hover/foco de
+   .clientes-ranking-linha-btn, só que em grid (uma coluna a mais pro
+   chevron) pra manter as mesmas colunas de .clientes-score-tabela > li. */
+.clientes-score-linha-btn {
+  all: unset;
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 1.2rem minmax(0, 1fr) auto auto auto auto;
+  align-items: center;
+  gap: 0.55rem;
+  width: 100%;
+  padding: 0.4rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  font-size: 0.76rem;
+  font-family: inherit;
+  color: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, transform 0.15s ease;
 }
 
-.clientes-tabela tbody tr.is-alerta td:first-child {
-  border-left: 3px solid var(--danger);
-  padding-left: 0.75rem;
+.clientes-score-linha-btn:hover {
+  background: var(--card-hover);
+  border-color: var(--accent);
+  transform: translateY(-2px);
 }
 
-.clientes-tabela tbody tr.is-destaque td:first-child {
-  border-left: 3px solid var(--success);
-  padding-left: 0.75rem;
+.clientes-score-linha-btn:active { transform: translateY(0); }
+
+.clientes-score-linha-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.clientes-score-linha-btn.is-aberto {
+  background: var(--card-hover);
+  border-color: var(--accent);
+}
+
+.clientes-score-chevron {
+  color: var(--text-muted);
+}
+
+/* Eventos de migração do card de causa provável (Pior cauda/Melhores
+   scores): um por período de transição, seta+período+faixas em cima, causa
+   provável embaixo — texto pode ser longo (nomes de produto), por isso
+   empilhado em vez do grid de 3 colunas do detalhe de potencial. */
+.clientes-causa-eventos {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.clientes-causa-eventos li {
+  padding: 0.5rem 0.65rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+}
+
+.clientes-causa-evento-topo {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0 0 0.25rem;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.clientes-causa-evento-topo .is-alta { color: var(--success); }
+.clientes-causa-evento-topo .is-queda { color: var(--danger); }
+
+.clientes-causa-evento-faixas {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+.clientes-causa-evento-faixas::before {
+  content: '·';
+  margin-right: 0.4rem;
+}
+
+.clientes-causa-evento-texto {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 0.78rem;
+  line-height: 1.5;
 }
 
 @media (max-width: 1100px) {
@@ -8199,6 +8850,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 
 @media (max-width: 680px) {
   .clientes-visao-kpis { grid-template-columns: 1fr; }
+  .clientes-score-kpis { grid-template-columns: 1fr; }
   .donut-linha { grid-template-columns: 1fr; }
 }
 
@@ -8915,56 +9567,6 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 .pos-precificacao-metros em.is-alta { color: var(--success); }
 .pos-precificacao-metros em.is-queda { color: var(--danger); }
 
-.pos-precificacao-janelas {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 1rem;
-}
-
-.pos-precificacao-janela-card {
-  display: grid;
-  gap: 0.5rem;
-  min-width: 0;
-  padding: 0.75rem 0.9rem 0.65rem;
-}
-
-.pos-precificacao-janela-card header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-}
-
-.pos-precificacao-janela-card h2 {
-  margin: 0;
-  font-size: 0.85rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.pos-precificacao-janela-aberta {
-  flex: 0 0 auto;
-  padding: 0.1rem 0.45rem;
-  border-radius: 999px;
-  background: var(--surface-3);
-  color: var(--text-muted);
-  font-size: 0.62rem;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  white-space: nowrap;
-}
-
-.pos-precificacao-janela-corpo.pos-precificacao-metros {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  border: none;
-  background: transparent;
-}
-
-.pos-precificacao-janela-corpo.pos-precificacao-metros > div {
-  padding: 0 0.7rem;
-}
-
 .pos-precificacao-graficos {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -9072,12 +9674,75 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   border-color: var(--accent);
 }
 
+.pos-precificacao-linha-janelas {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  padding-top: 0.45rem;
+  margin-top: 0.1rem;
+  border-top: 1px solid var(--border);
+}
+
+.pos-precificacao-linha-janela {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.4rem 0.55rem 0.4rem 0.7rem;
+  border-radius: var(--raio-controle);
+  background: var(--surface-2);
+  text-align: left;
+}
+
+.pos-precificacao-linha-janela::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0.3rem;
+  bottom: 0.3rem;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--text-muted);
+}
+
+.pos-precificacao-linha-janela.is-alta::before { background: var(--success); }
+.pos-precificacao-linha-janela.is-queda::before { background: var(--danger); }
+
+.pos-precificacao-linha-janela-titulo {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.pos-precificacao-linha-janela-titulo i {
+  font-style: normal;
+  font-size: 0.62rem;
+  text-transform: none;
+  color: var(--warning);
+}
+
+.pos-precificacao-linha-janela strong {
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+.pos-precificacao-linha-janela em {
+  font-style: normal;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-muted);
+}
+
+.pos-precificacao-linha-janela.is-alta em { color: var(--success); }
+.pos-precificacao-linha-janela.is-queda em { color: var(--danger); }
+
 @media (max-width: 1100px) {
   .pos-precificacao-graficos {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .pos-precificacao-janelas {
     grid-template-columns: minmax(0, 1fr);
   }
 
@@ -9091,18 +9756,6 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 
   .pos-precificacao-metros > div:nth-child(n + 3) {
     border-top: 1px solid var(--border);
-  }
-
-  .pos-precificacao-janela-corpo.pos-precificacao-metros {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .pos-precificacao-janela-corpo.pos-precificacao-metros > div:nth-child(odd) {
-    border-left: none;
-  }
-
-  .pos-precificacao-janela-corpo.pos-precificacao-metros > div:nth-child(n + 3) {
-    border-top: none;
   }
 }
 
@@ -9119,8 +9772,273 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   .pos-precificacao-metros > div:first-child {
     border-top: none;
   }
+}
 
-  .pos-precificacao-janela-corpo.pos-precificacao-metros > div {
-    border-top: none;
-  }
+/* ---------------------------------------------------------------------------
+   Diagnóstico — a tela é lida de cima para baixo: tensão (o tamanho do
+   movimento), mecanismo (por que mudou) e, nas próximas fases, a pauta.
+   --------------------------------------------------------------------------- */
+.diagnostico-page {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.diagnostico-tensao {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 2fr);
+  align-items: stretch;
+  gap: 1rem;
+}
+
+.diagnostico-tensao .vendedores-kpis-secundarios {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.75rem;
+}
+
+/* A conclusão em texto embaixo dos KPIs: é ela que diz se a queda do mês é
+   sazonal ou deterioração — o número sozinho não responde isso. */
+.diagnostico-leitura {
+  grid-column: 1 / -1;
+  margin: 0;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.diagnostico-mecanismo {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  /* `stretch` (padrão do grid): os dois cards de uma linha terminam na mesma
+     altura. Sem sobra vazia porque quem tem menos conteúdo não usa altura
+     fixa (ver `flex: 1 1 auto` abaixo) — o gráfico/lista dele é que cresce
+     pra preencher, não um espaço em branco depois do card. */
+  align-items: stretch;
+  gap: 1rem;
+}
+
+/* `flex`, não `height` fixo: dentro do card (flex-column), o gráfico cresce
+   até a altura que o par da linha impuser — é o que faz os dois cards
+   terminarem juntos sem sobra. `min-height` é o piso de quando este card
+   pauta a linha (rótulo de produto inclinado no eixo x precisa desse
+   mínimo). Card médio (~15rem, o padrão do projeto em `.clientes-visao-chart`),
+   não grande. */
+.diagnostico-cascata-chart { flex: 1 1 auto; min-height: 260px; }
+
+/* Contra o que aquele card compara. A cascata mede ano contra ano e o tornado
+   mês contra mês, então o mesmo produto sobe num e cai no outro: sem o chip no
+   cabeçalho, os dois cards lado a lado leem como erro de cálculo. */
+.diagnostico-base-chip {
+  flex-shrink: 0;
+  align-self: flex-start;
+  padding: 0.2rem 0.45rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: 0.68rem;
+  white-space: nowrap;
+}
+
+/* Eixo truncado é legítimo aqui, mas só enquanto estiver escrito na tela. */
+.diagnostico-nota-eixo {
+  margin: 0.4rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.72rem;
+}
+
+/* Cresce com o número de barras (até 16, 8 de cada lado) — na prática é
+   quase sempre este card que pauta a altura da linha, e a cascata estica
+   até aqui (ver `.diagnostico-mecanismo`). */
+.diagnostico-tornado-chart { flex: 1 1 auto; min-height: 420px; }
+
+.diagnostico-fluxo-chart { flex: 1 1 auto; min-height: 360px; }
+
+/* Pílulas que trocam QUEM entra na matriz de streak — mesmo mecanismo do
+   `.periodo-segmented` da sidebar, só que largura pelo conteúdo (3 rótulos
+   longos não cabem no padrão de 100% de largura da sidebar). */
+.diagnostico-streak-segmented {
+  width: fit-content;
+  max-width: 100%;
+  margin: 0.7rem 0 0.9rem;
+}
+
+.diagnostico-streak-segmented .periodo-segmented-btn {
+  flex: 0 0 auto;
+  padding: 0.35rem 0.75rem;
+  font-size: 0.72rem;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+/* Grade crua (não <table>): a régua de período muda de tamanho por empresa
+   (até 6 meses), então as colunas do meio vêm por `style` inline a partir de
+   `streak.periodos.length` — ver MatrizStreak.tsx. Cada linha de produto usa
+   subgrid para herdar essas colunas, mesma técnica de `.donut-legenda`. */
+.diagnostico-streak-grid {
+  display: grid;
+  align-content: start;
+  row-gap: 0.35rem;
+  column-gap: 0.4rem;
+  overflow-x: auto;
+  /* Cresce pra acompanhar o Fluxo ao lado quando tem poucos produtos; com 10
+     (o teto), já é este card que pauta a linha. `align-content: start` evita
+     que a sobra vire célula gigante — fica em branco depois das linhas. */
+  flex: 1 1 auto;
+}
+
+.diagnostico-streak-cabecalho {
+  color: var(--text-muted);
+  font-size: 0.68rem;
+  text-align: center;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.diagnostico-streak-linha {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+  align-items: center;
+}
+
+.diagnostico-streak-produto {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+  padding-right: 0.5rem;
+}
+
+.diagnostico-streak-produto span {
+  color: var(--text-secondary);
+  font-size: 0.76rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostico-streak-produto em {
+  color: var(--text-muted);
+  font-style: normal;
+  font-size: 0.65rem;
+}
+
+.diagnostico-streak-celula {
+  height: 2.1rem;
+  border-radius: var(--raio-controle);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+}
+
+/* Card médio, não grande — mesmo padrão de altura de `.clientes-visao-chart`.
+   `flex`, não `height` fixo: cresce até a altura que o dumbbell ao lado
+   impuser (composição por faixa entra depois do gráfico, então é este card
+   que normalmente pauta a linha). */
+.diagnostico-scatter-chart { flex: 1 1 auto; min-height: 260px; }
+
+/* Detalhe do ponto clicado no scatter de risco — mesmo espírito do drill
+   inline de Clientes, mas sem request: o clique só revela campos que já
+   vieram no payload do diagnóstico. */
+.diagnostico-drill {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+  margin-top: 0.6rem;
+  padding: 0.6rem 0.8rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+}
+
+.diagnostico-drill strong {
+  color: var(--text-primary);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diagnostico-drill-tag {
+  padding: 0.1rem 0.4rem;
+  border-radius: var(--raio-controle);
+  background: color-mix(in srgb, var(--danger) 18%, var(--surface-1));
+  color: var(--danger);
+  font-size: 0.68rem;
+}
+
+/* Barra 100% empilhada, uma linha só: perda por faixa ABC. Não é gráfico
+   próprio porque só existem 4-5 categorias — a régua de "acima de ~7 classes
+   a tabela vence" nem chega a valer aqui, mas uma barra de várias cores
+   dedicada seria decoração sobre 4 números. */
+.diagnostico-composicao-barra {
+  display: flex;
+  height: 0.9rem;
+  border-radius: var(--raio-controle);
+  overflow: hidden;
+  background: var(--surface-1);
+}
+
+.diagnostico-composicao-barra span {
+  min-width: 2px;
+  height: 100%;
+}
+
+/* Card médio, não grande: sem teto a lista cresce com os 10 clientes do
+   payload e o card fica mais alto que o resto do Ato III. `flex`, não
+   `max-height` fixo: estica até a altura que o scatter ao lado impuser (mais
+   linhas visíveis, não sobra em branco), com piso em 15rem — o mesmo padrão
+   de `.clientes-visao-chart`. `custom-scrollbar` no componente (mesmo padrão
+   de `.clientes-eventos-lista`) dá a rolagem quando ainda não coube tudo. */
+.diagnostico-dumbbell-lista-legenda {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+  margin-top: 1rem;
+  padding: 0;
+  list-style: none;
+}
+
+.diagnostico-dumbbell-lista-legenda li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.75rem;
+}
+
+.diagnostico-dumbbell-lista-legenda strong {
+  color: var(--text-primary);
+  font-weight: 500;
+}
+
+.diagnostico-dumbbell-lista-legenda p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.diagnostico-erosao-grid { overflow-x: auto; }
+
+@media (max-width: 1200px) {
+  .diagnostico-tensao { grid-template-columns: 1fr; }
+  .diagnostico-mecanismo { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 760px) {
+  .diagnostico-tensao .vendedores-kpis-secundarios { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

@@ -11,7 +11,7 @@ import {
   type ResumoEstoqueResposta,
   type StatusCoberturaEstoque,
 } from '../../api/client';
-import { formatCurrency, formatPercent } from '../../utils/formatters';
+import { formatCompacto, formatCurrency, formatPercent } from '../../utils/formatters';
 import { useMesesFechados } from '../../hooks/useMesesFechados';
 import { useVersaoCortesRelatorios } from '../../hooks/useVersaoCortesRelatorios';
 import { useGruposClientesFiltro } from '../../hooks/useGruposClientesFiltro';
@@ -188,7 +188,7 @@ export function EstoqueVisaoGeral({ empresa, loja, meses }: Props) {
         <div className="vendedores-kpis-secundarios">
           <StatCard
             title="Capital em estoque"
-            value={formatCurrency(resumo.valor_estoque)}
+            value={formatCompacto(resumo.valor_estoque, true)}
             icon={Boxes}
           />
           <StatCard

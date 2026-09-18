@@ -129,7 +129,10 @@ def _contar_dias_venda(df: pd.DataFrame) -> int:
     validos = df.loc[tem_data & ativo, "_data"]
     if validos.empty:
         return 0
-    return int(pd.to_datetime(validos).dt.normalize().nunique())
+    # `_data` já é datetime64 (ver `_datas_movimento`) — `pd.to_datetime` aqui era
+    # reconversão redundante, chamada centenas de vezes (uma por família/fabricante
+    # × janela), com overhead fixo de dispatch do pandas somando no total.
+    return int(validos.dt.normalize().nunique())
 
 
 def _agregar(df: pd.DataFrame) -> dict[str, Any]:
@@ -500,7 +503,12 @@ def _totais_mensais(df: pd.DataFrame, extra_grupo: str | None = None) -> pd.Data
     tmp = df.loc[df["_data"].notna()].copy()
     if tmp.empty:
         return pd.DataFrame()
-    tmp["_mes"] = tmp["_data"].map(lambda d: inicio_mes(pd.Timestamp(d)))
+    # Truncar pra início do mês vetorizado (numpy), não `.map(lambda ...)` linha a
+    # linha: numa empresa com movimento grande (centenas de milhares de linhas na
+    # janela antes+depois), o `.map` chamando `inicio_mes` por linha era o maior
+    # custo isolado da tela — o mesmo resultado de `inicio_mes` (normaliza e crava
+    # dia 1), só que em lote.
+    tmp["_mes"] = tmp["_data"].values.astype("datetime64[M]").astype("datetime64[ns]")
     tmp["_dia"] = pd.to_datetime(tmp["_data"]).dt.normalize()
     if COLUNA_QTD not in tmp.columns:
         tmp[COLUNA_QTD] = 0.0
@@ -689,6 +697,22 @@ def _series_por_nome(
     return saida
 
 
+def _agrupar_por_chave(df: pd.DataFrame, coluna: str) -> dict[str, pd.DataFrame]:
+    """Pré-agrupa `df` pela chave normalizada de `coluna`, uma vez só.
+
+    `_rollup` usa isto para antes/depois/mov_pares e faz só um lookup em dict
+    por família/fabricante do dump — antes disso, `_chave_texto` (fillna +
+    astype + strip + casefold, várias passadas de string na coluna inteira)
+    era recalculado para CADA entidade do dump, tornando a tela O(entidades ×
+    linhas de movimento). Com dump de centenas de famílias e movimento de
+    dezenas de milhares de linhas, isso é a diferença entre a tela abrir na
+    hora e travar por vários segundos.
+    """
+    if df.empty or coluna not in df.columns:
+        return {}
+    return {chave: sub for chave, sub in df.groupby(_chave_texto(df[coluna]))}
+
+
 def _rollup(
     dump: pd.DataFrame,
     antes: pd.DataFrame,
@@ -704,21 +728,18 @@ def _rollup(
     itens = []
     vazia = series.get("", [])
     vazia_dia = series_dia.get("", [])
+    antes_por_chave = _agrupar_por_chave(antes, coluna_mov)
+    depois_por_chave = _agrupar_por_chave(depois, coluna_mov)
+    mov_por_chave = _agrupar_por_chave(mov_pares, coluna_mov)
+    antes_vazio = antes.iloc[0:0]
+    depois_vazio = depois.iloc[0:0]
+    mov_vazio = mov_pares.iloc[0:0]
     for nome, grupo in dump.groupby(coluna_dump, dropna=False):
         rotulo = str(nome).strip() or "—"
         chave = str(nome).strip().casefold()
-        if coluna_mov in antes.columns:
-            ant = antes.loc[_chave_texto(antes[coluna_mov]) == chave]
-        else:
-            ant = antes.iloc[0:0]
-        if coluna_mov in depois.columns:
-            dep = depois.loc[_chave_texto(depois[coluna_mov]) == chave]
-        else:
-            dep = depois.iloc[0:0]
-        if coluna_mov in mov_pares.columns:
-            mov_ent = mov_pares.loc[_chave_texto(mov_pares[coluna_mov]) == chave]
-        else:
-            mov_ent = mov_pares.iloc[0:0]
+        ant = antes_por_chave.get(chave, antes_vazio)
+        dep = depois_por_chave.get(chave, depois_vazio)
+        mov_ent = mov_por_chave.get(chave, mov_vazio)
         itens.append(_item_entidade(
             rotulo, grupo, ant, dep,
             series.get(rotulo, vazia),

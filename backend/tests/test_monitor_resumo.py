@@ -138,3 +138,125 @@ def test_montar_card_media_diaria_usa_dias_com_venda_quando_disponivel(tmp_path)
     assert card["valores"][0] == round(1000.0 / 10, 2)
     assert card["media"] == round(1000.0 / 10, 2)
     assert card["dias_venda_janela"] == 10
+
+
+# ---------------------------------------------------------------------------
+# "% receita não harmonizada" e filtro por loja
+# ---------------------------------------------------------------------------
+
+def _gravar_summary_multiloja(pasta):
+    """Duas lojas, dois produtos (um harmonizado, um não) e dois anos (jan/25,
+    jan/26) — o mínimo pra testar não-harmonizado, variação anual e filtro de
+    loja no mesmo fixture. `Loja 2` só vende em jan/26, de propósito: cobre o
+    caso de loja sem ponto em todos os períodos da janela.
+    """
+    monthly = [
+        {"pid": 202501, "name": "jan/25", "rev": 1000.0, "cmv": 0.0},
+        {"pid": 202601, "name": "jan/26", "rev": 1500.0, "cmv": 0.0},
+    ]
+    rows = [
+        # [p, s, c, m, d, r, rev, qty] — d=0 harmonizado, d=1 "Não harmonizados"
+        [0, 0, 0, 0, 0, 0, 600.0, 5],   # jan/25, Loja 1, harmonizado
+        [0, 0, 0, 0, 1, 0, 400.0, 3],   # jan/25, Loja 1, não harmonizado
+        [1, 0, 0, 0, 0, 0, 800.0, 6],   # jan/26, Loja 1, harmonizado
+        [1, 0, 0, 0, 1, 0, 200.0, 1],   # jan/26, Loja 1, não harmonizado
+        [1, 1, 0, 0, 1, 0, 500.0, 2],   # jan/26, Loja 2, não harmonizado
+    ]
+    summary = {
+        "monthly": monthly,
+        "maps": {
+            "p": [202501, 202601],
+            "s": ["Loja 1", "Loja 2"],
+            "c": ["Cliente A"],
+            "m": ["Fabricante"],
+            "d": ["Parafuso 10mm", "Não harmonizados"],
+        },
+        "rows": rows,
+        "kpis": {"rev": 2500.0, "qty": 17, "cmv": 0.0},
+    }
+    caminho = mon.caminho_summary_dashboard_gz(pasta)
+    with gzip.open(caminho, "wt", encoding="utf-8") as arquivo:
+        json.dump(summary, arquivo)
+    return caminho
+
+
+def test_nao_harmonizado_totais_por_produto_e_receita(tmp_path):
+    _gravar_summary_multiloja(tmp_path)
+    resumo = mon.obter_resumo_monitor(tmp_path)
+
+    nh = resumo["nao_harmonizado"]
+    assert nh["produtos_total"] == 2
+    assert nh["produtos_nao_harmonizados"] == 1
+    assert nh["receita_total"] == 2500.0
+    assert nh["receita_nao_harmonizada"] == 1100.0  # 400 + 200 + 500
+
+
+def test_nao_harmonizado_por_loja_isola_cada_loja(tmp_path):
+    _gravar_summary_multiloja(tmp_path)
+    resumo = mon.obter_resumo_monitor(tmp_path)
+
+    por_loja = resumo["nao_harmonizado_por_loja"]
+    assert por_loja["Loja 1"]["receita_total"] == 2000.0
+    assert por_loja["Loja 1"]["receita_nao_harmonizada"] == 600.0
+    assert por_loja["Loja 2"]["receita_total"] == 500.0
+    assert por_loja["Loja 2"]["receita_nao_harmonizada"] == 500.0
+    assert por_loja["Loja 2"]["produtos_total"] == 1
+
+
+def test_montar_card_nao_harmonizado_total_e_variacao_em_pontos(tmp_path):
+    _gravar_summary_multiloja(tmp_path)
+    resumo = mon.obter_resumo_monitor(tmp_path)
+
+    card = mon.montar_card("Empresa", resumo, metrica="nao_harmonizado", meses=2)
+
+    assert card["total"] == round(1100.0 / 2500.0 * 100, 2)
+    assert card["produtos_total"] == 2
+    assert card["produtos_nao_harmonizados"] == 1
+    assert card["receita_nao_harmonizada"] == 1100.0
+    # jan/26 (46,67%) contra jan/25 (40,00%): +6,67 PONTOS percentuais, não +28%.
+    assert card["variacao_pct"] == round(700.0 / 1500.0 * 100 - 40.0, 2)
+
+
+def test_montar_card_nao_harmonizado_filtra_por_loja(tmp_path):
+    _gravar_summary_multiloja(tmp_path)
+    resumo = mon.obter_resumo_monitor(tmp_path)
+
+    card = mon.montar_card("Empresa", resumo, metrica="nao_harmonizado", meses=2, loja="Loja 1")
+
+    assert card["total"] == round(600.0 / 2000.0 * 100, 2)
+    assert card["receita_total"] == 2000.0
+    assert card["receita_nao_harmonizada"] == 600.0
+
+
+def test_montar_card_receita_filtra_por_loja(tmp_path):
+    _gravar_summary_multiloja(tmp_path)
+    resumo = mon.obter_resumo_monitor(tmp_path)
+
+    card_loja1 = mon.montar_card("Empresa", resumo, metrica="receita", meses=2, loja="Loja 1")
+    card_loja2 = mon.montar_card("Empresa", resumo, metrica="receita", meses=2, loja="Loja 2")
+
+    assert card_loja1["total"] == 2000.0
+    # Loja 2 só vende no 2º período: 1 ponto na série, não 2.
+    assert card_loja2["total"] == 500.0
+    assert len(card_loja2["valores"]) == 1
+
+
+def test_montar_card_loja_desconhecida_fica_vazio_sem_quebrar(tmp_path):
+    _gravar_summary_multiloja(tmp_path)
+    resumo = mon.obter_resumo_monitor(tmp_path)
+
+    card = mon.montar_card("Empresa", resumo, metrica="receita", meses=2, loja="Loja Fantasma")
+
+    assert card["estado"] == "ok"
+    assert card["valores"] == []
+    assert card["total"] == 0.0
+
+
+def test_montar_card_lucro_por_loja_fica_indisponivel(tmp_path):
+    _gravar_summary_multiloja(tmp_path)
+    resumo = mon.obter_resumo_monitor(tmp_path)
+
+    card = mon.montar_card("Empresa", resumo, metrica="lucro", meses=2, loja="Loja 1")
+
+    assert card.get("indisponivel_por_loja") is True
+    assert "total" not in card

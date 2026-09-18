@@ -18,6 +18,7 @@ import {
   UsersRound,
   ContactRound,
   PackageSearch,
+  Stethoscope,
   Receipt,
   Bot,
   Scissors,
@@ -123,6 +124,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   const emClientes = location.pathname.startsWith('/clientes');
   const emVendedores = location.pathname.startsWith('/vendedores');
   const emEstoque = location.pathname.startsWith('/estoque');
+  const emDiagnostico = location.pathname.startsWith('/diagnostico');
   const emDespesas = location.pathname.startsWith('/despesas');
   const emPosPrecificacao = location.pathname.startsWith('/pos-precificacao');
   const emAssistente = location.pathname.startsWith('/assistente');
@@ -282,6 +284,13 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
               collapsed={colapsado}
               ativo={emEstoque}
               onClick={() => navigate('/estoque')}
+            />
+            <NavItem
+              icon={<Stethoscope size={17} />}
+              label="Diagnóstico"
+              collapsed={colapsado}
+              ativo={emDiagnostico}
+              onClick={() => navigate('/diagnostico')}
             />
             <NavItem
               icon={<Receipt size={17} />}

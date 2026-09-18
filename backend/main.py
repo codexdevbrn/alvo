@@ -40,6 +40,7 @@ import dados_no_disco
 import db
 import inicio_automatico
 import harmonizar_clientes
+import cache_atacado
 import versao
 from alertas_clientes import avaliar_alertas_clientes, normalizar_regras_alerta
 from auth import criar_token, exigir_login
@@ -55,7 +56,12 @@ from engine import analise_funil as af
 from engine.recursos import pasta_base_execucao, pasta_web
 from engine.exportadores_pdf_word import exportar_relatorio_pdf
 from exportar_html import exportar_relatorio_html
-from monitor_empresas import METRICAS_COM_CMV, METRICAS_MONITOR, montar_card, obter_resumo_monitor
+from monitor_empresas import (
+    METRICAS_COM_CMV,
+    METRICAS_VALIDAS,
+    montar_card,
+    obter_resumo_monitor,
+)
 from relatorio_cliente import (
     ErroPainelCliente,
     gerar_painel_cliente_pdf,
@@ -100,7 +106,8 @@ from analise_vendedores import (  # noqa: E402
     montar_ranking_vendedores,
     preencher_vendedores_demo,
 )
-from analise_clientes import montar_painel_clientes  # noqa: E402
+from analise_clientes import causa_migracao_cliente, montar_painel_clientes, top_produtos_potencial_cliente  # noqa: E402
+from painel_diagnostico import montar_painel_diagnostico  # noqa: E402
 from estoque_cobertura import montar_cobertura_estoque, montar_resumo_estoque  # noqa: E402
 from despesas import montar_detalhe_despesas, montar_resumo_despesas  # noqa: E402
 from precificacao import montar_pos_precificacao  # noqa: E402
@@ -1133,14 +1140,17 @@ def _data_ultimo_movimento_bi(pasta_fonte: str) -> Optional[date]:
         return None
 
 
-def _carregar_atacado_df(pasta_fonte: str) -> pd.DataFrame:
+def _carregar_atacado_df(pasta_fonte: str, pasta_trabalho: str) -> pd.DataFrame:
     """Lê MOVIMENTO_ATUAL + PRODUTO da empresa direto da fonte.
 
     Os arquivos já chegam prontos para leitura. Este fluxo só lê, junta e mapeia
     colunas em memória — nunca cria Base.csv, harm.xlsx ou qualquer outro
-    arquivo na fonte."""
+    arquivo na fonte. O parse em si é cacheado em parquet na pasta de trabalho
+    (`cache_atacado`): troca de empresa e reinício do backend esvaziam o cache
+    em RAM de 1 slot (`_cache_base_empresa`), e sem o parquet cada troca pagaria
+    o CSV inteiro de novo."""
     caminho_movimento, caminho_produto, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
-    return af.carregar_csv_base_empresa(caminho_movimento, caminho_produto)
+    return cache_atacado.carregar_atacado_df_cacheado(caminho_movimento, caminho_produto, Path(pasta_trabalho))
 
 
 def _garantir_summary_dashboard_arquivo(
@@ -1381,7 +1391,7 @@ def _carregar_base_empresa_sem_trava(empresa: str) -> tuple[pd.DataFrame, int]:
         return em_cache["df"], em_cache["linhas_vazias"]
 
     try:
-        df_bruto = _carregar_atacado_df(pasta_fonte)
+        df_bruto = _carregar_atacado_df(pasta_fonte, pasta_trabalho)
         df, linhas_vazias = af.validar_e_limpar(df_bruto, receita_em_texto_br=False)
     except ErroNormalizacao as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -3189,6 +3199,108 @@ def obter_painel_clientes(
     return resultado
 
 
+@app.get("/api/clientes/{empresa}/potencial-produtos")
+def obter_potencial_produtos_cliente(
+    empresa: str,
+    cliente: str,
+    loja: Optional[str] = None,
+    modo_periodo: str = "fechados",
+    grupos_clientes: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
+    """Top produtos do cliente nos meses de maior receita — o detalhe por trás
+    do ranking "Maiores potenciais de compra" (mesma janela de `_potencial_compra`).
+    """
+    empresa = _validar_nome_empresa(empresa)
+    df, _linhas_vazias = _carregar_base_telas(
+        empresa, loja=loja, grupos_clientes=_parse_grupos_clientes(grupos_clientes),
+    )
+    resultado = top_produtos_potencial_cliente(df, cliente, modo_periodo=modo_periodo)
+    resultado["empresa"] = empresa
+    resultado["loja"] = _chave_escopo_loja(loja) or None
+    return resultado
+
+
+@app.get("/api/clientes/{empresa}/causa-migracao")
+def obter_causa_migracao_cliente(
+    empresa: str,
+    cliente: str,
+    loja: Optional[str] = None,
+    modo_periodo: str = "fechados",
+    grupos_clientes: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
+    """Eventos de migração de faixa ABC de um cliente (subiu/desceu), com a
+    causa provável de cada um — o detalhe por trás do score em "Pior cauda"/
+    "Melhores scores".
+    """
+    empresa = _validar_nome_empresa(empresa)
+    config = _ler_config_escopo(empresa, loja) or {}
+    df, _linhas_vazias = _carregar_base_telas(
+        empresa, loja=loja, grupos_clientes=_parse_grupos_clientes(grupos_clientes),
+    )
+    resultado = causa_migracao_cliente(
+        df, cliente, cortes=config.get("cortes_clientes"), modo_periodo=modo_periodo,
+    )
+    resultado["empresa"] = empresa
+    resultado["loja"] = _chave_escopo_loja(loja) or None
+    return resultado
+
+
+# Painel de diagnóstico: o cálculo custa ~2s na IBAD (o comparativo ano a ano
+# domina), então o resultado é cacheado como o da tela Estoque — assinatura dos
+# arquivos, escopo e cortes na chave. `date.today()` entra porque "meses
+# fechados" muda de referência quando o mês vira.
+_CACHE_DIAGNOSTICO_MAX = 8
+_cache_diagnostico: OrderedDict[tuple, dict] = OrderedDict()
+_cache_diagnostico_lock = threading.Lock()
+
+
+@app.get("/api/diagnostico/{empresa}")
+def obter_painel_diagnostico(
+    empresa: str,
+    loja: Optional[str] = None,
+    modo_periodo: str = "fechados",
+    grupos_clientes: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
+    """Diagnóstico da carteira: a tensão do período, a decomposição ano a ano
+    e o que puxou o mês para cima e para baixo."""
+    empresa = _validar_nome_empresa(empresa)
+    loja_norm = _normalizar_loja(loja)
+    grupos_norm = _parse_grupos_clientes(grupos_clientes)
+    caminho_movimento, caminho_produto = _caminho_produto_empresa(empresa)
+    try:
+        assinatura = (_assinatura_arquivo(caminho_movimento), _assinatura_arquivo(caminho_produto))
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Não foi possível ler a base: {exc}") from exc
+
+    chave = (
+        empresa, loja_norm or "", modo_periodo, assinatura, date.today(),
+        _assinatura_cortes_escopo(empresa, loja_norm, grupos_norm),
+    )
+    with _cache_diagnostico_lock:
+        cacheado = _cache_diagnostico.get(chave)
+        if cacheado is not None:
+            _cache_diagnostico.move_to_end(chave)
+            return cacheado
+
+    config = _ler_config_escopo(empresa, loja) or {}
+    df, _linhas_vazias = _carregar_base_telas(empresa, loja=loja, grupos_clientes=grupos_norm)
+    resultado = montar_painel_diagnostico(
+        df, modo_periodo=modo_periodo, cortes=config.get("cortes_clientes"),
+    )
+    resultado["empresa"] = empresa
+    resultado["loja"] = _chave_escopo_loja(loja) or None
+
+    with _cache_diagnostico_lock:
+        _cache_diagnostico[chave] = resultado
+        _cache_diagnostico.move_to_end(chave)
+        while len(_cache_diagnostico) > _CACHE_DIAGNOSTICO_MAX:
+            _cache_diagnostico.popitem(last=False)
+    return resultado
+
+
 @app.get("/api/clientes/buscar")
 def buscar_clientes(
     q: str = "",
@@ -3398,30 +3510,40 @@ def monitor_empresas(
     metrica: str = "receita",
     meses: int = 12,
     forcar: bool = False,
+    empresa: str | None = None,
+    loja: str | None = None,
 ):
     """Uma linha por empresa com a série da métrica pedida e a variação anual.
 
     Responde SEMPRE 200 com o que conseguiu montar: uma empresa sem base (ou com
     summary corrompido) entra com `estado` próprio em vez de derrubar a tela toda —
     com 59 empresas, a chance de uma estar em manutenção é alta.
+
+    `empresa` restringe a uma única empresa (resposta com 1 item) — é o que o
+    combobox de loja do card usa para recalcular só aquele card ao trocar de
+    loja, sem reprocessar as demais. `loja`, sozinho ou junto de `empresa`,
+    filtra a série pra aquela loja (ver `montar_card`); loja que não existe na
+    fonte cai no card com série vazia em vez de erro.
     """
-    if metrica not in METRICAS_MONITOR:
+    if metrica not in METRICAS_VALIDAS:
         raise HTTPException(
             status_code=400,
-            detail=f"Métrica inválida. Use uma de: {', '.join(METRICAS_MONITOR)}.",
+            detail=f"Métrica inválida. Use uma de: {', '.join(sorted(METRICAS_VALIDAS))}.",
         )
     meses = max(1, min(int(meses or 12), 60))
 
     trabalho_root = _exigir_caminho_trabalho()
+    nomes_empresas = [_validar_nome_empresa(empresa)] if empresa else _listar_empresas_fonte()
+
     cards: list[dict] = []
-    for empresa in _listar_empresas_fonte():
-        pasta_trabalho = os.path.join(trabalho_root, empresa)
+    for nome in nomes_empresas:
+        pasta_trabalho = os.path.join(trabalho_root, nome)
         try:
             resumo = obter_resumo_monitor(pasta_trabalho, forcar=forcar)
         except Exception:
-            logger.error("Falha ao resumir %s para o monitor:\n%s", empresa, traceback.format_exc())
+            logger.error("Falha ao resumir %s para o monitor:\n%s", nome, traceback.format_exc())
             cards.append({
-                "empresa": empresa,
+                "empresa": nome,
                 "estado": "erro",
                 "detalhe": "Não foi possível ler os dados desta empresa.",
             })
@@ -3429,26 +3551,29 @@ def monitor_empresas(
 
         if resumo is None:
             cards.append({
-                "empresa": empresa,
+                "empresa": nome,
                 "estado": "sem_base",
                 "detalhe": "Base ainda não gerada para esta empresa.",
             })
             continue
 
         # Empresa sem CMV na fonte não entra nas métricas de lucro — mostrar
-        # lucro == receita seria dado errado disfarçado de dado certo.
-        if metrica in METRICAS_COM_CMV and not resumo.get("tem_cmv"):
+        # lucro == receita seria dado errado disfarçado de dado certo. Filtro por
+        # loja não passa por aqui: o card lida com isso via `indisponivel_por_loja`.
+        if metrica in METRICAS_COM_CMV and not loja and not resumo.get("tem_cmv"):
             continue
 
-        cards.append(montar_card(empresa, resumo, metrica=metrica, meses=meses))
+        cards.append(montar_card(nome, resumo, metrica=metrica, meses=meses, loja=loja or None))
 
     # Favoritas vão na mesma resposta: a tela precisa das duas coisas para o
     # primeiro render, e duas requisições atrasariam o destaque das favoritas.
+    # Consultas de uma única empresa (recomputar 1 card ao trocar de loja) não
+    # precisam da lista inteira de favoritas de novo.
     return {
         "metrica": metrica,
         "meses": meses,
         "empresas": cards,
-        "favoritas": _ler_favoritas(),
+        "favoritas": [] if empresa else _ler_favoritas(),
     }
 
 

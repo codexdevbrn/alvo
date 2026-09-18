@@ -40,6 +40,7 @@ if str(_BACKEND) not in sys.path:
 
 import caminhos_padrao  # noqa: E402
 import harmonizar_clientes  # noqa: E402
+import cache_atacado  # noqa: E402
 from dashboard_summary import gerar_e_gravar_summary_dashboard  # noqa: E402
 from monitor_empresas import obter_resumo_monitor  # noqa: E402
 from engine import analise_funil as af  # noqa: E402
@@ -99,10 +100,13 @@ def _gerar_summary(fonte_emp: Path, trab_emp: Path) -> Path:
 
     Mesmo caminho que o app usa em runtime, o que garante que o arquivo pré-gerado
     aqui é idêntico ao que ele produziria sozinho: o único jeito de o lote não
-    virar uma segunda implementação que divirja com o tempo.
+    virar uma segunda implementação que divirja com o tempo. O join bruto passa
+    pelo mesmo cache parquet do runtime (`cache_atacado`): o CSV do dia muda, então
+    o lote sempre reparseia, mas grava o parquet fresco de quebra — o primeiro
+    acesso do dia a essa empresa no app já lê parquet em vez de CSV.
     """
     caminho_movimento, caminho_produto, _estoque, _vendas = resolver_arquivos_dados(fonte_emp)
-    df_bruto = af.carregar_csv_base_empresa(caminho_movimento, caminho_produto)
+    df_bruto = cache_atacado.carregar_atacado_df_cacheado(caminho_movimento, caminho_produto, trab_emp)
     df, _linhas_vazias = af.validar_e_limpar(df_bruto, receita_em_texto_br=False)
     return gerar_e_gravar_summary_dashboard(trab_emp, _harmonizar_clientes(trab_emp, df))
 

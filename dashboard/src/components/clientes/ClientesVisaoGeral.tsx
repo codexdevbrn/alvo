@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import {
+  Area,
+  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
@@ -25,6 +27,7 @@ import {
   obterPainelClientes,
   type EventoCarteira,
   type PainelClientesResposta,
+  type TopClientePainel,
 } from '../../api/client';
 import { formatCompacto, formatCurrency, formatNumber, formatPercent } from '../../utils/formatters';
 import { useMesesFechados } from '../../hooks/useMesesFechados';
@@ -50,6 +53,12 @@ const ROTULOS_EVENTO: Record<AbaEvento, string> = {
   recuperados: 'Recuperados',
   novos: 'Novos',
   perdidos: 'Perdidos',
+};
+
+const CORES_EVENTO: Record<AbaEvento, string> = {
+  novos: COR_NOVOS,
+  recuperados: COR_RECUPERADOS,
+  perdidos: COR_PERDIDOS,
 };
 
 function textoVariacao(valor: number | null | undefined): string {
@@ -105,17 +114,71 @@ function maiorFamilia(resumo: { perdidos: number; novos: number; recuperados: nu
   return familias[0][0];
 }
 
+/** Largura da barra de ranking, em %, relativa ao maior valor da lista.
+ *  Raiz quadrada em vez de proporção linear: um outlier (ex.: "CLIENTE
+ *  BALCÃO" concentrando venda avulsa) não pode reduzir a barra de todo o
+ *  resto a um traço invisível — a ordem se mantém, só a escala comprime. */
+function barraRanking(valor: number, maior: number): number {
+  if (maior <= 0 || valor <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.sqrt(valor / maior) * 100));
+}
+
+function LinhaMaiorCliente({
+  item,
+  posicao,
+  maiorReceita,
+}: {
+  item: TopClientePainel;
+  posicao: number;
+  maiorReceita: number;
+}) {
+  return (
+    <li className={classeLinha(item.variacao, item.alerta)}>
+      <div className="clientes-ranking-topo">
+        <span className="clientes-ranking-numero">{posicao}</span>
+        <strong title={item.cliente}>{item.cliente}</strong>
+        <span className="clientes-ranking-valor">{formatCurrency(item.receita_atual)}</span>
+      </div>
+      <div className="clientes-ranking-barra" aria-hidden="true">
+        <i style={{ width: `${barraRanking(item.receita_atual, maiorReceita)}%` }} />
+      </div>
+      <div className="clientes-ranking-rodape">
+        <span>média {formatCurrency(item.receita_media)}</span>
+        <em className={classeVariacao(item.variacao)}>
+          {item.variacao != null && item.variacao !== 0 && (
+            item.variacao > 0
+              ? <ArrowUpRight size={12} aria-hidden="true" />
+              : <ArrowDownRight size={12} aria-hidden="true" />
+          )}
+          {textoVariacao(item.variacao)}
+        </em>
+      </div>
+    </li>
+  );
+}
+
 function ListaEventos({ itens, evento }: { itens: EventoCarteira[]; evento: AbaEvento }) {
   if (itens.length === 0) {
     return <p className="analisador-hint">Nenhum cliente {ROTULOS_EVENTO[evento].toLowerCase()} neste mês.</p>;
   }
+  const maiorValor = Math.max(...itens.map((item) => item.receita), 1);
   return (
     <ul className="clientes-eventos-lista custom-scrollbar">
-      {itens.map((item) => (
+      {itens.map((item, indice) => (
         <li key={`${evento}-${item.cliente}`}>
-          <strong title={item.cliente}>{item.cliente}</strong>
-          {item.ultimo_mes && <span className="clientes-evento-selo">última compra {item.ultimo_mes}</span>}
-          <span className="clientes-evento-valor">{formatCurrency(item.receita)}</span>
+          <div className="clientes-ranking-topo">
+            <span className="clientes-ranking-numero">{indice + 1}</span>
+            <strong title={item.cliente}>{item.cliente}</strong>
+            <span className="clientes-ranking-valor">{formatCurrency(item.receita)}</span>
+          </div>
+          <div className="clientes-ranking-barra" aria-hidden="true">
+            <i style={{ width: `${barraRanking(item.receita, maiorValor)}%`, background: CORES_EVENTO[evento] }} />
+          </div>
+          {item.ultimo_mes && (
+            <div className="clientes-ranking-rodape">
+              <span className="clientes-evento-selo">última compra {item.ultimo_mes}</span>
+            </div>
+          )}
         </li>
       ))}
     </ul>
@@ -169,6 +232,11 @@ export function ClientesVisaoGeral({ empresa, loja = null, onCarregandoChange }:
       // fossem a mesma coisa.
       perdidos_grafico: -mes.perdidos,
     })),
+    [dados],
+  );
+
+  const maiorReceitaTop = useMemo(
+    () => Math.max(...(dados?.top_clientes ?? []).map((item) => item.receita_atual), 1),
     [dados],
   );
 
@@ -226,16 +294,41 @@ export function ClientesVisaoGeral({ empresa, loja = null, onCarregandoChange }:
       </LeituraFaixa>
 
       <section className="vendedores-kpis" aria-label="Indicadores da carteira">
-        <article className="glass-card glass-card-flat vendedores-hero">
-          <p className="despesas-hero-rotulo">
-            <UserPlus size={14} aria-hidden="true" /> Saldo da carteira
-          </p>
-          <strong className="despesas-hero-valor">
-            {resumo.saldo > 0 ? '+' : ''}{formatNumber(resumo.saldo)}
-          </strong>
-          <p className={`despesas-hero-nota${resumo.saldo >= 0 ? ' is-alta' : ' is-queda'}`}>
-            {formatNumber(resumo.novos)} novos · {formatNumber(resumo.recuperados)} recuperados · {formatNumber(resumo.perdidos)} perdidos
-          </p>
+        <article className="glass-card glass-card-flat vendedores-hero vendedores-hero-com-spark">
+          <div className="despesas-hero-texto">
+            <p className="despesas-hero-rotulo">
+              <UserPlus size={14} aria-hidden="true" /> Saldo da carteira
+            </p>
+            <strong className="despesas-hero-valor">
+              {resumo.saldo > 0 ? '+' : ''}{formatNumber(resumo.saldo)}
+            </strong>
+            <p className={`despesas-hero-nota${resumo.saldo >= 0 ? ' is-alta' : ' is-queda'}`}>
+              {formatNumber(resumo.novos)} novos · {formatNumber(resumo.recuperados)} recuperados · {formatNumber(resumo.perdidos)} perdidos
+            </p>
+          </div>
+          {dados.movimento.length > 1 && (
+            <div className="despesas-hero-spark" aria-hidden="true">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={dados.movimento} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="clientesHeroFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="var(--accent)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <Area
+                    type="monotone"
+                    dataKey="saldo"
+                    stroke="var(--accent)"
+                    strokeWidth={2}
+                    fill="url(#clientesHeroFill)"
+                    dot={false}
+                    isAnimationActive={false}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </article>
         <div className="vendedores-kpis-secundarios">
           <StatCard
@@ -250,7 +343,7 @@ export function ClientesVisaoGeral({ empresa, loja = null, onCarregandoChange }:
           />
           <StatCard
             title={`Receita de ${dados.rotulo_periodo}`}
-            value={formatCurrency(resumo.receita_atual)}
+            value={formatCompacto(resumo.receita_atual, true)}
             icon={Banknote}
             trend={resumo.variacao_receita == null
               ? undefined
@@ -407,38 +500,20 @@ export function ClientesVisaoGeral({ empresa, loja = null, onCarregandoChange }:
               <p>Receita do mês contra a média de {dados.meses_media} meses.</p>
             </div>
           </header>
-          <div className="clientes-tabela-wrap clientes-visao-tabela custom-scrollbar">
-            <table className="analisador-tabela clientes-tabela">
-              <thead>
-                <tr>
-                  <th className="col-nome">Cliente</th>
-                  <th className="col-num">Receita</th>
-                  <th className="col-num">Média</th>
-                  <th className="col-num">Variação</th>
-                </tr>
-              </thead>
-              <tbody>
-                {dados.top_clientes.length === 0 && (
-                  <tr><td colSpan={4} className="analisador-tabela-vazia">Sem venda no mês de referência.</td></tr>
-                )}
-                {dados.top_clientes.map((item) => (
-                  <tr key={item.cliente} className={classeLinha(item.variacao, item.alerta)}>
-                    <td className="col-nome" title={item.cliente}>{item.cliente}</td>
-                    <td className="col-num">{formatCurrency(item.receita_atual)}</td>
-                    <td className="col-num">{formatCurrency(item.receita_media)}</td>
-                    <td className={`col-num ${classeVariacao(item.variacao)}`}>
-                      {item.variacao != null && item.variacao !== 0 && (
-                        item.variacao > 0
-                          ? <ArrowUpRight size={13} aria-hidden="true" />
-                          : <ArrowDownRight size={13} aria-hidden="true" />
-                      )}
-                      {textoVariacao(item.variacao)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          {dados.top_clientes.length === 0 ? (
+            <p className="analisador-hint">Sem venda no mês de referência.</p>
+          ) : (
+            <ul className="clientes-eventos-lista custom-scrollbar">
+              {dados.top_clientes.map((item, indice) => (
+                <LinhaMaiorCliente
+                  key={item.cliente}
+                  item={item}
+                  posicao={indice + 1}
+                  maiorReceita={maiorReceitaTop}
+                />
+              ))}
+            </ul>
+          )}
         </section>
       </div>
     </div>

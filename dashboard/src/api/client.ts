@@ -1504,7 +1504,15 @@ export async function obterPosPrecificacao(
 // Monitoramento de empresas
 // ---------------------------------------------------------------------------
 
-export type MetricaMonitor = 'receita' | 'qtd' | 'clientes' | 'receita_dia' | 'lucro' | 'lucro_dia';
+export type MetricaMonitor =
+  | 'receita'
+  | 'qtd'
+  | 'clientes'
+  | 'receita_dia'
+  | 'lucro'
+  | 'lucro_dia'
+  /** % de receita em produtos sem descrição harmonizada (ver PRODUTO.csv). */
+  | 'nao_harmonizado';
 
 /** Um card da tela de monitoramento. `estado` diferente de 'ok' vem sem serie:
  *  empresa sem base gerada ou com summary ilegivel entra na lista mesmo assim,
@@ -1531,6 +1539,16 @@ export type EmpresaMonitor = {
   ultimo_periodo_parcial?: boolean;
   dias_venda_janela?: number | null;
   meses_serie?: number;
+  /** Lojas da empresa (mesma fonte do seletor da sidebar), para o combobox do card. */
+  lojas?: string[];
+  /** Lucro/lucro por dia não são filtráveis por loja (CMV só existe agregado
+   *  por empresa) — o card chega assim quando uma loja está selecionada. */
+  indisponivel_por_loja?: boolean;
+  /** Só na métrica `nao_harmonizado`: base do percentual, em produtos e em receita. */
+  produtos_total?: number;
+  produtos_nao_harmonizados?: number;
+  receita_total?: number;
+  receita_nao_harmonizada?: number;
 };
 
 export type MonitorResposta = {
@@ -1541,23 +1559,33 @@ export type MonitorResposta = {
 };
 
 export async function obterMonitorEmpresas(
-  parametros: { metrica?: MetricaMonitor; meses?: number; forcar?: boolean } = {},
+  parametros: {
+    metrica?: MetricaMonitor;
+    meses?: number;
+    forcar?: boolean;
+    /** Restringe a uma única empresa — usado para recalcular só um card ao trocar de loja. */
+    empresa?: string;
+    /** Filtra a série daquela loja; vazio/omitido = todas as lojas somadas. */
+    loja?: string;
+  } = {},
   signal?: AbortSignal,
 ): Promise<MonitorResposta> {
   const query = new URLSearchParams();
   if (parametros.metrica) query.set('metrica', parametros.metrica);
   if (parametros.meses) query.set('meses', String(parametros.meses));
   if (parametros.forcar) query.set('forcar', 'true');
+  if (parametros.empresa) query.set('empresa', parametros.empresa);
+  if (parametros.loja) query.set('loja', parametros.loja);
   const qs = query.toString();
-  
+
   // Se forçado (atualizar tudo), não usa cache (na verdade comCache(..., forcar) resolveria, mas como não temos forcar no hook das páginas, ignoramos o cache manual aqui)
   if (parametros.forcar) {
     const res = await chamar(`/api/monitor/empresas?${qs}`, { headers: authHeaders(), signal });
     return tratarResposta(res);
   }
-  
+
   return comCache(`monitor_${qs}`, async () => {
-    const res = await chamar(`/api/monitor/empresas?${qs}`, { headers: authHeaders() });
+    const res = await chamar(`/api/monitor/empresas?${qs}`, { headers: authHeaders(), signal });
     return tratarResposta(res);
   });
 }
@@ -1730,6 +1758,76 @@ export type TagResumoPainel = {
   participacao: number;
 };
 
+export type FaixaScorePainel = {
+  faixa: string;
+  clientes: number;
+};
+
+export type SaldoPeriodoScorePainel = {
+  periodo_anterior: string;
+  periodo_atual: string;
+  /** "set/25→out/25" — usado no tooltip do gráfico, não no eixo (lotado com 11+ pontos). */
+  rotulo: string;
+  /** "out/25" — o que o eixo X do gráfico mostra. */
+  rotulo_curto: string;
+  subiu: number;
+  desceu: number;
+  saldo: number;
+};
+
+export type RankingScorePainel = {
+  cliente: string;
+  score: number;
+  subiu: number;
+  desceu: number;
+  permanencia: number;
+};
+
+export type ScoreMigracaoPainel = {
+  disponivel: boolean;
+  janela_meses: number;
+  clientes_score_diferente_zero: number;
+  clientes_pior_cauda: number;
+  saldo_ultimo_periodo: SaldoPeriodoScorePainel | null;
+  distribuicao: FaixaScorePainel[];
+  saldo_por_periodo: SaldoPeriodoScorePainel[];
+  pior_cauda: RankingScorePainel[];
+  melhores: RankingScorePainel[];
+};
+
+export type FaixaPotencialPainel = {
+  nome: string;
+  /** Média do potencial por cliente do grupo — não a soma (grupos têm
+   *  tamanhos muito diferentes; somar faria "Demais" dominar só por ter
+   *  mais gente, não por potencial individual maior). */
+  potencial_medio: number;
+  clientes: number;
+};
+
+export type RankingPotencialPainel = {
+  cliente: string;
+  potencial: number;
+  /** Média mensal atual do cliente na mesma janela — o "atual" pra comparar
+   *  com o potencial (pico dos 3 melhores meses). */
+  atual: number;
+  /** % do potencial acima (ou abaixo) do atual; null se atual for zero. */
+  variacao: number | null;
+  grupo: string;
+};
+
+export type PotencialCompraPainel = {
+  disponivel: boolean;
+  janela_meses: number;
+  potencial_total: number;
+  potencial_medio: number;
+  /** Soma da média mensal atual de todos os clientes — o "hoje" pra
+   *  comparar com potencial_total (pico). */
+  atual_total: number;
+  variacao_total: number | null;
+  por_grupo: FaixaPotencialPainel[];
+  ranking: RankingPotencialPainel[];
+};
+
 export type PainelClientesResposta = {
   disponivel: boolean;
   mensagem: string | null;
@@ -1773,6 +1871,8 @@ export type PainelClientesResposta = {
   };
   top_clientes: TopClientePainel[];
   tags: TagResumoPainel[];
+  score_migracao: ScoreMigracaoPainel;
+  potencial_compra: PotencialCompraPainel;
 };
 
 /** Visão geral da carteira (aba 1 da tela de Clientes), calculada no backend. */
@@ -1793,6 +1893,305 @@ export async function obterPainelClientes(
     : `/api/clientes/${encodeURIComponent(empresa)}/painel${extra ? `?${extra}` : ''}`;
 
   return comCache(`painel_clientes_${empresa}_${loja || ''}_${modoPeriodo}_${grupos || ''}`, async () => {
+    const res = await chamar(url, { headers: authHeaders() });
+    return tratarResposta(res);
+  });
+}
+
+export type ProdutoPotencialCliente = {
+  descricao: string;
+  receita: number;
+  qtd: number;
+  participacao: number;
+};
+
+export type PotencialProdutosClienteResposta = {
+  disponivel: boolean;
+  cliente: string;
+  /** Rótulos dos meses de maior receita usados no cálculo, ex.: ["jan/26", "mar/26", "jun/26"]. */
+  meses: string[];
+  receita_total: number;
+  potencial: number;
+  produtos: ProdutoPotencialCliente[];
+  empresa?: string;
+  loja?: string | null;
+};
+
+/** Top produtos do cliente nos meses de maior receita — detalhe por trás de
+ *  uma linha do ranking "Maiores potenciais de compra". */
+export async function obterPotencialProdutosCliente(
+  empresa: string,
+  cliente: string,
+  loja?: string | null,
+  modoPeriodo: ModoPeriodo = 'fechados',
+  grupos?: string,
+): Promise<PotencialProdutosClienteResposta> {
+  const query = new URLSearchParams();
+  query.set('cliente', cliente);
+  const loja_ = queryLoja(loja);
+  if (modoPeriodo !== 'fechados') query.set('modo_periodo', modoPeriodo);
+  if (grupos) query.set('grupos_clientes', grupos);
+  const url = `/api/clientes/${encodeURIComponent(empresa)}/potencial-produtos${loja_ ? `${loja_}&` : '?'}${query.toString()}`;
+
+  return comCache(`potencial_produtos_${empresa}_${loja || ''}_${modoPeriodo}_${grupos || ''}_${cliente}`, async () => {
+    const res = await chamar(url, { headers: authHeaders() });
+    return tratarResposta(res);
+  });
+}
+
+export type EventoCausaMigracao = {
+  periodo_anterior: string;
+  periodo_atual: string;
+  direcao: 'Subiu' | 'Desceu';
+  faixa_anterior: string;
+  faixa_atual: string;
+  /** Vazio quando nenhuma heurística bateu com folga — não força uma causa
+   *  genérica só pra preencher a célula (ver engine._causa_provavel_migracao). */
+  causa: string;
+};
+
+export type CausaMigracaoClienteResposta = {
+  disponivel: boolean;
+  cliente: string;
+  eventos: EventoCausaMigracao[];
+  empresa?: string;
+  loja?: string | null;
+};
+
+/** Eventos de migração de faixa ABC de um cliente (subiu/desceu), com a causa
+ *  provável de cada um — o "porquê" por trás do score em "Pior cauda"/
+ *  "Melhores scores". */
+export async function obterCausaMigracaoCliente(
+  empresa: string,
+  cliente: string,
+  loja?: string | null,
+  modoPeriodo: ModoPeriodo = 'fechados',
+  grupos?: string,
+): Promise<CausaMigracaoClienteResposta> {
+  const query = new URLSearchParams();
+  query.set('cliente', cliente);
+  const loja_ = queryLoja(loja);
+  if (modoPeriodo !== 'fechados') query.set('modo_periodo', modoPeriodo);
+  if (grupos) query.set('grupos_clientes', grupos);
+  const url = `/api/clientes/${encodeURIComponent(empresa)}/causa-migracao${loja_ ? `${loja_}&` : '?'}${query.toString()}`;
+
+  return comCache(`causa_migracao_${empresa}_${loja || ''}_${modoPeriodo}_${grupos || ''}_${cliente}`, async () => {
+    const res = await chamar(url, { headers: authHeaders() });
+    return tratarResposta(res);
+  });
+}
+
+export type TensaoDiagnostico = {
+  receita_periodo: number | null;
+  receita_anterior: number | null;
+  /** Variação vs. o mês anterior. */
+  variacao_pct: number | null;
+  delta_receita: number | null;
+  receita_ano_anterior: number | null;
+  /** Variação vs. o mesmo mês do ano passado — o corte que neutraliza sazonalidade. */
+  variacao_ano_pct: number | null;
+  produtos_em_queda: number;
+  /** Quanto da queda total vem dos `topo_concentracao` produtos que mais caíram. */
+  concentracao_queda_pct: number | null;
+  topo_concentracao: number;
+  rotulo_anterior: string | null;
+  rotulo_ano_anterior: string | null;
+};
+
+export type PassoCascata = {
+  tipo: 'inicio' | 'ganho' | 'perda' | 'fim';
+  rotulo: string;
+  delta: number | null;
+  /** Geometria da barra flutuante: trecho invisível sob o colorido. */
+  base: number | null;
+  altura: number | null;
+  acumulado: number | null;
+};
+
+export type CascataDiagnostico = {
+  passos: PassoCascata[];
+  /** % da receita do período coberta pela cascata (o comparativo descarta
+   *  produto sem descrição harmonizada). */
+  cobertura_pct: number | null;
+};
+
+export type LinhaTornado = {
+  descricao: string;
+  receita_anterior: number | null;
+  receita_atual: number | null;
+  delta_receita: number;
+  variacao_pct: number | null;
+};
+
+export type FluxoFaixa = {
+  de: string;
+  para: string;
+  clientes: number;
+  receita: number | null;
+  /** Sinal e tamanho do movimento (+1 subiu uma faixa, −2 desceu duas). Vem do
+   *  backend porque a ordem das faixas não é alfabética: "Demais" é a última. */
+  passo: number;
+};
+
+export type ResumoFluxoFaixas = {
+  subiram: number;
+  desceram: number;
+  mantiveram: number;
+  /** Comprou só no trimestre atual / só no anterior — não vira fluxo. */
+  entraram: number;
+  sairam: number;
+  receita_subiram: number | null;
+  receita_desceram: number | null;
+};
+
+export type FluxoFaixasDiagnostico = {
+  disponivel: boolean;
+  mensagem: string | null;
+  /** Rótulo do trimestre móvel, ex. "jun/26–ago/26". */
+  rotulo_atual: string | null;
+  rotulo_anterior: string | null;
+  /** Faixas na ordem da curva (Grupo 1 … Demais). */
+  faixas: string[];
+  fluxos: FluxoFaixa[];
+  resumo: ResumoFluxoFaixas | null;
+};
+
+export type CelulaStreak = {
+  periodo: string;
+  receita: number | null;
+  /** Variação contra o período anterior. `null` na primeira coluna, que não tem
+   *  período anterior dentro da janela. */
+  variacao_pct: number | null;
+};
+
+export type CriterioStreak = 'perda' | 'receita' | 'ganho';
+
+export type ProdutoStreak = {
+  descricao: string;
+  /** O número que ordena a lista e vira o KPI da pílula: R$ perdido, R$
+   *  ganho, ou receita atual — depende de qual lista (`perda`/`receita`/`ganho`). */
+  valor: number | null;
+  receita_atual: number | null;
+  /** Altas ou quedas seguidas terminando no período mais recente. `null` na
+   *  lista `receita`, que não olha tendência. */
+  periodos_consecutivos: number | null;
+  /** % da receita do período mais recente. `null` fora da lista `receita`. */
+  participacao_pct: number | null;
+  /** Uma célula por período de `StreakDiagnostico.periodos`, na mesma ordem. */
+  celulas: CelulaStreak[];
+};
+
+export type StreakDiagnostico = {
+  periodos: string[];
+  /** Produtos em queda consecutiva agora, ordenados por R$ perdido. */
+  perda: ProdutoStreak[];
+  /** Produtos em alta consecutiva agora, ordenados por R$ ganho. */
+  ganho: ProdutoStreak[];
+  /** Maior receita no período mais recente, sem olhar tendência. */
+  receita: ProdutoStreak[];
+};
+
+export type ClienteRisco = {
+  cliente: string;
+  receita_anterior: number | null;
+  receita_atual: number | null;
+  /** Sempre positivo — é o R$ que caiu, não o saldo. */
+  perda_rs: number | null;
+  /** Negativo = caiu (convenção do projeto; a tela não inverte sinal). */
+  variacao_pct: number | null;
+  parou_de_comprar: boolean;
+  /** Faixa ABC do cliente no trimestre atual, ou "Sem faixa" sem receita na janela. */
+  faixa: string;
+};
+
+export type ComposicaoRiscoFaixa = {
+  faixa: string;
+  perda_rs: number | null;
+  clientes: number;
+};
+
+export type RiscoDiagnostico = {
+  disponivel: boolean;
+  mensagem: string | null;
+  /** Top N por perda em R$ — não é lista de "todo mundo que caiu". */
+  clientes: ClienteRisco[];
+  /** Perda agregada por faixa ABC, maior perda primeiro. */
+  composicao: ComposicaoRiscoFaixa[];
+};
+
+export type ClienteQuedaQuantidade = {
+  cliente: string;
+  qtd_anterior: number | null;
+  qtd_atual: number | null;
+  /** Negativo = caiu. */
+  variacao_pct: number | null;
+  /** Negativo = perdeu receita. */
+  perda_receita: number | null;
+  /** Produto que mais contribuiu para a queda de unidades deste cliente. */
+  produto_critico: string;
+};
+
+export type QuedaQuantidadeDiagnostico = {
+  disponivel: boolean;
+  mensagem: string | null;
+  clientes: ClienteQuedaQuantidade[];
+};
+
+export type CelulaErosao = {
+  produto: string;
+  /** `null` = este cliente não teve queda neste produto (não é zero). */
+  perda_rs: number | null;
+};
+
+export type ClienteErosao = {
+  cliente: string;
+  perda_total: number | null;
+  /** Uma célula por produto de `MatrizErosaoDiagnostico.produtos`, mesma ordem. */
+  celulas: CelulaErosao[];
+};
+
+export type MatrizErosaoDiagnostico = {
+  disponivel: boolean;
+  mensagem: string | null;
+  produtos: string[];
+  clientes: ClienteErosao[];
+};
+
+export type DiagnosticoResposta = {
+  disponivel: boolean;
+  mensagem: string | null;
+  periodo_atual: string | null;
+  rotulo_periodo: string | null;
+  tensao: TensaoDiagnostico | null;
+  cascata: CascataDiagnostico;
+  tornado: LinhaTornado[];
+  fluxo_faixas: FluxoFaixasDiagnostico;
+  streak: StreakDiagnostico;
+  risco: RiscoDiagnostico;
+  queda_quantidade: QuedaQuantidadeDiagnostico;
+  matriz_erosao: MatrizErosaoDiagnostico;
+  empresa?: string;
+  loja?: string | null;
+};
+
+/** Diagnóstico da carteira: tensão do período, decomposição ano a ano e o que
+ *  puxou o mês para cima e para baixo. */
+export async function obterPainelDiagnostico(
+  empresa: string,
+  loja?: string | null,
+  modoPeriodo: ModoPeriodo = 'fechados',
+  grupos?: string,
+): Promise<DiagnosticoResposta> {
+  const query = new URLSearchParams();
+  const loja_ = queryLoja(loja);
+  if (modoPeriodo !== 'fechados') query.set('modo_periodo', modoPeriodo);
+  if (grupos) query.set('grupos_clientes', grupos);
+  const extra = query.toString();
+  const url = loja_
+    ? `/api/diagnostico/${encodeURIComponent(empresa)}${loja_}${extra ? `&${extra}` : ''}`
+    : `/api/diagnostico/${encodeURIComponent(empresa)}${extra ? `?${extra}` : ''}`;
+
+  return comCache(`diagnostico_${empresa}_${loja || ''}_${modoPeriodo}_${grupos || ''}`, async () => {
     const res = await chamar(url, { headers: authHeaders() });
     return tratarResposta(res);
   });

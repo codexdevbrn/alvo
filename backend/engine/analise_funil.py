@@ -829,7 +829,12 @@ def poder_compra_agregado(df, clientes_excluidos=None, cortes=(30.0, 50.0, 60.0)
     substitui a segmentação por receita.
 
     Retorna (sem período, uma linha por cliente): Cliente, Poder_De_Compra,
-    Percentual_Acumulado, Grupo.
+    Receita_Media_Mensal, Percentual_Acumulado, Grupo. Receita_Media_Mensal é
+    o "atual" pra comparar com o "pico" de Poder_De_Compra — soma da receita
+    do cliente na janela recebida em `df` dividida pelo nº de meses-calendário
+    distintos presentes nela (mesmo divisor pra todo mundo, então meses sem
+    nenhuma venda de ninguém encolhem a média de todos igualmente, sem
+    distorcer a comparação entre clientes).
     """
     excluidos = set(clientes_excluidos or [])
     base = df[~df["Cliente"].isin(excluidos)] if excluidos else df
@@ -840,6 +845,10 @@ def poder_compra_agregado(df, clientes_excluidos=None, cortes=(30.0, 50.0, 60.0)
         .groupby("Cliente")["Receita"].apply(lambda serie: serie.head(3).mean())
         .rename("Poder_De_Compra")
     )
+    divisor_meses = max(receita_mensal["Periodo_Mensal"].nunique(), 1)
+    media_mensal_por_cliente = (
+        receita_mensal.groupby("Cliente")["Receita"].sum() / divisor_meses
+    ).rename("Receita_Media_Mensal")
 
     classificacao = classificar_clientes_agregado(
         df, clientes_excluidos, cortes, desconsiderar_balcao,
@@ -847,9 +856,11 @@ def poder_compra_agregado(df, clientes_excluidos=None, cortes=(30.0, 50.0, 60.0)
     )
     resultado = classificacao[["Cliente", "Percentual_Acumulado", "Faixa"]].rename(columns={"Faixa": "Grupo"})
     resultado = resultado.merge(top3_por_cliente, on="Cliente", how="left")
+    resultado = resultado.merge(media_mensal_por_cliente, on="Cliente", how="left")
     resultado["Poder_De_Compra"] = resultado["Poder_De_Compra"].fillna(0.0)
+    resultado["Receita_Media_Mensal"] = resultado["Receita_Media_Mensal"].fillna(0.0)
 
-    resultado = resultado[["Cliente", "Poder_De_Compra", "Percentual_Acumulado", "Grupo"]]
+    resultado = resultado[["Cliente", "Poder_De_Compra", "Receita_Media_Mensal", "Percentual_Acumulado", "Grupo"]]
     resultado.sort_values("Poder_De_Compra", ascending=False, inplace=True)
     if top_n is not None:
         resultado = resultado.head(int(top_n))
@@ -2140,12 +2151,15 @@ def _causa_provavel_migracao(contexto, cliente, periodo_anterior, periodo_atual,
     """
     Heurísticas para explicar a migração de faixa, usando os agregados
     pré-calculados em `contexto` (ver _preparar_contexto_causa_provavel) em
-    vez de refiltrar o DataFrame. Critérios propositalmente rígidos: só
-    retorna uma causa quando uma regra bate com folga (limiares bem acima do
-    "só um pouco mais que zero"); caso contrário retorna string vazia — não
-    força um "Caso Específico"/genérico só para preencher a célula. Sem
+    vez de refiltrar o DataFrame. Critérios com folga (limiares bem acima do
+    "só um pouco mais que zero"), mas não tão rígidos que a maioria das
+    migrações fique sem explicação — as duas heurísticas de "volume geral"
+    no fim existem justamente para os casos em que o cliente não abandonou
+    nem adicionou produto nenhum, só comprou mais ou menos do mesmo. Sem
     linguagem de "estimativa": o que aparece aqui é apresentado como fato,
-    não como palpite hedgeado.
+    não como palpite hedgeado. Se mesmo assim nada bater, retorna string
+    vazia — não força um "Caso Específico"/genérico só para preencher a
+    célula.
     """
     chave_anterior = (cliente, periodo_anterior)
     chave_atual = (cliente, periodo_atual)
@@ -2156,7 +2170,7 @@ def _causa_provavel_migracao(contexto, cliente, periodo_anterior, periodo_atual,
     if receita_atual == 0:
         return "Cliente parou de comprar no período atual."
 
-    # Produto abandonado respondia por boa parte da receita (>=70%, não 40%)
+    # Produto abandonado respondia por boa parte da receita (>=55%, não 20%)
     produtos_anterior = contexto["produtos"].get(chave_anterior, set())
     produtos_atual = contexto["produtos"].get(chave_atual, set())
     produtos_abandonados = produtos_anterior - produtos_atual
@@ -2165,25 +2179,31 @@ def _causa_provavel_migracao(contexto, cliente, periodo_anterior, periodo_atual,
             contexto["receita_produto"].get((cliente, periodo_anterior, produto), 0.0)
             for produto in produtos_abandonados
         )
-        if receita_anterior > 0 and receita_produtos_abandonados / receita_anterior >= 0.7:
+        if receita_anterior > 0 and receita_produtos_abandonados / receita_anterior >= 0.55:
             principal = _listar_produtos_por_receita(
                 contexto, cliente, periodo_anterior, produtos_abandonados,
             )
             return f"Deixou de comprar produto(s) que respondiam por {receita_produtos_abandonados / receita_anterior * 100:.0f}% da receita anterior ({principal})."
 
-    # Frequência de compra caiu pela metade ou mais (não só "caiu um pouco")
+    # Frequência de compra caiu 35%+ (não só "caiu um pouco")
     meses_anterior = contexto["meses"].get(chave_anterior, 0)
     meses_atual = contexto["meses"].get(chave_atual, 0)
-    if direcao == "Desceu" and meses_anterior > 0 and (meses_anterior - meses_atual) / meses_anterior >= 0.5:
-        return f"Redução de pelo menos metade na frequência de compra ({meses_anterior} período(s) com compra antes, {meses_atual} depois)."
+    if direcao == "Desceu" and meses_anterior > 0 and (meses_anterior - meses_atual) / meses_anterior >= 0.35:
+        return f"Redução na frequência de compra ({meses_anterior} período(s) com compra antes, {meses_atual} depois)."
 
-    # Ticket médio caiu 40%+ mantendo os mesmos produtos (não só 20%)
+    # Ticket médio caiu 25%+ mantendo os mesmos produtos (não só 10%)
     qtd_anterior = contexto["qtd"].get(chave_anterior, 0)
     qtd_atual = contexto["qtd"].get(chave_atual, 0)
     ticket_anterior = receita_anterior / qtd_anterior if qtd_anterior else 0
     ticket_atual = receita_atual / qtd_atual if qtd_atual else 0
-    if direcao == "Desceu" and ticket_anterior > 0 and ticket_atual <= ticket_anterior * 0.6:
+    if direcao == "Desceu" and ticket_anterior > 0 and ticket_atual <= ticket_anterior * 0.75:
         return f"Redução de {(1 - ticket_atual / ticket_anterior) * 100:.0f}% no ticket médio mantendo os mesmos produtos."
+
+    # Fallback: nenhum produto específico abandonado, frequência estável,
+    # ticket parecido — mas o volume geral (receita) caiu com folga (>=30%)
+    # nos mesmos produtos. Cobre o cliente que só comprou menos de tudo.
+    if direcao == "Desceu" and receita_anterior > 0 and receita_atual / receita_anterior <= 0.7:
+        return f"Reduziu {(1 - receita_atual / receita_anterior) * 100:.0f}% a receita nos mesmos produtos, sem abandonar nenhum específico."
 
     if direcao == "Subiu":
         produtos_novos = produtos_atual - produtos_anterior
@@ -2192,11 +2212,20 @@ def _causa_provavel_migracao(contexto, cliente, periodo_anterior, periodo_atual,
                 contexto["receita_produto"].get((cliente, periodo_atual, produto), 0.0)
                 for produto in produtos_novos
             )
-            if receita_atual > 0 and receita_produtos_novos / receita_atual >= 0.5:
+            if receita_atual > 0 and receita_produtos_novos / receita_atual >= 0.35:
                 principal = _listar_produtos_por_receita(
                     contexto, cliente, periodo_atual, produtos_novos,
                 )
                 return f"Novo(s) produto(s) já respondem por {receita_produtos_novos / receita_atual * 100:.0f}% da receita atual ({principal})."
+
+        # Frequência de compra aumentou 35%+ (o inverso da queda acima)
+        if meses_anterior > 0 and (meses_atual - meses_anterior) / meses_anterior >= 0.35:
+            return f"Aumento na frequência de compra ({meses_anterior} período(s) com compra antes, {meses_atual} depois)."
+
+        # Fallback: sem produto novo relevante nem mais frequência — mas o
+        # volume geral (receita) cresceu com folga (>=40%) nos mesmos produtos.
+        if receita_anterior > 0 and receita_atual / receita_anterior >= 1.4:
+            return f"Aumentou {(receita_atual / receita_anterior - 1) * 100:.0f}% a receita nos mesmos produtos."
 
     return ""
 
