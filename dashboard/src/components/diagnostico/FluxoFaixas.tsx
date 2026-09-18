@@ -2,6 +2,7 @@ import { useMemo, useRef, useState } from 'react';
 import { Sankey, ResponsiveContainer } from 'recharts';
 import type { FluxoFaixasDiagnostico } from '../../api/client';
 import { formatCurrency, formatNumber } from '../../utils/formatters';
+import { TituloDiagnostico } from './TituloDiagnostico';
 
 interface Props {
   fluxo: FluxoFaixasDiagnostico;
@@ -223,9 +224,6 @@ export function FluxoFaixas({ fluxo }: Props) {
   }
 
   const resumo = fluxo.resumo;
-  const titulo = resumo
-    ? `${resumo.desceram} cliente(s) desceram de faixa · ${resumo.subiram} subiram`
-    : 'Migração de clientes entre faixas ABC';
 
   // O <Tooltip> do Recharts não funciona pra Sankey nesta versão (3.6.0): o
   // dispatch do hover roda, mas o componente Tooltip nunca lê o estado ativo
@@ -252,7 +250,11 @@ export function FluxoFaixas({ fluxo }: Props) {
     <section className="glass-card glass-card-flat clientes-visao-card">
       <header className="clientes-visao-card-topo">
         <div>
-          <h2>{titulo}</h2>
+          <TituloDiagnostico
+            texto="Migração entre faixas ABC"
+            destaque={resumo ? `${resumo.desceram} desceram · ${resumo.subiram} subiram` : undefined}
+            variante={resumo && resumo.desceram > resumo.subiram ? 'queda' : resumo && resumo.subiram > resumo.desceram ? 'alta' : 'neutro'}
+          />
           <p>
             {resumo ? `${resumo.mantiveram} mantiveram a faixa. ` : ''}
             Só clientes que compraram nos dois trimestres migram — quem entrou ou saiu fica fora da banda.

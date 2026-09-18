@@ -4,6 +4,42 @@ Formato: uma seção por versão publicada, mais recente no topo. Histórico é
 incremental — entradas antigas nunca são apagadas. O estado atual das telas e
 funcionalidades vive em `DOC_TEC.md`, não aqui.
 
+## 1.7.15 — 2026-09-18
+
+### Adicionado
+
+- **Diagnóstico**: cartão **Margem × Giro** (Ato III) cruza margem sobre o
+  CMV com cobertura de estoque em meses, mesma cor/régua da tela de Estoque,
+  pra achar produto parado e com margem baixa (capital travado sem devolver
+  lucro). Títulos dos cartões ganham um componente comum (`TituloDiagnostico`)
+  com destaque numérico embutido.
+- Modo debug de performance (`?debug=perf` na URL): loga no console tempo de
+  fetch/parse/cache de toda chamada de API e, no Dashboard, cada etapa da
+  agregação. `__prismaPerf.exportar()` no console copia o relatório.
+
+### Alterado
+
+- **Diagnóstico**: Ato III (Queda de Quantidade) troca gráfico de haltere por
+  barras lado a lado; Matriz de Erosão e Matriz Streak ganham toggle
+  valor/percentual e ajustes de cor/legibilidade.
+- **Performance**: 13 rotas passam a carregar sob demanda (`React.lazy`) em
+  vez de tudo no bundle inicial — chunk de entrada cai de 1429 kB para
+  774 kB, e o do Analisador de 352 kB para 68 kB (`xlsx` só baixa ao
+  exportar).
+- **Dashboard**: agregação por período deixa de varrer a base 6 vezes por
+  mudança de filtro (uma por janela) — agora é 1 passada só, com as janelas
+  somando os baldes por período. ~505 ms → ~140 ms por filtro na base da
+  IBAD.
+- **Backend**: `/api/clientes/{empresa}/painel` e `/api/precificacao/{empresa}`
+  ganham cache de resultado (mesmo molde do `/api/diagnostico`) — chamada
+  repetida cai de ~8,9 s / ~3,3 s para menos de 100 ms.
+
+### Corrigido
+
+- Gráfico de Margem × Giro: pontos de produtos com a mesma descrição
+  harmonizada (referências diferentes, nome comum) colidiam de key no React
+  e podiam sumir ou duplicar na tela.
+
 ## 1.7.14 — 2026-09-16
 
 ### Adicionado

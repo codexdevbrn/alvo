@@ -3,6 +3,8 @@
  * Usa Memória (Map) primariamente e tenta usar o Local Storage para persistir caso dê F5.
  */
 
+import { perfLog, perfTimer } from './perfDebug';
+
 const CACHE_PREFIX = 'prisma_req_cache_';
 const memoriaCache = new Map<string, unknown>();
 /** Pedidos iguais em voo compartilham a Promise. Sem isso, o Strict Mode
@@ -70,13 +72,22 @@ export async function comCache<T>(
   forcarNovo = false
 ): Promise<T> {
   if (!forcarNovo) {
+    const tHit = perfTimer();
     const emCache = lerCache<T>(chave);
-    if (emCache) return emCache;
+    if (emCache) {
+      perfLog(chave, 'cache HIT', tHit());
+      return emCache;
+    }
     const emVoo = inflight.get(chave);
-    if (emVoo) return emVoo as Promise<T>;
+    if (emVoo) {
+      perfLog(chave, 'cache in-flight (aguardando)', tHit());
+      return emVoo as Promise<T>;
+    }
   }
+  const tMiss = perfTimer();
   const pendente = fetcher()
     .then((dados) => {
+      perfLog(chave, 'cache MISS (total)', tMiss());
       gravarCache(chave, dados);
       return dados;
     })

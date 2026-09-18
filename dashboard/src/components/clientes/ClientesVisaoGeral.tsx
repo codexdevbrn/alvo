@@ -44,7 +44,7 @@ interface Props {
 type AbaEvento = 'recuperados' | 'novos' | 'perdidos';
 
 /** Ouro do acento para a faixa mais forte, esfriando até o cinza de "Demais". */
-const CORES_FAIXA = ['#dabb6c', '#c2a45f', '#8e8a7d', '#5d5d66', '#43434b'];
+const CORES_FAIXA = ['#dabb6c', '#b8964f', '#7d6c52', '#5d5d66', '#43434b'];
 const COR_NOVOS = '#4cae7a';
 const COR_RECUPERADOS = '#dabb6c';
 const COR_PERDIDOS = '#e0645c';

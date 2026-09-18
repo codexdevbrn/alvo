@@ -1,3 +1,4 @@
+import { Fragment } from 'react';
 import { ArrowDownRight, ArrowUpRight, CalendarRange, Crosshair, TrendingDown } from 'lucide-react';
 import { StatCard } from '../StatCard';
 import type { TensaoDiagnostico } from '../../api/client';
@@ -41,52 +42,54 @@ export function TensaoHero({ tensao, rotuloPeriodo }: Props) {
         : `Cresce contra ${tensao.rotulo_ano_anterior}.`;
 
   return (
-    <section className="diagnostico-tensao" aria-label="Movimento do período">
-      <article className="glass-card glass-card-flat vendedores-hero">
-        <p className="despesas-hero-rotulo">
-          <CalendarRange size={14} aria-hidden="true" /> Receita de {rotuloPeriodo}
-        </p>
-        <strong className="despesas-hero-valor">{formatCurrency(tensao.receita_periodo ?? 0)}</strong>
-        <p className={`despesas-hero-nota ${caiuNoMes ? 'is-queda' : 'is-alta'}`}>
-          {caiuNoMes
-            ? <ArrowDownRight size={14} aria-hidden="true" />
-            : <ArrowUpRight size={14} aria-hidden="true" />}
-          {formatCurrency(Math.abs(tensao.delta_receita ?? 0))} {caiuNoMes ? 'a menos' : 'a mais'} que {tensao.rotulo_anterior}
-        </p>
-      </article>
-
-      <div className="vendedores-kpis-secundarios">
-        <StatCard
-          title={`vs. ${tensao.rotulo_anterior ?? 'mês anterior'}`}
-          value={variacaoMes == null ? '—' : formatPercent(variacaoMes, 1)}
-          icon={caiuNoMes ? ArrowDownRight : ArrowUpRight}
-          useTrendColor
-          trendUp={!caiuNoMes}
-          trend={notaDelta(tensao.delta_receita ?? null, tensao.rotulo_anterior)}
-        />
-        <StatCard
-          title={`vs. ${tensao.rotulo_ano_anterior ?? 'ano anterior'}`}
-          value={variacaoAno == null ? '—' : formatPercent(variacaoAno, 1)}
-          icon={(variacaoAno ?? 0) < 0 ? ArrowDownRight : ArrowUpRight}
-          useTrendColor
-          trendUp={(variacaoAno ?? 0) >= 0}
-          trend={notaDelta(deltaAno, tensao.rotulo_ano_anterior)}
-        />
-        <StatCard
-          title="Concentração"
-          value={tensao.concentracao_queda_pct == null ? '—' : formatPercent(tensao.concentracao_queda_pct, 0)}
-          icon={Crosshair}
-          trend={`da queda nos ${tensao.topo_concentracao} produtos que mais caíram`}
-        />
-        <StatCard
-          title="Produtos em queda"
-          value={formatNumber(tensao.produtos_em_queda)}
-          icon={TrendingDown}
-          trend={`contra ${tensao.rotulo_anterior ?? 'o mês anterior'}`}
-        />
-      </div>
-
+    <Fragment>
       {leitura && <p className="diagnostico-leitura">{leitura}</p>}
-    </section>
+
+      <section className="diagnostico-tensao" aria-label="Movimento do período">
+        <article className="glass-card glass-card-flat vendedores-hero">
+          <p className="despesas-hero-rotulo">
+            <CalendarRange size={14} aria-hidden="true" /> Receita de {rotuloPeriodo}
+          </p>
+          <strong className="despesas-hero-valor">{formatCurrency(tensao.receita_periodo ?? 0)}</strong>
+          <p className={`despesas-hero-nota ${caiuNoMes ? 'is-queda' : 'is-alta'}`}>
+            {caiuNoMes
+              ? <ArrowDownRight size={14} aria-hidden="true" />
+              : <ArrowUpRight size={14} aria-hidden="true" />}
+            {formatCurrency(Math.abs(tensao.delta_receita ?? 0))} {caiuNoMes ? 'a menos' : 'a mais'} que {tensao.rotulo_anterior}
+          </p>
+        </article>
+
+        <div className="vendedores-kpis-secundarios">
+          <StatCard
+            title={`vs. ${tensao.rotulo_anterior ?? 'mês anterior'}`}
+            value={variacaoMes == null ? '—' : formatPercent(variacaoMes, 1)}
+            icon={caiuNoMes ? ArrowDownRight : ArrowUpRight}
+            useTrendColor
+            trendUp={!caiuNoMes}
+            trend={notaDelta(tensao.delta_receita ?? null, tensao.rotulo_anterior)}
+          />
+          <StatCard
+            title={`vs. ${tensao.rotulo_ano_anterior ?? 'ano anterior'}`}
+            value={variacaoAno == null ? '—' : formatPercent(variacaoAno, 1)}
+            icon={(variacaoAno ?? 0) < 0 ? ArrowDownRight : ArrowUpRight}
+            useTrendColor
+            trendUp={(variacaoAno ?? 0) >= 0}
+            trend={notaDelta(deltaAno, tensao.rotulo_ano_anterior)}
+          />
+          <StatCard
+            title="Concentração"
+            value={tensao.concentracao_queda_pct == null ? '—' : formatPercent(tensao.concentracao_queda_pct, 0)}
+            icon={Crosshair}
+            trend={`da queda nos ${tensao.topo_concentracao} produtos que mais caíram`}
+          />
+          <StatCard
+            title="Produtos em queda"
+            value={formatNumber(tensao.produtos_em_queda)}
+            icon={TrendingDown}
+            trend={`contra ${tensao.rotulo_anterior ?? 'o mês anterior'}`}
+          />
+        </div>
+      </section>
+    </Fragment>
   );
 }

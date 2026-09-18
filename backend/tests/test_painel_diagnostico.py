@@ -268,3 +268,76 @@ def test_matriz_erosao_cruza_cliente_e_produto_que_causou_a_queda():
     celulas_carla = {celula["produto"]: celula["perda_rs"] for celula in por_cliente["CARLA"]["celulas"]}
     assert celulas_carla["Pneu"] == 300.0
     assert celulas_carla["Lubrificante"] is None
+
+
+def _base_margem_giro() -> pd.DataFrame:
+    """Dois produtos, jul/ago-2026: Lubrificante (código A) com giro normal,
+    Bateria (código B) sem venda nenhuma no `_vendas_margem_giro`."""
+    linhas = [
+        {"Cliente": "Cliente A", "descricao": "Lubrificante", "Código Interno": "A",
+         "Periodo_Mensal": "2026-07", "Receita": 900, "CMV": 300, "QTD": 10},
+        {"Cliente": "Cliente A", "descricao": "Lubrificante", "Código Interno": "A",
+         "Periodo_Mensal": "2026-08", "Receita": 900, "CMV": 300, "QTD": 10},
+        {"Cliente": "Cliente B", "descricao": "Bateria", "Código Interno": "B",
+         "Periodo_Mensal": "2026-07", "Receita": 200, "CMV": 160, "QTD": 4},
+        {"Cliente": "Cliente B", "descricao": "Bateria", "Código Interno": "B",
+         "Periodo_Mensal": "2026-08", "Receita": 250, "CMV": 200, "QTD": 5},
+    ]
+    return pd.DataFrame(linhas)
+
+
+def _estoque_margem_giro() -> pd.DataFrame:
+    return pd.DataFrame([
+        {"Loja": "Matriz", "NOME_FABRICANTE": "Marca A", "descricao": "Lubrificante",
+         "CODIGO_INTERNO_PRODUTO": "A", "CODIGO_REFERENCIA_PRODUTO": "REF-A",
+         "Qtd_estoque": 60, "Preço_médio_de_venda": 20, "Preço_médio_cmv": 5, "Último_custo": 0},
+        {"Loja": "Matriz", "NOME_FABRICANTE": "Marca B", "descricao": "Bateria",
+         "CODIGO_INTERNO_PRODUTO": "B", "CODIGO_REFERENCIA_PRODUTO": "REF-B",
+         "Qtd_estoque": 300, "Preço_médio_de_venda": 30, "Preço_médio_cmv": 8, "Último_custo": 0},
+    ])
+
+
+def _vendas_margem_giro() -> pd.DataFrame:
+    # Só o produto A vende nos últimos 6 meses; B fica sem giro nenhum.
+    return pd.DataFrame([
+        {"Nome_Loja": "Matriz", "CODIGO_INTERNO_PRODUTO": "A", "Ano": 2026, "Mês": mes, "QTD": 10}
+        for mes in range(1, 7)
+    ])
+
+
+def test_margem_giro_cruza_margem_do_movimento_com_cobertura_do_estoque():
+    painel = montar_painel_diagnostico(
+        _base_margem_giro(), modo_periodo="completo",
+        estoque=_estoque_margem_giro(), vendas=_vendas_margem_giro(),
+    )
+    margem_giro = painel["margem_giro"]
+    assert margem_giro["disponivel"] is True
+
+    produtos = {item["descricao"]: item for item in margem_giro["produtos"]}
+    lubrificante = produtos["Lubrificante"]
+    assert lubrificante["margem_pct"] == round((900 - 300) / 900 * 100, 2)
+    assert lubrificante["valor_estoque"] == 60 * 5
+    assert lubrificante["cobertura_meses"] == round(60 / 10, 2)
+    assert lubrificante["status"] == "normal"
+
+    bateria = produtos["Bateria"]
+    assert bateria["margem_pct"] == round((250 - 200) / 250 * 100, 2)
+    assert bateria["cobertura_meses"] is None
+    assert bateria["status"] == "no_sales"  # sem venda em `_vendas_margem_giro`
+
+    bullet = {item["status"]: item for item in margem_giro["bullet"]}
+    assert bullet["normal"]["produtos"] == 1
+    assert bullet["no_sales"]["produtos"] == 1
+    assert bullet["no_sales"]["valor_estoque"] == 300 * 8
+
+
+def test_margem_giro_indisponivel_sem_estoque():
+    painel = montar_painel_diagnostico(_base_margem_giro(), modo_periodo="completo")
+    assert painel["margem_giro"]["disponivel"] is False
+
+
+def test_margem_giro_indisponivel_quando_base_nao_tem_cmv():
+    painel = montar_painel_diagnostico(
+        _base_risco(), modo_periodo="completo", estoque=_estoque_margem_giro(),
+    )
+    assert painel["margem_giro"]["disponivel"] is False

@@ -1,6 +1,7 @@
 import { Bar, BarChart, Cell, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { CascataDiagnostico, PassoCascata } from '../../api/client';
 import { formatCompacto, formatCurrency, formatPercent } from '../../utils/formatters';
+import { TituloDiagnostico } from './TituloDiagnostico';
 
 interface Props {
   cascata: CascataDiagnostico;
@@ -85,12 +86,13 @@ export function CascataReceita({ cascata }: Props) {
     <section className="glass-card glass-card-flat clientes-visao-card">
       <header className="clientes-visao-card-topo">
         <div>
-          <h2>
-            {caiu ? 'Caiu' : 'Subiu'} {formatCurrency(Math.abs(delta))} contra {inicio.rotulo}
-            {' · '}{perdas} produto(s) puxaram, {ganhos} seguraram
-          </h2>
+          <TituloDiagnostico
+            texto="Receita vs. ano anterior"
+            destaque={`${caiu ? '−' : '+'}${formatCurrency(Math.abs(delta))}`}
+            variante={caiu ? 'queda' : 'alta'}
+          />
           <p>
-            Mesmo mês do ano anterior — o corte que tira sazonalidade da conta.
+            {perdas} produto(s) puxaram, {ganhos} seguraram, contra {inicio.rotulo} do ano anterior — o corte que tira sazonalidade da conta.
             {cobertura != null && ` Cobre ${formatPercent(cobertura, 1)} da receita (produtos harmonizados).`}
           </p>
         </div>

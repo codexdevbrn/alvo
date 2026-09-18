@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { CriterioStreak, ProdutoStreak, StreakDiagnostico } from '../../api/client';
 import { formatCompacto, formatCurrency, formatPercent } from '../../utils/formatters';
+import { TituloDiagnostico } from './TituloDiagnostico';
 
 interface Props {
   streak: StreakDiagnostico;
@@ -18,16 +19,15 @@ function legenda(produto: ProdutoStreak, criterio: CriterioStreak): string {
   return `${produto.periodos_consecutivos} em queda`;
 }
 
-function titulo(produto: ProdutoStreak, criterio: CriterioStreak): string {
+function destaqueTitulo(produto: ProdutoStreak, criterio: CriterioStreak): string {
+  if (criterio === 'receita') return formatPercent(produto.participacao_pct ?? 0, 1);
   const valor = formatCurrency(Math.abs(produto.valor ?? 0));
-  if (criterio === 'receita') {
-    return `${produto.descricao} responde por ${formatPercent(produto.participacao_pct ?? 0, 1)} da receita do período`;
-  }
-  if (criterio === 'ganho') {
-    return `${produto.descricao} subiu ${produto.periodos_consecutivos} período(s) seguidos, ${valor} ganhos`;
-  }
-  return `${produto.descricao} caiu ${produto.periodos_consecutivos} período(s) seguidos, ${valor} perdidos`;
+  return criterio === 'ganho' ? `+${valor}` : `−${valor}`;
 }
+
+const VARIANTE_POR_CRITERIO: Record<CriterioStreak, 'queda' | 'alta' | 'neutro'> = {
+  receita: 'neutro', perda: 'queda', ganho: 'alta',
+};
 
 /** ATO II: quais produtos vêm caindo mês a mês, sem interrupção — grade CSS,
  *  não SVG, porque a matriz é pequena (até 10 × 6) e cada célula precisa ser
@@ -43,18 +43,29 @@ function titulo(produto: ProdutoStreak, criterio: CriterioStreak): string {
  *  aqui o sinal é direção (subiu/desceu), não magnitude sequencial. */
 export function MatrizStreak({ streak }: Props) {
   const [criterio, setCriterio] = useState<CriterioStreak>('perda');
-  const produtos = streak[criterio];
+  // Guarda contra backend desatualizado (shape antigo sem perda/receita/ganho
+  // separados) — sem isso a tela inteira quebra em vez de só mostrar vazio.
+  const produtos = streak[criterio] ?? [];
+  const periodos = streak.periodos ?? [];
 
   return (
     <section className="glass-card glass-card-flat clientes-visao-card">
       <header className="clientes-visao-card-topo">
         <div>
-          <h2>{produtos.length > 0 ? titulo(produtos[0], criterio) : 'Sem produto nessa classificação'}</h2>
+          {produtos.length > 0 ? (
+            <TituloDiagnostico
+              texto={produtos[0].descricao}
+              destaque={destaqueTitulo(produtos[0], criterio)}
+              variante={VARIANTE_POR_CRITERIO[criterio]}
+            />
+          ) : (
+            <TituloDiagnostico texto="Sem produto nessa classificação" />
+          )}
           <p>Receita de cada produto, mês a mês.</p>
         </div>
-        {streak.periodos.length > 0 && (
+        {periodos.length > 0 && (
           <span className="diagnostico-base-chip">
-            {streak.periodos[0]} → {streak.periodos[streak.periodos.length - 1]} · mês a mês
+            {periodos[0]} → {periodos[periodos.length - 1]} · mês a mês
           </span>
         )}
       </header>
@@ -81,10 +92,10 @@ export function MatrizStreak({ streak }: Props) {
         <>
           <div
             className="diagnostico-streak-grid"
-            style={{ gridTemplateColumns: `minmax(0, 12rem) repeat(${streak.periodos.length}, minmax(0, 1fr))` }}
+            style={{ gridTemplateColumns: `minmax(0, 12rem) repeat(${periodos.length}, minmax(0, 1fr))` }}
           >
             <div className="diagnostico-streak-cabecalho diagnostico-streak-produto" aria-hidden="true" />
-            {streak.periodos.map((periodo) => (
+            {periodos.map((periodo) => (
               <div key={periodo} className="diagnostico-streak-cabecalho">{periodo}</div>
             ))}
 

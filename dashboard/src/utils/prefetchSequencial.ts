@@ -5,6 +5,7 @@ import { limparCacheGeral } from './cacheRequisicoes';
 import { invalidarSummary, gravarSummaryCache, lerSummaryCache } from './cacheSummary';
 import {
   obterPainelClientes,
+  obterPainelDiagnostico,
   obterRankingVendedores,
   obterResumoEstoque,
   obterResumoDespesas,
@@ -93,6 +94,7 @@ type TarefaPrefetch = {
 /** Mais específico primeiro: `/` casa com tudo se vier no começo. */
 const ROTA_TAREFA: [string, string][] = [
   ['/pos-precificacao', 'Pós precificação'],
+  ['/diagnostico', 'Diagnóstico'],
   ['/vendedores', 'Vendedores'],
   ['/estoque', 'Estoque'],
   ['/despesas', 'Despesas'],
@@ -191,6 +193,9 @@ async function rodarFila(empresa: string, motivo: MotivoPrefetch = 'empresa') {
     }},
     { nome: 'Clientes: Visão geral', fn: async () => {
         await Promise.all(MODOS_PERIODO.map((modo) => obterPainelClientes(empresaAtual, loja, undefined, modo)));
+    }},
+    { nome: 'Diagnóstico', fn: async () => {
+        await Promise.all(MODOS_PERIODO.map((modo) => obterPainelDiagnostico(empresaAtual, loja, modo)));
     }},
     { nome: 'Clientes: Base e tags', fn: async () => {
         await Promise.all([obterBaseClientes(empresaAtual), obterTagsClientes(empresaAtual)]);

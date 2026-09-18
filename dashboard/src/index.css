@@ -7987,7 +7987,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   border-radius: var(--raio-pill);
 }
 
-.vendedores-chart-legenda i.is-mes { background: #6f8cc4; }
+.vendedores-chart-legenda i.is-mes { background: var(--accent); }
 .vendedores-chart-legenda i.is-media { background: #dabb6c; }
 
 .vendedores-chart-tooltip {
@@ -8377,9 +8377,10 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 }
 
 .clientes-visao-card-topo p {
-  margin: 0.2rem 0 0;
+  margin: 0.25rem 0 0;
   color: var(--text-muted);
-  font-size: 0.72rem;
+  font-size: 0.70rem;
+  line-height: 1.35;
 }
 
 .clientes-visao-card-rodape {
@@ -9784,14 +9785,19 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   gap: 1rem;
 }
 
+/* Mesma base de coluna (1fr, gap 1rem) de `.diagnostico-mecanismo-3col`, de
+   propósito: o hero fica com a largura exata de 1 dos 3 cards da linha logo
+   abaixo (CascataReceita/ScatterRisco/MargemGiro) — não é aproximação por
+   fr, é a mesma track de grid. */
 .diagnostico-tensao {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(0, 2fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   align-items: stretch;
   gap: 1rem;
 }
 
 .diagnostico-tensao .vendedores-kpis-secundarios {
+  grid-column: span 2;
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 0.75rem;
@@ -9811,6 +9817,12 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   font-size: 0.82rem;
   line-height: 1.5;
 }
+
+/* Variante de 3 colunas — CascataReceita, ScatterRisco e MargemGiro logo
+   após o hero, mesma linha. Cada card carrega gráfico próprio já preparado
+   pra encolher (ResponsiveContainer), então 1/3 de largura funciona sem
+   ajuste adicional de altura. */
+.diagnostico-mecanismo.diagnostico-mecanismo-3col { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 
 .diagnostico-mecanismo {
   display: grid;
@@ -9834,6 +9846,30 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 /* Contra o que aquele card compara. A cascata mede ano contra ano e o tornado
    mês contra mês, então o mesmo produto sobe num e cai no outro: sem o chip no
    cabeçalho, os dois cards lado a lado leem como erro de cálculo. */
+.diagnostico-titulo {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0;
+  font-size: 0.95rem;
+  color: var(--text-primary);
+}
+
+.diagnostico-titulo-pilula {
+  padding: 0.15rem 0.55rem;
+  border-radius: var(--raio-pill);
+  background: var(--surface-3);
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.diagnostico-titulo-pilula.is-queda { background: var(--danger-bg); color: var(--danger); }
+.diagnostico-titulo-pilula.is-alta { background: var(--success-bg); color: var(--success); }
+
 .diagnostico-base-chip {
   flex-shrink: 0;
   align-self: flex-start;
@@ -9947,7 +9983,18 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
    `flex`, não `height` fixo: cresce até a altura que o dumbbell ao lado
    impuser (composição por faixa entra depois do gráfico, então é este card
    que normalmente pauta a linha). */
-.diagnostico-scatter-chart { flex: 1 1 auto; min-height: 260px; }
+/* 320px (era 260px): na linha de 3 colunas a largura já é fixa e apertada —
+   o único jeito de dar mais espaço pros pontos do scatter não se sobreporem
+   é crescer em altura. */
+.diagnostico-scatter-chart { flex: 1 1 auto; min-height: 320px; }
+
+/* Dumbbell (queda de quantidade) é quem pauta a altura desta linha — ver
+   comentário acima em `.diagnostico-scatter-chart`. Maior que o scatter de
+   propósito: menos categorias, cada barra precisa de mais espaço pra não
+   comprimir o rótulo de cliente (nome longo, já truncado no tick). */
+/* margin-bottom zerada: `.clientes-visao-card` (flex column) já dá gap: 0.75rem
+   entre filhos — a margem de `.vendedores-chart` empilhava em cima disso. */
+.diagnostico-dumbbell-chart { flex: 1 1 auto; min-height: 360px; margin-bottom: 0; }
 
 /* Detalhe do ponto clicado no scatter de risco — mesmo espírito do drill
    inline de Clientes, mas sem request: o clique só revela campos que já
@@ -9983,6 +10030,25 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   font-size: 0.68rem;
 }
 
+/* Chamada-de-ação explícita para o drill — em vez do usuário descobrir por
+   acaso que dá para clicar num ponto do gráfico, o link já diz o que vai
+   encontrar. Mesmo `<button>` fecha o drill quando já está aberto. */
+.diagnostico-ver-mais {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  margin-top: 0.6rem;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font-size: 0.78rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.diagnostico-ver-mais:hover { color: var(--accent-hover); }
+
 /* Barra 100% empilhada, uma linha só: perda por faixa ABC. Não é gráfico
    próprio porque só existem 4-5 categorias — a régua de "acima de ~7 classes
    a tabela vence" nem chega a valer aqui, mas uma barra de várias cores
@@ -10000,6 +10066,58 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   height: 100%;
 }
 
+/* A barra sozinha só entrega cor — sem isto, cada segmento só se decodifica
+   passando o mouse (`title`), o que não funciona em touch e não se vê de
+   relance. Uma linha por item (não wrap): rótulo à esquerda, valor tabular à
+   direita — o olho lê a coluna de números sem precisar realinhar por linha.
+   Itens sem valor (sem largura nenhuma na barra) não entram aqui — listar um
+   item que não aparece no gráfico lê como dado inventado. */
+.diagnostico-composicao-legenda {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 0.72rem;
+}
+
+.diagnostico-composicao-legenda li {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.diagnostico-composicao-legenda-rotulo {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  color: var(--text-secondary);
+  min-width: 0;
+}
+
+.diagnostico-composicao-legenda-rotulo i {
+  width: 0.6rem;
+  height: 0.6rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.diagnostico-composicao-legenda-valor {
+  flex-shrink: 0;
+  color: var(--text-primary);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.diagnostico-composicao-legenda-valor small {
+  font-weight: 400;
+  color: var(--text-muted);
+  font-size: 0.85em;
+}
+
 /* Card médio, não grande: sem teto a lista cresce com os 10 clientes do
    payload e o card fica mais alto que o resto do Ato III. `flex`, não
    `max-height` fixo: estica até a altura que o scatter ao lado impuser (mais
@@ -10010,7 +10128,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 0.8rem;
-  margin-top: 1rem;
+  margin-top: 0;
   padding: 0;
   list-style: none;
 }
@@ -10037,6 +10155,7 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 @media (max-width: 1200px) {
   .diagnostico-tensao { grid-template-columns: 1fr; }
   .diagnostico-mecanismo { grid-template-columns: 1fr; }
+  .diagnostico-mecanismo-3col { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 760px) {

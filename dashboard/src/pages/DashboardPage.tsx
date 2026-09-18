@@ -11,6 +11,7 @@ import {
   marcarSplashTelaCheiaExibida,
 } from '../components/splashTelaCheia';
 import { gravarSummaryCache, lerSummaryCache } from '../utils/cacheSummary';
+import { perfIniciar } from '../utils/perfDebug';
 import { DashboardHeader } from '../components/DashboardHeader';
 import { AppShell } from '../components/AppShell';
 import { EVENTO_EMPRESA } from '../utils/empresaSelecionada';
@@ -480,6 +481,7 @@ export default function DashboardPage() {
 
   const processed = useMemo(() => {
     if (!data || loading || !introDone) return { stats: null, filterOptions: null, noDataMessage: null } as any;
+    const perf = perfIniciar('DashboardPage:processed');
 
     // Usa filtros já “assentados” (debounce + transition) — cliques rápidos não recalculam a cada mês
     const client = computeFilters.client;
@@ -572,43 +574,78 @@ export default function DashboardPage() {
         validClients = null;
       }
     }
+    perf.marca('severidade por cliente');
 
     // Uma varredura para interseção dos filtros, sem criar um array por dimensão.
-    const populationRows = baseRows.filter((r) => (
+    // Sem nenhum filtro ativo — o estado em que a tela abre — o predicado é
+    // sempre verdadeiro, e o `filter` só copiaria as 773 mil linhas à toa.
+    const semFiltro = !clientSet && !mfrSet && !descSet && !storeSet && validClients === null;
+    const populationRows = semFiltro ? baseRows : baseRows.filter((r) => (
       (!clientSet || clientSet.has(r[2]))
       && (!mfrSet || mfrSet.has(r[3]))
       && (!descSet || descSet.has(r[4]))
       && (!storeSet || storeSet.has(r[1]))
       && (validClients === null || validClients.has(r[2]))
     ));
+    perf.marca('filtro população', `${populationRows.length} linhas`);
 
     // 5. Aggregation Logic
-    const aggregate = (targetRows: Row[], targetPeriod: number[], forceAverage?: boolean): AggregateResult => {
+    //
+    // Uma passada só pela base, agregando por período; as seis janelas (pA, pB,
+    // total e as três do gráfico) são montadas somando os baldes. Antes cada
+    // janela varria as 773 mil linhas inteiras para descartar as de fora — seis
+    // varreduras para ler os mesmos 21 períodos. Medido na base da IBAD: ~505 ms
+    // por mudança de filtro contra ~140 ms assim.
+    //
+    // Os nós são compartilhados entre as seis janelas, não copiados: quem lê
+    // `monthlyNodes` (os dois construtores de gráfico) só lê.
+    type NoPeriodo = AggregateResult['monthlyNodes'][number];
+
+    const nodesPorPeriodo: Record<number, NoPeriodo> = {};
+    for (const r of populationRows) {
+      const pId = r[0], mId = r[3], dId = r[4], rId = r[5], revVal = r[6];
+      let node = nodesPorPeriodo[pId];
+      if (!node) {
+        node = { rev: 0, mfrs: new Set(), descs: new Set(), products: {}, clients: new Set(), cnt: 0 };
+        nodesPorPeriodo[pId] = node;
+      }
+      node.rev += revVal;
+      node.cnt++;
+      node.mfrs.add(mId);
+      node.descs.add(dId);
+      node.clients.add(r[2]);
+      node.products[rId] = (node.products[rId] || 0) + revVal;
+    }
+    perf.marca('agregação por período (nodesPorPeriodo)');
+
+    const aggregate = (targetPeriod: number[], forceAverage?: boolean): AggregateResult => {
       let rev = 0, cnt = 0;
-      const monthlyNodes: Record<number, { rev: number, mfrs: Set<number>, descs: Set<number>, products: Record<number, number>, clients: Set<number>, cnt: number }> = {};
+      const monthlyNodes: Record<number, NoPeriodo> = {};
       const mfrs_all = new Set<number>();
       const descs_all = new Set<number>();
-      const products_all: Record<number, number> = {};
-
-      const periodSet = new Set(targetPeriod);
       const clients_all = new Set<number>();
-      for (const r of targetRows) {
-        if (!periodSet.has(r[0])) continue;
-        const pId = r[0], mId = r[3], dId = r[4], rId = r[5], revVal = r[6];
-        rev += revVal;
-        cnt++;
-        mfrs_all.add(mId);
-        descs_all.add(dId);
-        clients_all.add(r[2]);
-        products_all[rId] = (products_all[rId] || 0) + revVal;
+      const products_all: Record<number, number> = {};
+      // Contagem média por unidade da granularidade soma o tamanho de cada
+      // período; a contagem absoluta é a união. São números diferentes, e é por
+      // isso que os dois são acumulados na mesma passada.
+      let somaMfrs = 0, somaDescs = 0, somaClients = 0;
 
-        if (!monthlyNodes[pId]) monthlyNodes[pId] = { rev: 0, mfrs: new Set(), descs: new Set(), products: {}, clients: new Set(), cnt: 0 };
-        monthlyNodes[pId].rev += revVal;
-        monthlyNodes[pId].cnt++;
-        monthlyNodes[pId].mfrs.add(mId);
-        monthlyNodes[pId].descs.add(dId);
-        monthlyNodes[pId].products[rId] = (monthlyNodes[pId].products[rId] || 0) + revVal;
-        monthlyNodes[pId].clients.add(r[2]);
+      for (const pId of targetPeriod) {
+        const node = nodesPorPeriodo[pId];
+        if (!node) continue;
+        monthlyNodes[pId] = node;
+        rev += node.rev;
+        cnt += node.cnt;
+        somaMfrs += node.mfrs.size;
+        somaDescs += node.descs.size;
+        somaClients += node.clients.size;
+        for (const m of node.mfrs) mfrs_all.add(m);
+        for (const d of node.descs) descs_all.add(d);
+        for (const c of node.clients) clients_all.add(c);
+        for (const chave of Object.keys(node.products)) {
+          const rId = Number(chave);
+          products_all[rId] = (products_all[rId] || 0) + node.products[rId];
+        }
       }
 
       const len = countBucketsInIndices(data, targetPeriod, computeGranularidade) || 1;
@@ -620,21 +657,22 @@ export default function DashboardPage() {
         rawClientCount: clients_all.size,
         rev: useAvg ? rev / len : rev,
         cnt: useAvg ? cnt / len : cnt,
-        mfrCount: useAvg ? (Object.values(monthlyNodes).reduce((acc, m) => acc + m.mfrs.size, 0) / len) : mfrs_all.size,
-        descCount: useAvg ? (Object.values(monthlyNodes).reduce((acc, m) => acc + m.descs.size, 0) / len) : descs_all.size,
-        clientCount: useAvg ? (Object.values(monthlyNodes).reduce((acc, m) => acc + m.clients.size, 0) / len) : clients_all.size,
+        mfrCount: useAvg ? somaMfrs / len : mfrs_all.size,
+        descCount: useAvg ? somaDescs / len : descs_all.size,
+        clientCount: useAvg ? somaClients / len : clients_all.size,
         products: products_all,
         monthlyNodes,
         len
       };
     };
 
-    const statsA = aggregate(populationRows, pA, isTrendMode);
-    const statsB = aggregate(populationRows, pB, isTrendMode);
-    const statsTotal = aggregate(populationRows, period, isTrendMode);
-    const statsAChart = aggregate(populationRows, pAChart, isTrendModeChart);
-    const statsBChart = aggregate(populationRows, pBChart, isTrendModeChart);
-    const statsTotalChart = aggregate(populationRows, periodChart, isTrendModeChart);
+    const statsA = aggregate(pA, isTrendMode);
+    const statsB = aggregate(pB, isTrendMode);
+    const statsTotal = aggregate(period, isTrendMode);
+    const statsAChart = aggregate(pAChart, isTrendModeChart);
+    const statsBChart = aggregate(pBChart, isTrendModeChart);
+    const statsTotalChart = aggregate(periodChart, isTrendModeChart);
+    perf.marca('aggregate() x6 (pA/pB/total/chart)');
 
     let chartData: ChartPoint[] = [];
 
@@ -647,6 +685,7 @@ export default function DashboardPage() {
         data, periodChart, pAChartSet, statsTotalChart, computeGranularidade,
       );
     }
+    perf.marca('construção do gráfico');
 
     const bucketsA = countBucketsInIndices(data, pA, computeGranularidade);
     const bucketsB = countBucketsInIndices(data, pB, computeGranularidade);
@@ -699,6 +738,7 @@ export default function DashboardPage() {
         descOpts.add(r[4]);
       }
     });
+    perf.marca('opções de filtro (clientOpts/mfrOpts/descOpts)');
 
     // 7. Rankings: total do ÚLTIMO mês do período B (e o mesmo mês no ano A),
     // para bater com o BI/mês que o usuário está conferindo (ex.: jun/26 =
@@ -751,6 +791,7 @@ export default function DashboardPage() {
     const topClients = buildTrend('c').slice(0, 50);
     const topMfrs = buildTrend('m');
     const topDescs = buildTrend('d');
+    perf.marca('top clientes/fabricantes/categorias');
 
     let topProducts: ProductStats[] = [];
     const showProductView = visaoDetalhada || desc.length > 0;
@@ -779,6 +820,7 @@ export default function DashboardPage() {
         };
       }).sort((a, b) => b.total - a.total).slice(0, 50);
     }
+    perf.marca('top produtos');
 
     // Quando a seleção resulta em um único mês no gráfico principal (ex.:
     // duplo clique/"Mês atual" isolando um mês nos dois anos, ou apenas 1 mês
@@ -853,8 +895,8 @@ export default function DashboardPage() {
           const { pA: sA, pB: sB, isTrendMode: isTrend } = calcPeriodWindows(data, resolved, false);
           const sASet = new Set(sA);
 
-          const stA = aggregate(populationRows, sA, isTrend);
-          const stB = aggregate(populationRows, sB, isTrend);
+          const stA = aggregate(sA, isTrend);
+          const stB = aggregate(sB, isTrend);
 
           let cData: ChartPoint[] = [];
           if (!isTrend) {
@@ -862,7 +904,7 @@ export default function DashboardPage() {
               data, populationRows, sA, sB, stA, stB, computeGranularidade,
             );
           } else {
-            const statsTotalModal = aggregate(populationRows, resolved, isTrend);
+            const statsTotalModal = aggregate(resolved, isTrend);
             cData = buildTrendChartData(
               data, resolved, sASet, statsTotalModal, computeGranularidade,
             );

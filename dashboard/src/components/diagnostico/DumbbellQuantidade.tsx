@@ -1,6 +1,7 @@
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
 import type { QuedaQuantidadeDiagnostico } from '../../api/client';
 import { formatCurrency, formatNumber, formatPercent } from '../../utils/formatters';
+import { TituloDiagnostico } from './TituloDiagnostico';
 
 interface Props {
   queda: QuedaQuantidadeDiagnostico;
@@ -46,26 +47,36 @@ export function DumbbellQuantidade({ queda }: Props) {
     <section className="glass-card glass-card-flat clientes-visao-card">
       <header className="clientes-visao-card-topo">
         <div>
-          <h2>
-            {maior.cliente} caiu {formatPercent(Math.abs(maior.variacao_pct ?? 0), 0)} em volume — puxado por{' '}
-            {maior.produto_critico}
-          </h2>
+          <TituloDiagnostico
+            texto={`${maior.cliente} — ${maior.produto_critico}`}
+            destaque={`${formatPercent(Math.abs(maior.variacao_pct ?? 0), 0)} em volume`}
+            variante="queda"
+          />
           <p>Quantidade comprada entre os dois últimos meses, ordenada pela maior redução.</p>
         </div>
       </header>
 
-      <div className="vendedores-chart diagnostico-scatter-chart">
+      <div className="vendedores-chart-legenda">
+        <span><i className="is-mes" />Mês anterior</span>
+        <span><i style={{ background: 'var(--danger)' }} />Mês atual</span>
+      </div>
+
+      <div className="vendedores-chart diagnostico-dumbbell-chart">
         <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={dadosGrafico} margin={{ top: 8, right: 16, left: 4, bottom: 60 }} layout="vertical">
+          <BarChart
+            data={dadosGrafico} margin={{ top: 8, right: 16, left: 4, bottom: 8 }} layout="vertical"
+            barCategoryGap="30%" barGap={4}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
             <XAxis type="number" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} axisLine={false} tickLine={false} />
             <YAxis
-              type="category" dataKey="cliente" width={120} tick={{ fill: 'var(--text-muted)', fontSize: 10 }}
+              type="category" dataKey="cliente" width={120} tick={{ fill: 'var(--text-secondary)', fontSize: 11 }}
               axisLine={false} tickLine={false}
+              tickFormatter={(valor: string) => (valor.length > 16 ? `${valor.slice(0, 15)}…` : valor)}
             />
             <Tooltip content={<TooltipQuantidade />} cursor={{ fill: 'var(--surface-1)' }} />
-            <Bar dataKey="qtd_anterior" name="Mês anterior" fill="var(--text-muted)" radius={[0, 4, 4, 0]} />
-            <Bar dataKey="qtd_atual" name="Mês atual" fill="var(--danger)" radius={[0, 4, 4, 0]} />
+            <Bar dataKey="qtd_anterior" name="Mês anterior" fill="var(--accent)" radius={[0, 4, 4, 0]} barSize={16} />
+            <Bar dataKey="qtd_atual" name="Mês atual" fill="var(--danger)" radius={[0, 4, 4, 0]} barSize={16} minPointSize={2} />
           </BarChart>
         </ResponsiveContainer>
       </div>

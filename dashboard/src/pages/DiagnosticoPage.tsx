@@ -9,6 +9,7 @@ import { MatrizStreak } from '../components/diagnostico/MatrizStreak';
 import { ScatterRisco } from '../components/diagnostico/ScatterRisco';
 import { DumbbellQuantidade } from '../components/diagnostico/DumbbellQuantidade';
 import { MatrizErosao } from '../components/diagnostico/MatrizErosao';
+import { MargemGiro } from '../components/diagnostico/MargemGiro';
 import { obterPainelDiagnostico, type DiagnosticoResposta } from '../api/client';
 import { useEscopoAtual } from '../hooks/useEscopoAtual';
 import { useMesesFechados } from '../hooks/useMesesFechados';
@@ -102,21 +103,22 @@ export default function DiagnosticoPage() {
         {empresa && dados?.disponivel && dados.tensao && (
           <>
             <TensaoHero tensao={dados.tensao} rotuloPeriodo={dados.rotulo_periodo} />
-            <div className="diagnostico-mecanismo">
+            <div className="diagnostico-mecanismo diagnostico-mecanismo-3col">
               <CascataReceita cascata={dados.cascata} />
+              <ScatterRisco risco={dados.risco} />
+              <MargemGiro margemGiro={dados.margem_giro} />
+            </div>
+            <div className="diagnostico-mecanismo">
               <TornadoProdutos
                 linhas={dados.tornado}
                 rotuloAnterior={dados.tensao.rotulo_anterior}
                 rotuloPeriodo={dados.rotulo_periodo}
               />
+              <DumbbellQuantidade queda={dados.queda_quantidade} />
             </div>
             <div className="diagnostico-mecanismo">
               <FluxoFaixas fluxo={dados.fluxo_faixas} />
               <MatrizStreak streak={dados.streak} />
-            </div>
-            <div className="diagnostico-mecanismo">
-              <ScatterRisco risco={dados.risco} />
-              <DumbbellQuantidade queda={dados.queda_quantidade} />
             </div>
             <MatrizErosao matriz={dados.matriz_erosao} />
           </>

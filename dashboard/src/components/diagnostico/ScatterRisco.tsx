@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { ChevronRight } from 'lucide-react';
 import {
   Cell, ReferenceLine, ResponsiveContainer, Scatter, ScatterChart, Tooltip, XAxis, YAxis, ZAxis,
 } from 'recharts';
 import type { ClienteRisco, RiscoDiagnostico } from '../../api/client';
 import { formatCompacto, formatCurrency, formatNumber, formatPercent } from '../../utils/formatters';
+import { TituloDiagnostico } from './TituloDiagnostico';
 
 interface Props {
   risco: RiscoDiagnostico;
@@ -12,7 +14,7 @@ interface Props {
 /** Mesma paleta categórica usada em Clientes (`ClientesPotencialCompra`) para as
  *  faixas ABC — ouro forte no Grupo 1, esfriando até o cinza de "Demais". */
 const CORES_FAIXA: Record<string, string> = {
-  'Grupo 1': '#dabb6c', 'Grupo 2': '#c2a45f', 'Grupo 3': '#8e8a7d', Demais: '#5d5d66',
+  'Grupo 1': '#dabb6c', 'Grupo 2': '#b8964f', 'Grupo 3': '#7d6c52', Demais: '#5d5d66',
 };
 const COR_FAIXA_PADRAO = '#43434b';
 
@@ -46,6 +48,10 @@ export function ScatterRisco({ risco }: Props) {
 
   const perdaTotal = risco.clientes.reduce((soma, cliente) => soma + (cliente.perda_rs ?? 0), 0);
   const pararam = risco.clientes.filter((cliente) => cliente.parou_de_comprar).length;
+  const maiorRisco = risco.clientes.reduce(
+    (pior, item) => ((item.perda_rs ?? 0) > (pior.perda_rs ?? 0) ? item : pior),
+    risco.clientes[0],
+  );
   const cliente = risco.clientes.find((item) => item.cliente === selecionado) ?? null;
 
   const pontos = risco.clientes.map((item) => ({ ...item, x: Math.abs(item.variacao_pct ?? 0), y: item.perda_rs ?? 0 }));
@@ -55,7 +61,11 @@ export function ScatterRisco({ risco }: Props) {
     <section className="glass-card glass-card-flat clientes-visao-card">
       <header className="clientes-visao-card-topo">
         <div>
-          <h2>{formatNumber(risco.clientes.length)} clientes com receita em queda somam {formatCompacto(perdaTotal, true)}</h2>
+          <TituloDiagnostico
+            texto={`${formatNumber(risco.clientes.length)} cliente(s) em queda`}
+            destaque={`−${formatCompacto(perdaTotal, true)}`}
+            variante="queda"
+          />
           <p>
             Redução de receita entre os dois últimos meses. Cada ponto é 1 cliente — canto
             superior direito é quem caiu mais forte e mais perdeu em R$.
@@ -75,9 +85,9 @@ export function ScatterRisco({ risco }: Props) {
             <YAxis
               type="number" dataKey="y"
               tick={{ fill: 'var(--text-muted)', fontSize: 11 }} axisLine={false} tickLine={false} width={64}
-              tickFormatter={(valor: number) => formatCompacto(valor, true)}
+              tickFormatter={(valor: number) => formatCompacto(valor, true).replace(/\s+/g, '')}
             />
-            <ZAxis range={[60, 60]} />
+            <ZAxis range={[45, 45]} />
             <ReferenceLine x={medianaX} stroke="var(--border-strong)" strokeDasharray="3 3" />
             <Tooltip content={<TooltipRisco />} cursor={{ strokeDasharray: '3 3' }} />
             <Scatter
@@ -103,21 +113,30 @@ export function ScatterRisco({ risco }: Props) {
         </ResponsiveContainer>
       </div>
 
-      {cliente && (
+      {cliente ? (
         <div className="diagnostico-drill">
           <strong title={cliente.cliente}>{cliente.cliente}</strong>
           <span>{cliente.faixa}</span>
           <span>{formatCurrency(cliente.receita_anterior ?? 0)} → {formatCurrency(cliente.receita_atual ?? 0)}</span>
           <span className="is-queda">−{formatCurrency(cliente.perda_rs ?? 0)} ({formatPercent(cliente.variacao_pct ?? 0, 1)})</span>
           {cliente.parou_de_comprar && <span className="diagnostico-drill-tag">Parou de comprar</span>}
+          <button type="button" className="diagnostico-ver-mais" onClick={() => setSelecionado(null)}>Fechar</button>
         </div>
+      ) : (
+        <button
+          type="button"
+          className="diagnostico-ver-mais"
+          onClick={() => setSelecionado(maiorRisco.cliente)}
+        >
+          Ver detalhe do maior risco: {maiorRisco.cliente} <ChevronRight size={13} aria-hidden="true" />
+        </button>
       )}
 
-      {risco.composicao.length > 0 && (
+      {risco.composicao.some((item) => (item.perda_rs ?? 0) > 0) && (
         <>
           <p className="diagnostico-nota-eixo">Perda por faixa ABC:</p>
           <div className="diagnostico-composicao-barra" role="img" aria-label="Perda por faixa ABC">
-            {risco.composicao.map((item) => {
+            {risco.composicao.filter((item) => (item.perda_rs ?? 0) > 0).map((item) => {
               const totalComposicao = risco.composicao.reduce((soma, faixa) => soma + (faixa.perda_rs ?? 0), 0);
               const largura = totalComposicao > 0 ? ((item.perda_rs ?? 0) / totalComposicao) * 100 : 0;
               return (
@@ -129,6 +148,19 @@ export function ScatterRisco({ risco }: Props) {
               );
             })}
           </div>
+          <ul className="diagnostico-composicao-legenda">
+            {risco.composicao.filter((item) => (item.perda_rs ?? 0) > 0).map((item) => (
+              <li key={item.faixa}>
+                <span className="diagnostico-composicao-legenda-rotulo">
+                  <i style={{ background: CORES_FAIXA[item.faixa] ?? COR_FAIXA_PADRAO }} />
+                  {item.faixa}
+                </span>
+                <span className="diagnostico-composicao-legenda-valor">
+                  {formatCompacto(item.perda_rs ?? 0, true)} <small>· {formatNumber(item.clientes)} cli.</small>
+                </span>
+              </li>
+            ))}
+          </ul>
         </>
       )}
     </section>

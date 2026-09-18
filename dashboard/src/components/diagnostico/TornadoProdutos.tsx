@@ -1,6 +1,7 @@
 import { Bar, BarChart, Cell, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import type { LinhaTornado } from '../../api/client';
 import { formatCompacto, formatCurrency, formatPercent } from '../../utils/formatters';
+import { TituloDiagnostico } from './TituloDiagnostico';
 
 interface Props {
   linhas: LinhaTornado[];
@@ -59,10 +60,11 @@ export function TornadoProdutos({ linhas, rotuloAnterior, rotuloPeriodo }: Props
     <section className="glass-card glass-card-flat clientes-visao-card">
       <header className="clientes-visao-card-topo">
         <div>
-          <h2>
-            {maiorQueda.descricao} responde por {parteDaQueda == null ? '—' : formatPercent(parteDaQueda, 0)}{' '}
-            da queda do mês
-          </h2>
+          <TituloDiagnostico
+            texto={`${maiorQueda.descricao} lidera a queda`}
+            destaque={parteDaQueda == null ? undefined : `${formatPercent(parteDaQueda, 0)} do total`}
+            variante="queda"
+          />
           <p>Efeito de cada produto em R$, de {rotuloAnterior} para {rotuloPeriodo}.</p>
         </div>
         {/* Par do chip da cascata: aqui a régua é o mês anterior, lá é o ano. */}

@@ -2,6 +2,16 @@ import type { DashboardData } from '../types/dashboard';
 import type { ModoPeriodo } from '../utils/mesesFechados';
 import { comCache, limparCacheGeral } from '../utils/cacheRequisicoes';
 import { invalidarSummary } from '../utils/cacheSummary';
+import { perfLog, perfTimer } from '../utils/perfDebug';
+
+function nomeEndpoint(url: string): string {
+  try {
+    const base = typeof window !== 'undefined' ? window.location.origin : 'http://localhost';
+    return new URL(url, base).pathname.replace(/^\/api\//, '');
+  } catch {
+    return url;
+  }
+}
 
 const TOKEN_KEY = 'prisma_analisador_token';
 
@@ -35,9 +45,13 @@ function authHeaders(): HeadersInit {
  * ruído.
  */
 async function chamar(url: string, init?: RequestInit): Promise<Response> {
+  const t = perfTimer();
   try {
-    return await fetch(url, init);
+    const res = await fetch(url, init);
+    perfLog(nomeEndpoint(url), 'fetch', t(), String(res.status));
+    return res;
   } catch (erro) {
+    perfLog(nomeEndpoint(url), 'fetch (falhou)', t());
     if (erro instanceof DOMException && erro.name === 'AbortError') throw erro;
     throw new Error(
       'O 2D Prisma não respondeu. Ele pode ter sido encerrado ou estar reiniciando '
@@ -80,7 +94,10 @@ async function tratarResposta<T>(res: Response): Promise<T> {
     }
     throw new Error(mensagem);
   }
-  return res.json();
+  const t = perfTimer();
+  const dados = await res.json();
+  perfLog(nomeEndpoint(res.url), 'parse json', t());
+  return dados as T;
 }
 
 export async function login(usuario: string, senha: string): Promise<string> {
@@ -2141,6 +2158,9 @@ export type CelulaErosao = {
   produto: string;
   /** `null` = este cliente não teve queda neste produto (não é zero). */
   perda_rs: number | null;
+  receita_anterior: number | null;
+  /** Negativo = caiu (convenção do projeto; a tela não inverte sinal). */
+  variacao_pct: number | null;
 };
 
 export type ClienteErosao = {
@@ -2157,6 +2177,29 @@ export type MatrizErosaoDiagnostico = {
   clientes: ClienteErosao[];
 };
 
+export type ProdutoMargemGiro = {
+  descricao: string;
+  margem_pct: number | null;
+  /** `null` = sem venda na janela (giro zero), não é o mesmo que cobertura 0. */
+  cobertura_meses: number | null;
+  valor_estoque: number | null;
+  receita: number | null;
+  status: StatusCoberturaEstoque;
+};
+
+export type FaixaMargemGiro = {
+  status: StatusCoberturaEstoque;
+  produtos: number;
+  valor_estoque: number | null;
+};
+
+export type MargemGiroDiagnostico = {
+  disponivel: boolean;
+  mensagem: string | null;
+  produtos: ProdutoMargemGiro[];
+  bullet: FaixaMargemGiro[];
+};
+
 export type DiagnosticoResposta = {
   disponivel: boolean;
   mensagem: string | null;
@@ -2170,6 +2213,7 @@ export type DiagnosticoResposta = {
   risco: RiscoDiagnostico;
   queda_quantidade: QuedaQuantidadeDiagnostico;
   matriz_erosao: MatrizErosaoDiagnostico;
+  margem_giro: MargemGiroDiagnostico;
   empresa?: string;
   loja?: string | null;
 };

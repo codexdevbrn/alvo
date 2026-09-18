@@ -21,7 +21,7 @@ interface Props {
 
 /** Ouro do acento para a faixa mais forte, esfriando até o cinza de "Demais"
  *  — mesmo gradiente de Concentração da carteira, são as mesmas faixas ABC. */
-const CORES_FAIXA = ['#dabb6c', '#c2a45f', '#8e8a7d', '#5d5d66', '#43434b'];
+const CORES_FAIXA = ['#dabb6c', '#b8964f', '#7d6c52', '#5d5d66', '#43434b'];
 
 /** Largura da barra de ranking, em %, relativa ao maior valor da lista.
  *  Raiz quadrada em vez de proporção linear: um outlier (ex.: "CLIENTE

@@ -214,7 +214,10 @@ def _movimento_da_carteira(
     entrou e quem saiu, e recalcular isso no navegador exigiria a base inteira.
     """
     presenca = _presenca_por_mes(dados)
-    primeira_compra = dados.groupby("Cliente")["_periodo"].min()
+    # dict, e não Series: o laço abaixo consulta a primeira compra de cada
+    # cliente uma vez por mês da janela, e cada `Series.get` paga a criação de
+    # um Timestamp — 80 mil lookups viravam 1,1 s na IBAD, contra 9 ms em dict.
+    primeira_compra = dados.groupby("Cliente")["_periodo"].min().to_dict()
     primeiro_mes_base = inicio_mes(dados["_periodo"].min())
     receita_por_mes = dados.groupby("_periodo")["Receita"].sum()
     janela = JANELA_INATIVIDADE_MESES

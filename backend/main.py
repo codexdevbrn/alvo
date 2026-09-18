@@ -2658,6 +2658,16 @@ def _assinatura_arquivo(caminho: Path) -> tuple[int, int]:
     return stat.st_mtime_ns, stat.st_size
 
 
+def _assinatura_arquivo_opcional(caminho) -> tuple[int, int]:
+    """Como `_assinatura_arquivo`, mas para arquivo que pode não existir ainda
+    (tags/catálogo criados só no primeiro salvamento)."""
+    try:
+        stat = os.stat(caminho)
+    except OSError:
+        return (0, 0)
+    return stat.st_mtime_ns, stat.st_size
+
+
 def _caminho_produto_empresa(empresa: str) -> tuple[Path, Path]:
     """Caminhos de MOVIMENTO_ATUAL e PRODUTO — fonte do estoque hoje é o PRODUTO."""
     pasta_fonte, _pasta_trabalho = _pastas_empresa(empresa)
@@ -2978,6 +2988,15 @@ def _carregar_precificacao_df(empresa: str) -> pd.DataFrame:
     return df
 
 
+# Pós-precificação: montar_pos_precificacao custa ~3,3s na IBAD (custo
+# espalhado por várias janelas, sem um ponto único pra vetorizar), e igual ao
+# diagnóstico o cálculo é determinístico pros mesmos arquivos — cacheado pela
+# assinatura do dump + da base de movimento (o que muda o resultado).
+_CACHE_POS_PRECIFICACAO_MAX = 8
+_cache_pos_precificacao: OrderedDict[tuple, dict] = OrderedDict()
+_cache_pos_precificacao_lock = threading.Lock()
+
+
 @app.get("/api/precificacao/{empresa}")
 def obter_pos_precificacao(
     empresa: str,
@@ -2991,6 +3010,25 @@ def obter_pos_precificacao(
     Cortes de Relatórios não entram: a lista do dump *é* o recorte.
     """
     empresa = _validar_nome_empresa(empresa)
+    loja_norm = _normalizar_loja(loja)
+    caminho_dump = _caminho_precificacao_empresa(empresa)
+    caminho_movimento, caminho_produto = _caminho_produto_empresa(empresa)
+    try:
+        assinatura = (
+            _assinatura_arquivo(caminho_dump),
+            _assinatura_arquivo(caminho_movimento),
+            _assinatura_arquivo(caminho_produto),
+        )
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Não foi possível ler a base: {exc}") from exc
+
+    chave = (empresa, loja_norm or "", usar_mes_fechado, assinatura)
+    with _cache_pos_precificacao_lock:
+        cacheado = _cache_pos_precificacao.get(chave)
+        if cacheado is not None:
+            _cache_pos_precificacao.move_to_end(chave)
+            return cacheado
+
     dump = _carregar_precificacao_df(empresa)
     df, _linhas = _carregar_base(empresa, loja=loja, copiar=False)
     resultado = montar_pos_precificacao(dump, df, usar_mes_fechado=usar_mes_fechado)
@@ -2998,6 +3036,12 @@ def obter_pos_precificacao(
         "empresa": empresa,
         "loja": _chave_escopo_loja(loja) or None,
     })
+
+    with _cache_pos_precificacao_lock:
+        _cache_pos_precificacao[chave] = resultado
+        _cache_pos_precificacao.move_to_end(chave)
+        while len(_cache_pos_precificacao) > _CACHE_POS_PRECIFICACAO_MAX:
+            _cache_pos_precificacao.popitem(last=False)
     return resultado
 
 
@@ -3167,6 +3211,17 @@ def obter_alertas_clientes(
     return resultado
 
 
+# Visão geral de clientes: montar_painel_clientes custa ~7,75s na IBAD (dois
+# antipadrões de pandas corrigidos, mas a função ainda varre a base inteira),
+# e é chamada 3x pelo prefetch (um por modo de período). Cacheada como o
+# diagnóstico — assinatura dos arquivos de base, cortes/grupos do escopo, e
+# dos dois arquivos de tags (por-empresa + catálogo centralizado), já que o
+# resultado embute tag e Balcão por cliente.
+_CACHE_PAINEL_CLIENTES_MAX = 8
+_cache_painel_clientes: OrderedDict[tuple, dict] = OrderedDict()
+_cache_painel_clientes_lock = threading.Lock()
+
+
 @app.get("/api/clientes/{empresa}/painel")
 def obter_painel_clientes(
     empresa: str,
@@ -3181,10 +3236,30 @@ def obter_painel_clientes(
     — dashboard e relatório precisam classificar o cliente na mesma faixa.
     """
     empresa = _validar_nome_empresa(empresa)
+    loja_norm = _normalizar_loja(loja)
+    grupos_norm = _parse_grupos_clientes(grupos_clientes)
+    caminho_movimento, caminho_produto = _caminho_produto_empresa(empresa)
+    try:
+        assinatura = (_assinatura_arquivo(caminho_movimento), _assinatura_arquivo(caminho_produto))
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Não foi possível ler a base: {exc}") from exc
+
+    chave = (
+        empresa, loja_norm or "", modo_periodo, assinatura, date.today(),
+        _assinatura_cortes_escopo(empresa, loja_norm, grupos_norm),
+        _assinatura_arquivo_opcional(_caminho_tags_clientes(empresa)),
+        _assinatura_arquivo_opcional(CAMINHO_BANCO_CENTRALIZADO_TAGS),
+    )
+    with _cache_painel_clientes_lock:
+        cacheado = _cache_painel_clientes.get(chave)
+        if cacheado is not None:
+            _cache_painel_clientes.move_to_end(chave)
+            return cacheado
+
     estado_tags = _ler_tags_clientes(empresa, loja=loja)
     config = _ler_config_escopo(empresa, loja) or {}
     df, _linhas_vazias = _carregar_base_telas(
-        empresa, loja=loja, grupos_clientes=_parse_grupos_clientes(grupos_clientes),
+        empresa, loja=loja, grupos_clientes=grupos_norm,
     )
     resultado = montar_painel_clientes(
         df,
@@ -3196,6 +3271,12 @@ def obter_painel_clientes(
     )
     resultado["empresa"] = empresa
     resultado["loja"] = _chave_escopo_loja(loja) or None
+
+    with _cache_painel_clientes_lock:
+        _cache_painel_clientes[chave] = resultado
+        _cache_painel_clientes.move_to_end(chave)
+        while len(_cache_painel_clientes) > _CACHE_PAINEL_CLIENTES_MAX:
+            _cache_painel_clientes.popitem(last=False)
     return resultado
 
 
@@ -3287,8 +3368,17 @@ def obter_painel_diagnostico(
 
     config = _ler_config_escopo(empresa, loja) or {}
     df, _linhas_vazias = _carregar_base_telas(empresa, loja=loja, grupos_clientes=grupos_norm)
+    # Estoque é best-effort: o bloco margem x giro é o único que depende dele
+    # (`_margem_giro` já degrada para "indisponível" sem os DataFrames), e uma
+    # falha de leitura do PRODUTO.csv não pode derrubar o resto do painel, que
+    # não depende de estoque nenhum.
+    try:
+        estoque, vendas, _lojas = _ler_estoque_vendas(empresa, caminho_produto, loja_norm, grupos_norm)
+    except HTTPException:
+        estoque, vendas = None, None
     resultado = montar_painel_diagnostico(
         df, modo_periodo=modo_periodo, cortes=config.get("cortes_clientes"),
+        estoque=estoque, vendas=vendas,
     )
     resultado["empresa"] = empresa
     resultado["loja"] = _chave_escopo_loja(loja) or None

@@ -24,6 +24,7 @@ from engine.analise_funil import (
     sem_venda_clientes,
     tendencia_produtos,
 )
+from estoque_cobertura import _combinar_estoque_vendas
 from periodo_mensal import (
     COLUNA_DATA_DIARIA,
     converter_periodo,
@@ -68,6 +69,19 @@ LIMITE_DUMBBELL = 10
 # Colunas/linhas da matriz de erosão cliente x produto.
 LIMITE_EROSAO_PRODUTOS = 8
 LIMITE_EROSAO_CLIENTES = 10
+# Produtos no scatter de margem x giro, cortado pelos maiores em capital parado.
+LIMITE_MARGEM_GIRO = 60
+# Mesma janela padrão da tela de Estoque (`obterResumoEstoque`) — cobertura
+# recalculada aqui precisa bater com a que a tela de Estoque mostra.
+MESES_COBERTURA_MARGEM_GIRO = 6
+# Mesma régua da tela de Estoque (`EstoqueVisaoGeral`): sem cobertura < 0,5
+# mês, alvo 3, excesso acima de 6 — nenhuma régua nova aqui.
+COBERTURA_ALVO = 3.0
+COBERTURA_EXCESSO = 6.0
+COBERTURA_RUPTURA = 0.5
+# Ordem de severidade do bullet: ruptura e parado primeiro, porque são os que
+# pedem ação — normal por último, porque não pede nada.
+ORDEM_STATUS_ESTOQUE = ["rupture", "stalled", "excess", "no_sales", "normal", "out_of_stock", "negative"]
 
 
 class ErroDiagnostico(ValueError):
@@ -97,7 +111,12 @@ def _resposta_vazia(mensagem: str) -> dict:
         "risco": {"disponivel": False, "mensagem": mensagem, "clientes": [], "composicao": []},
         "queda_quantidade": {"disponivel": False, "mensagem": mensagem, "clientes": []},
         "matriz_erosao": {"disponivel": False, "mensagem": mensagem, "produtos": [], "clientes": []},
+        "margem_giro": _margem_giro_vazio(mensagem),
     }
+
+
+def _margem_giro_vazio(mensagem: str) -> dict:
+    return {"disponivel": False, "mensagem": mensagem, "produtos": [], "bullet": []}
 
 
 def _recortar_por_modo(df: pd.DataFrame, modo_periodo: str) -> tuple[pd.DataFrame, pd.Timestamp]:
@@ -645,16 +664,27 @@ def _matriz_erosao(recorte: pd.DataFrame) -> dict:
         return {"disponivel": False, "mensagem": "Nenhuma erosão de produto no período.", "produtos": [], "clientes": []}
 
     tabela = filtrado[filtrado["Cliente"].isin(top_clientes)]
-    por_par = {(linha.Cliente, linha.descricao): linha.Reducao_Receita for linha in tabela.itertuples()}
+    por_par = {(linha.Cliente, linha.descricao): linha for linha in tabela.itertuples()}
+
+    def _celula(cliente: str, produto: str) -> dict:
+        linha = por_par.get((cliente, produto))
+        if linha is None:
+            return {"produto": produto, "perda_rs": None, "receita_anterior": None, "variacao_pct": None}
+        return {
+            "produto": produto,
+            "perda_rs": _arredondar(linha.Reducao_Receita),
+            "receita_anterior": _arredondar(linha.Receita_Periodo_Anterior),
+            # Negativo = caiu, mesma convenção do resto do payload (ver
+            # `ClienteRisco.variacao_pct` em client.ts) — `Reducao_Percentual`
+            # sai positiva do motor de análise.
+            "variacao_pct": _arredondar(-linha.Reducao_Percentual),
+        }
 
     clientes = [
         {
             "cliente": str(cliente),
             "perda_total": _arredondar(perda_por_cliente.get(cliente, 0.0)),
-            "celulas": [
-                {"produto": produto, "perda_rs": _arredondar(por_par.get((cliente, produto)))}
-                for produto in top_produtos
-            ],
+            "celulas": [_celula(cliente, produto) for produto in top_produtos],
         }
         for cliente in top_clientes
     ]
@@ -662,8 +692,88 @@ def _matriz_erosao(recorte: pd.DataFrame) -> dict:
     return {"disponivel": True, "mensagem": None, "produtos": top_produtos, "clientes": clientes}
 
 
+def _margem_giro(
+    recorte: pd.DataFrame, estoque: pd.DataFrame | None, vendas: pd.DataFrame | None,
+) -> dict:
+    """ATO III: cruza margem % (quanto cada produto deixa) com a cobertura de
+    estoque em meses (a velocidade de giro). Baixa margem parada é candidato a
+    descontinuar; baixa margem girando rápido pede reajuste de preço, não
+    corte — a distinção só existe cruzando as duas, nenhuma das duas telas
+    (Estoque, Precificação) mostra as duas juntas.
+
+    Cobertura e status vêm de `_combinar_estoque_vendas`, a mesma conta da
+    tela de Estoque — nenhuma régua nova aqui, para as duas telas nunca
+    discordarem sobre o que está parado. Margem usa o CMV do próprio
+    movimento (`recorte`), no último período, cruzado por código de produto —
+    não por descrição harmonizada: duas variações do mesmo harmonizado têm
+    códigos e coberturas diferentes, e agregar por texto misturaria as duas.
+    """
+    if (
+        estoque is None or estoque.empty
+        or "CMV" not in recorte.columns or "Código Interno" not in recorte.columns
+    ):
+        return _margem_giro_vazio("Estoque não disponível para esta empresa.")
+
+    combinado, _inicio, _fim = _combinar_estoque_vendas(
+        estoque,
+        vendas if vendas is not None else pd.DataFrame(),
+        meses=MESES_COBERTURA_MARGEM_GIRO,
+        cobertura_alvo=COBERTURA_ALVO,
+        cobertura_excesso=COBERTURA_EXCESSO,
+        cobertura_ruptura=COBERTURA_RUPTURA,
+    )
+    if combinado.empty:
+        return _margem_giro_vazio("Estoque não disponível para esta empresa.")
+    combinado["_codigo"] = combinado["CODIGO_INTERNO_PRODUTO"].astype(str).str.strip()
+
+    _, atual = _dois_ultimos_periodos(recorte)
+    janela = recorte.loc[recorte["_periodo"] == atual].copy()
+    janela["_codigo"] = janela["Código Interno"].astype(str).str.strip()
+    margem_produto = janela.groupby("_codigo").agg(
+        receita=("Receita", "sum"), cmv=("CMV", "sum"), descricao=("descricao", "first"),
+    )
+    margem_produto = margem_produto.loc[margem_produto["receita"] > 0].copy()
+    if margem_produto.empty:
+        return _margem_giro_vazio("Nenhum produto com receita no período para calcular margem.")
+    margem_produto["margem_pct"] = (
+        (margem_produto["receita"] - margem_produto["cmv"]) / margem_produto["receita"] * 100
+    )
+
+    cruzado = combinado.merge(margem_produto, left_on="_codigo", right_index=True, how="inner")
+    cruzado = cruzado.loc[cruzado["valor_estoque"] > 0]
+    if cruzado.empty:
+        return _margem_giro_vazio("Nenhum produto com estoque e receita no período para cruzar.")
+    cruzado = cruzado.sort_values("valor_estoque", ascending=False).head(LIMITE_MARGEM_GIRO)
+
+    produtos = [
+        {
+            "descricao": str(linha.descricao),
+            "margem_pct": _arredondar(linha.margem_pct),
+            "cobertura_meses": _arredondar(linha.cobertura) if pd.notna(linha.cobertura) else None,
+            "valor_estoque": _arredondar(linha.valor_estoque),
+            "receita": _arredondar(linha.receita),
+            "status": str(linha.status),
+        }
+        for linha in cruzado.itertuples()
+    ]
+
+    agrupado_bullet = combinado.groupby("status").agg(
+        produtos=("_codigo", "size"), valor_estoque=("valor_estoque", "sum"),
+    )
+    bullet = sorted(
+        (
+            {"status": str(status), "produtos": int(linha.produtos), "valor_estoque": _arredondar(linha.valor_estoque)}
+            for status, linha in agrupado_bullet.iterrows()
+        ),
+        key=lambda item: ORDEM_STATUS_ESTOQUE.index(item["status"]) if item["status"] in ORDEM_STATUS_ESTOQUE else 99,
+    )
+
+    return {"disponivel": True, "mensagem": None, "produtos": produtos, "bullet": bullet}
+
+
 def montar_painel_diagnostico(
     df: pd.DataFrame | None, modo_periodo: str = "fechados", cortes=None,
+    estoque: pd.DataFrame | None = None, vendas: pd.DataFrame | None = None,
 ) -> dict:
     """Tensão, mecanismo e pauta da carteira no período de referência.
 
@@ -691,4 +801,5 @@ def montar_painel_diagnostico(
         "risco": _risco_clientes(recorte, referencia, cortes),
         "queda_quantidade": _queda_quantidade(recorte),
         "matriz_erosao": _matriz_erosao(recorte),
+        "margem_giro": _margem_giro(recorte, estoque, vendas),
     }

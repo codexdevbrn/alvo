@@ -1,7 +1,5 @@
 /** Helpers de download no cliente (CSV / XLSX / PNG a partir de SVG). */
 
-import * as XLSX from 'xlsx';
-
 function dispararDownload(blob: Blob, nomeArquivo: string) {
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
@@ -40,13 +38,20 @@ export function baixarCsv(
   dispararDownload(blob, nomeArquivo.endsWith('.csv') ? nomeArquivo : `${nomeArquivo}.csv`);
 }
 
-/** XLSX real (SheetJS) com cabeçalhos e linhas da tabela visível. */
-export function baixarXlsx(
+/**
+ * XLSX real (SheetJS) com cabeçalhos e linhas da tabela visível.
+ *
+ * O SheetJS entra por import dinâmico porque sozinho ele pesa mais que a tela
+ * inteira do Analisador, e só é usado por quem clica em exportar em xlsx —
+ * estático, ele viajava no chunk da tela para todo mundo.
+ */
+export async function baixarXlsx(
   colunas: string[],
   linhas: unknown[][],
   nomeArquivo: string,
   nomeAba = 'Tabela',
 ) {
+  const XLSX = await import('xlsx');
   const dados: (string | number | boolean)[][] = [
     colunas,
     ...linhas.map((linha) => colunas.map((_, i) => celulaParaPlanilha(linha[i]))),

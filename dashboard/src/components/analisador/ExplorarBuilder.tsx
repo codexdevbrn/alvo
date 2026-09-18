@@ -1230,7 +1230,7 @@ export function ExplorarBuilder({ empresa, loja = null, modo }: Props) {
       if (modo === 'tabela') {
         const base = `explorar-tabela-${stamp}`;
         if (formatoTabela === 'xlsx') {
-          baixarXlsx(resultado.colunas, resultado.linhas, `${base}.xlsx`);
+          await baixarXlsx(resultado.colunas, resultado.linhas, `${base}.xlsx`);
         } else {
           baixarCsv(resultado.colunas, resultado.linhas, `${base}.csv`);
         }
