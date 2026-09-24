@@ -8,16 +8,17 @@ leitura). O parsing/limpeza fica em `backend/engine/analise_funil.py`
 
 Layout da fonte (uma subpasta por empresa, direto nela, sem `BI/`):
 
-    <pasta_fonte>/<empresa>/<empresa>_MOVIMENTO_ATUAL.csv   (obrigatório)
-    <pasta_fonte>/<empresa>/<empresa>_PRODUTO.csv           (obrigatório)
-    <pasta_fonte>/<empresa>/Dados_Estoque_<empresa>.*       (opcional, só Liquidez)
-    <pasta_fonte>/<empresa>/Dados_Vendas_<empresa>.*        (opcional, só Liquidez)
-    <pasta_fonte>/<empresa>/{empresa}_CONTROLADORIA.csv     (opcional, Despesas)
-    <pasta_fonte>/<empresa>/{empresa}_PRECIFICACAO.csv      (opcional, Pós precificação)
+    <pasta_fonte>/<empresa>/<empresa>_MOVIMENTO_ATUAL.parquet   (obrigatório)
+    <pasta_fonte>/<empresa>/<empresa>_PRODUTO.parquet           (obrigatório)
+    <pasta_fonte>/<empresa>/Dados_Estoque_<empresa>.*           (opcional, só Liquidez)
+    <pasta_fonte>/<empresa>/Dados_Vendas_<empresa>.*            (opcional, só Liquidez)
+    <pasta_fonte>/<empresa>/{empresa}_CONTROLADORIA.parquet     (opcional, Despesas)
 
-Movimento e Produto são CSV ';' com valores entre aspas duplas. A ordem das
-colunas pode variar de empresa para empresa — os nomes de coluna, não. A
-leitura é sempre por nome, nunca por posição (ver `analise_funil`).
+    <pasta_trabalho>/<empresa>/{empresa}_PRECIFICACAO.parquet   (opcional, gerado pelo lote)
+
+Só parquet: a fonte deixou de vir em CSV, e manter os dois caminhos obrigava o
+leitor a imitar a inferência de tipo do `read_csv`. O esquema é o mesmo nas
+empresas, mas a leitura é sempre por nome, nunca por posição (ver `analise_funil`).
 """
 
 from __future__ import annotations
@@ -111,44 +112,54 @@ def validar_colunas(df: pd.DataFrame, esperadas: set[str], nome_arquivo: str) ->
         raise ErroNormalizacao(f"Arquivo {nome_arquivo} sem colunas: {', '.join(faltando)}.")
 
 
+def _resolver_arquivo_fonte(arquivos: list[Path], nome_base: str) -> Path | None:
+    """`{nome_base}.parquet` entre `arquivos`, sem diferenciar caixa (Windows)."""
+    alvo = f"{nome_base}.parquet".casefold()
+    return next((a for a in arquivos if a.name.casefold() == alvo), None)
+
+
+def _arquivos_da_pasta(pasta: Path) -> list[Path]:
+    try:
+        return [a for a in pasta.iterdir() if a.is_file()]
+    except OSError:
+        return []
+
+
 def resolver_arquivos_dados(pasta_empresa: Path) -> tuple[Path, Path, Path | None, Path | None]:
-    """Localiza os CSVs da empresa na fonte.
+    """Localiza os arquivos da empresa na fonte.
 
     Retorna `(caminho_movimento, caminho_produto, caminho_estoque, caminho_vendas)`.
-    Movimento e Produto têm nome fixo `{nome_empresa}_MOVIMENTO_ATUAL.csv` /
-    `{nome_empresa}_PRODUTO.csv` e são obrigatórios. Estoque e Vendas (Liquidez)
+    Movimento e Produto têm nome fixo `{nome_empresa}_MOVIMENTO_ATUAL` /
+    `{nome_empresa}_PRODUTO`, em parquet, e são obrigatórios. Estoque e Vendas (Liquidez)
     continuam usando os nomes legados com o nome da empresa e extensão livre, e
     são opcionais — só necessários quando a análise de Liquidez for solicitada.
     Comparação case-insensitive para funcionar no Windows.
     """
     nome_empresa = pasta_empresa.name
-    alvo_movimento = f"{nome_empresa}_MOVIMENTO_ATUAL.csv".casefold()
-    alvo_produto = f"{nome_empresa}_PRODUTO.csv".casefold()
     alvos_opcionais = {
         f"dados_estoque_{nome_empresa}".lower(): "estoque",
         f"dados_vendas_{nome_empresa}".lower(): "vendas",
     }
 
+    arquivos = _arquivos_da_pasta(pasta_empresa) if pasta_empresa.is_dir() else []
     encontrados: dict[str, Path] = {}
-    if pasta_empresa.is_dir():
-        for arquivo in pasta_empresa.iterdir():
-            if not arquivo.is_file():
-                continue
-            nome = arquivo.name.casefold()
-            if nome == alvo_movimento:
-                encontrados["movimento"] = arquivo
-            elif nome == alvo_produto:
-                encontrados["produto"] = arquivo
-            else:
-                papel = alvos_opcionais.get(arquivo.stem.lower())
-                if papel is not None:
-                    encontrados[papel] = arquivo
+    for papel, nome_base in (
+        ("movimento", f"{nome_empresa}_MOVIMENTO_ATUAL"),
+        ("produto", f"{nome_empresa}_PRODUTO"),
+    ):
+        achado = _resolver_arquivo_fonte(arquivos, nome_base)
+        if achado is not None:
+            encontrados[papel] = achado
+    for arquivo in arquivos:
+        papel = alvos_opcionais.get(arquivo.stem.lower())
+        if papel is not None:
+            encontrados[papel] = arquivo
 
     faltando = []
     if "movimento" not in encontrados:
-        faltando.append(f"{nome_empresa}_MOVIMENTO_ATUAL.csv")
+        faltando.append(f"{nome_empresa}_MOVIMENTO_ATUAL.parquet")
     if "produto" not in encontrados:
-        faltando.append(f"{nome_empresa}_PRODUTO.csv")
+        faltando.append(f"{nome_empresa}_PRODUTO.parquet")
     if faltando:
         raise ErroNormalizacao(
             f"Não foi possível localizar em {pasta_empresa}: " + ", ".join(faltando) + "."
@@ -163,7 +174,7 @@ def resolver_arquivos_dados(pasta_empresa: Path) -> tuple[Path, Path, Path | Non
 
 
 def resolver_caminho_controladoria(pasta_empresa: Path) -> Path | None:
-    """Localiza `{empresa}_CONTROLADORIA.csv` na fonte, se existir.
+    """Localiza `{empresa}_CONTROLADORIA.parquet` na fonte, se existir.
 
     Despesas (tela Controladoria) é opcional e independente de Movimento/Produto
     — arquivo próprio, nome fixo, sem join. Empresa sem o arquivo simplesmente
@@ -171,24 +182,22 @@ def resolver_caminho_controladoria(pasta_empresa: Path) -> Path | None:
     """
     if not pasta_empresa.is_dir():
         return None
-    alvo = f"{pasta_empresa.name}_CONTROLADORIA.csv".casefold()
-    for arquivo in pasta_empresa.iterdir():
-        if arquivo.is_file() and arquivo.name.casefold() == alvo:
-            return arquivo
-    return None
+    return _resolver_arquivo_fonte(
+        _arquivos_da_pasta(pasta_empresa), f"{pasta_empresa.name}_CONTROLADORIA",
+    )
 
 
-def resolver_caminho_precificacao(pasta_empresa: Path) -> Path | None:
-    """Localiza `{empresa}_PRECIFICACAO.csv` na fonte, se existir.
+def resolver_caminho_precificacao(pasta_trabalho: Path | None) -> Path | None:
+    """Localiza `{empresa}_PRECIFICACAO.parquet` na pasta de trabalho da empresa.
 
     Pós precificação é opcional e independente de Movimento/Produto — dump
     próprio, nome fixo. Empresa sem o arquivo não tem a tela; não é
-    `ErroNormalizacao`. O CSV deste dump vem com vírgula, não ponto-e-vírgula.
+    `ErroNormalizacao`. Quem grava é `precificacao_do_postgres.py`, a partir do
+    banco; a reserva na pasta fonte (CSV exportado à mão) saiu junto com o CSV.
     """
-    if not pasta_empresa.is_dir():
+    if pasta_trabalho is None or not Path(pasta_trabalho).is_dir():
         return None
-    alvo = f"{pasta_empresa.name}_PRECIFICACAO.csv".casefold()
-    for arquivo in pasta_empresa.iterdir():
-        if arquivo.is_file() and arquivo.name.casefold() == alvo:
-            return arquivo
-    return None
+    pasta_trabalho = Path(pasta_trabalho)
+    return _resolver_arquivo_fonte(
+        _arquivos_da_pasta(pasta_trabalho), f"{pasta_trabalho.name}_PRECIFICACAO",
+    )

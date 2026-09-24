@@ -2,15 +2,22 @@ fastapi
 uvicorn[standard]
 pandas
 numpy
-# Motor de leitura/escrita parquet do pandas — cache do parse de CSV por empresa
-# (ver backend/cache_atacado.py).
+# Leitura da fonte (parquet) e do cache por empresa (ver backend/cache_atacado.py).
 pyarrow
+# SQL direto nos parquet da fonte, sem carregar a base na RAM
+# (ver backend/consulta_parquet.py).
+duckdb
 openpyxl
 # Leitor de xlsx ~7x mais rapido que o openpyxl (98s -> 13s numa base de
 # 54 MB). Custa 1,6 MB no pacote; ver engine.analise_funil._engine_excel.
 python-calamine
 reportlab
 python-docx
+# Só o lote `precificacao_do_postgres.py` usa estes dois: o app não importa
+# `precificacao_postgres`, então não entram no exe (PyInstaller inclui o que é
+# importado) e a credencial do banco não viaja na distribuição.
+psycopg2-binary
+python-dotenv
 python-multipart
 # Ícone na bandeja do Windows: é a interface do app depois que a janela do
 # console fecha. Pillow vem por exigência do pystray, só para o ícone.

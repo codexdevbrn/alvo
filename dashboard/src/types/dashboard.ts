@@ -12,8 +12,14 @@ export interface MonthlyData {
     name: string;
 }
 
-/** Uma linha de `rows`: [período, loja, cliente, fabricante, descrição, referência, receita, qtd] — cada posição é um índice nos `maps` correspondentes, exceto receita/qtd que são valores diretos. */
-export type Row = [number, number, number, number, number, number, number, number];
+/** Uma linha de `rows`: [período, loja, cliente, fabricante, descrição, referência, receita, qtd, cmv] — cada posição é um índice nos `maps` correspondentes, exceto receita/qtd/cmv que são valores diretos. */
+export type Row = [number, number, number, number, number, number, number, number, number];
+
+/** Lucro bruto da linha (receita líquida - CMV) — base de todo valor monetário
+ * exibido no Dashboard (hero, breakdowns, gráfico): ver CLAUDE.md. */
+export function margemLinha(r: Row): number {
+    return r[6] - r[8];
+}
 
 export interface DashboardData {
     rows: Row[];
@@ -61,23 +67,34 @@ export interface ChartPoint {
     cntB?: number | null;
     clientsA?: number | null;
     clientsB?: number | null;
+    /** Total de despesas do mês (overlay opcional, só quando há empresa selecionada). */
+    despesas?: number | null;
 }
 
 export interface AggregateResult {
     rawRev: number;
     rawCnt: number;
+    rawQty: number;
     rawClientCount: number;
     rev: number;
     cnt: number;
+    qty: number;
     mfrCount: number;
     descCount: number;
     clientCount: number;
     products: Record<number, number>;
+    /** Margem média (%) entre descrições de produto: margem de cada descrição
+     * (lucro bruto ÷ receita bruta), média simples entre elas — não a margem
+     * do total (que ponderaria descrições grandes). */
+    margemMediaPct: number;
     monthlyNodes: Record<number, {
         rev: number;
+        qty: number;
         mfrs: Set<number>;
         descs: Set<number>;
         products: Record<number, number>;
+        /** Receita e CMV brutos (não líquidos) por descrição, para a margem média. */
+        descTotais: Record<number, { rev: number; cmv: number }>;
         clients: Set<number>;
         cnt: number;
     }>;

@@ -1,7 +1,7 @@
 import type { DashboardData } from '../types/dashboard';
 
 /**
- * Cache em memória do summary do Dashboard, por empresa ('' = base estática).
+ * Cache em memória do summary do Dashboard, por empresa.
  *
  * Existe para que trocar de tela e voltar ao Dashboard não refaça o download
  * (o summary por empresa tem dezenas de MB) nem mostre animação de carregamento:

@@ -1,8 +1,11 @@
-# Orquestra normalizacao e analises IA. A chave so entra no ambiente do processo de analise.
+# Orquestra normalizacao (corte D-1), base CNPJ, dump de precificacao, preparo das telas e analises IA. A chave so entra no ambiente do processo de analise.
 [CmdletBinding()]
 param(
     [string]$Python = "",
     [switch]$SemNormalizacao,
+    [switch]$SemPrecificacao,
+    [switch]$SemTelas,
+    [string]$AguardarFonteAte = "",
     [switch]$DryRunAnalises
 )
 
@@ -12,9 +15,15 @@ $logs = Join-Path $raiz "logs_agendador"
 $arquivoSegredo = Join-Path $env:LOCALAPPDATA "Prisma\secrets\ollama_api_key.dpapi"
 $normalizador = Join-Path $raiz "normalizar_todas_empresas.py"
 $analisador = Join-Path $raiz "gerar_analises_ia.py"
+$precificacao = Join-Path $raiz "precificacao_do_postgres.py"
+$baseEmpresas = Join-Path $raiz "montar_base_empresas.py"
+$preparoTelas = Join-Path $raiz "preparar_telas.py"
+$aguardarFonte = Join-Path $raiz "aguardar_fonte.py"
 $inicioUtc = [DateTime]::UtcNow
 $codigoNormalizacao = 0
 $codigoAnalises = 0
+$codigoPrecificacao = 0
+$codigoTelas = 0
 $ponte = [IntPtr]::Zero
 $pythonUtf8Anterior = $env:PYTHONUTF8
 $pythonIoAnterior = $env:PYTHONIOENCODING
@@ -56,6 +65,14 @@ $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 
 try {
+    if ($AguardarFonteAte) {
+        # Passada da madrugada: espera os parquets do dia (com o D-1) chegarem.
+        # Estourar o prazo nao e falha: segue com o que tem e a passada da tarde completa.
+        "[$(Get-Date -Format o)] Inicio aguardar fonte ate $AguardarFonteAte" | Add-Content -LiteralPath $logDetalhado -Encoding UTF8
+        $codigoAguardar = Invoke-PythonComLog -Argumentos @($aguardarFonte, "--ate", $AguardarFonteAte)
+        "[$(Get-Date -Format o)] Fim aguardar fonte exit=$codigoAguardar" | Add-Content -LiteralPath $logDetalhado -Encoding UTF8
+    }
+
     if (-not $SemNormalizacao) {
         if (-not (Test-Path -LiteralPath $normalizador)) {
             throw "Normalizador nao encontrado: $normalizador"
@@ -64,6 +81,32 @@ try {
         "[$(Get-Date -Format o)] Inicio normalizacao" | Add-Content -LiteralPath $logDetalhado -Encoding UTF8
         $codigoNormalizacao = Invoke-PythonComLog -Argumentos @($normalizador)
         "[$(Get-Date -Format o)] Fim normalizacao exit=$codigoNormalizacao" | Add-Content -LiteralPath $logDetalhado -Encoding UTF8
+    }
+
+    if (-not $SemPrecificacao) {
+        # Rodada nova no PRICE so entrava quando alguem rodava o script a mao.
+        # Empresa sem precificacao nova custa uma agregacao no banco, nao download.
+        # Falha aqui (banco fora do ar) nao impede as analises: entra so no exit.
+        # Base empresa/loja/CNPJ do DW primeiro: e ela que diz de quais CNPJs
+        # buscar a precificacao. Falha aqui so deixa o lote na base de ontem.
+        "[$(Get-Date -Format o)] Inicio base empresas" | Add-Content -LiteralPath $logDetalhado -Encoding UTF8
+        $codigoBase = Invoke-PythonComLog -Argumentos @($baseEmpresas)
+        "[$(Get-Date -Format o)] Fim base empresas exit=$codigoBase" | Add-Content -LiteralPath $logDetalhado -Encoding UTF8
+        if ($codigoBase -ne 0) { $codigoPrecificacao = $codigoBase }
+
+        "[$(Get-Date -Format o)] Inicio precificacao" | Add-Content -LiteralPath $logDetalhado -Encoding UTF8
+        $codigoDump = Invoke-PythonComLog -Argumentos @($precificacao)
+        if ($codigoDump -ne 0) { $codigoPrecificacao = $codigoDump }
+        "[$(Get-Date -Format o)] Fim precificacao exit=$codigoDump" | Add-Content -LiteralPath $logDetalhado -Encoding UTF8
+    }
+
+    if (-not $SemTelas) {
+        # Clientes, Diagnostico, Vendedores, Estoque e Pos-precificacao prontos em
+        # disco: a primeira abertura do dia deixa de recalcular. Depois da
+        # precificacao, porque a Pos-precificacao le o dump que ela acabou de gravar.
+        "[$(Get-Date -Format o)] Inicio preparo telas" | Add-Content -LiteralPath $logDetalhado -Encoding UTF8
+        $codigoTelas = Invoke-PythonComLog -Argumentos @($preparoTelas)
+        "[$(Get-Date -Format o)] Fim preparo telas exit=$codigoTelas" | Add-Content -LiteralPath $logDetalhado -Encoding UTF8
     }
 
     $argumentosAnalise = @($analisador)
@@ -110,9 +153,9 @@ try {
 }
 
 $codigoFinal = 0
-if ($codigoNormalizacao -ne 0 -or $codigoAnalises -ne 0) {
+if ($codigoNormalizacao -ne 0 -or $codigoPrecificacao -ne 0 -or $codigoTelas -ne 0 -or $codigoAnalises -ne 0) {
     $codigoFinal = 1
 }
-"[$(Get-Date -Format o)] Fim lote normalizacao=$codigoNormalizacao analises=$codigoAnalises exit=$codigoFinal" |
+"[$(Get-Date -Format o)] Fim lote normalizacao=$codigoNormalizacao precificacao=$codigoPrecificacao telas=$codigoTelas analises=$codigoAnalises exit=$codigoFinal" |
     Add-Content -LiteralPath $logResumo -Encoding UTF8
 exit $codigoFinal

@@ -14,7 +14,7 @@ const ABAS: { id: AbaDespesas; rotulo: string }[] = [
 ];
 
 /** Casca da tela de despesas: escopo, janela de meses e abas.
- *  Fonte é `{empresa}_CONTROLADORIA.csv`, opcional — empresa sem o arquivo
+ *  Fonte é `{empresa}_CONTROLADORIA.parquet`, opcional — empresa sem o arquivo
  *  recebe 404 do backend e cada aba mostra o próprio estado vazio. */
 export default function DespesasPage() {
   const { empresa, loja } = useEscopoAtual();

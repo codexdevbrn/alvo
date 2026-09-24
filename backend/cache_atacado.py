@@ -2,7 +2,9 @@
 Cache em parquet do DataFrame bruto (MOVIMENTO_ATUAL + PRODUTO join) por empresa.
 
 Por que existe: parsear os dois CSV de uma empresa grande custa segundos de CPU
-(aspas, encoding com fallback, join, normalização de número). O cache em RAM do
+(aspas, encoding com fallback, join, normalização de número). Com a fonte em
+parquet a leitura fica barata, mas o join e a normalização continuam, e a fonte
+está no OneDrive — o cache segue valendo nos dois formatos. O cache em RAM do
 processo (`_cache_base_empresa` em main.py) já evita reparse dentro do mesmo
 processo, mas guarda só 1 empresa por vez — trocar de empresa, ou reiniciar o
 backend (deploy/atualização), força reparse do zero. Este módulo grava, na
@@ -10,7 +12,7 @@ pasta de trabalho, uma cópia colunar do resultado do parse, ~40x mais rápida d
 reler que o CSV.
 
 Nunca escreve na fonte — só na pasta de trabalho, ao lado de
-summary_dashboard.json/resumo_monitor.json. Frescor é o mtime do CSV mais
+summary_dashboard.json/resumo_monitor.json. Frescor é o mtime do arquivo mais
 recente entre MOVIMENTO_ATUAL e PRODUTO, carimbado no próprio arquivo parquet
 via `os.utime` (sem sidecar): se o mtime do parquet bater com o da fonte, o
 cache está bom; senão, reparse e regrava.
@@ -33,7 +35,7 @@ NOME_CACHE_PARQUET = "_cache_atacado.parquet"
 
 
 def _mtime_fonte(caminho_movimento: Path, caminho_produto: Path) -> float:
-    """mtime do mais recente entre os dois CSV da fonte."""
+    """mtime do mais recente entre os dois arquivos da fonte."""
     return max(os.path.getmtime(caminho_movimento), os.path.getmtime(caminho_produto))
 
 
@@ -43,7 +45,7 @@ def carregar_atacado_df_cacheado(
     """Lê o join MOVIMENTO+PRODUTO, usando cache parquet na pasta de trabalho quando fresco.
 
     Comportamento idêntico a `af.carregar_csv_base_empresa(caminho_movimento,
-    caminho_produto)` — este wrapper só decide se lê do parquet ou do CSV.
+    caminho_produto)` — este wrapper só decide se lê do cache ou da fonte.
     """
     pasta_trabalho = Path(pasta_trabalho)
     mtime_fonte = _mtime_fonte(caminho_movimento, caminho_produto)
@@ -54,7 +56,7 @@ def carregar_atacado_df_cacheado(
             return pd.read_parquet(caminho_parquet)
         except Exception:
             # Parquet corrompido/incompleto (ex.: processo morto no meio da escrita
-            # antes do os.replace) — cai para o CSV em vez de propagar o erro.
+            # antes do os.replace) — cai para a fonte em vez de propagar o erro.
             pass
 
     df = af.carregar_csv_base_empresa(caminho_movimento, caminho_produto)
@@ -63,7 +65,7 @@ def carregar_atacado_df_cacheado(
     except Exception:
         # Cache é otimização, não requisito: falha ao gravar (disco cheio, pasta
         # de trabalho sem permissão, OneDrive travando o arquivo) não pode
-        # impedir o carregamento — só volta a reparsear o CSV na próxima vez.
+        # impedir o carregamento — só volta a reparsear a fonte na próxima vez.
         logger.warning("Falha ao gravar cache parquet em %s", caminho_parquet, exc_info=True)
     return df
 

@@ -4,6 +4,44 @@ Formato: uma seção por versão publicada, mais recente no topo. Histórico é
 incremental — entradas antigas nunca são apagadas. O estado atual das telas e
 funcionalidades vive em `DOC_TEC.md`, não aqui.
 
+## 1.7.17 — 2026-09-24
+
+### Alterado
+
+- **Dados sempre até ontem (D-1)**: o dia corrente, que chega parcial, fica
+  fora de todas as telas. Virou o dia, o que foi calculado com o corte anterior
+  deixa de valer sozinho. "Último movimento" também respeita o corte.
+- **Telas prontas de manhã**: Clientes, Diagnóstico, Vendedores, Estoque e
+  Pós-precificação passam a ter o resultado guardado em disco na pasta de
+  trabalho, compartilhado entre máquinas. O lote da manhã já deixa tudo
+  calculado; a primeira abertura do dia cai de segundos (Clientes ~8 s na IBAD)
+  para menos de 1 s.
+- **Precificação por CNPJ oficial**: o vínculo empresa/loja/CNPJ vem do
+  `{empresa}_EMPRESA.dw_2d` do DW (`base_empresas.parquet`), com complemento
+  manual para a Cativo. 30 empresas com precificação.
+- Empresa sem precificação mostra "Empresa ainda não precificada" nas abas
+  Pós-precificação e Histórico, em vez de mensagem de erro.
+
+## 1.7.16 — 2026-09-24
+
+### Alterado
+
+- **Fonte em parquet**: a pasta Dados Alvos deixou de vir em CSV. O Prisma lê
+  só `{empresa}_MOVIMENTO_ATUAL.parquet`, `_PRODUTO.parquet` e
+  `_CONTROLADORIA.parquet`. Sem esta versão nenhuma empresa abre. Carregar a
+  base ficou ~10x mais rápido (Altese 14,5 s → 1,5 s; IBAD ~19 s → 1,0 s).
+- **Precificação**: a antiga tela "Pós precificação" virou aba da tela
+  Precificação (abas Pós-precificação e Histórico). O link antigo redireciona.
+  O dump de precificação passa a ser `{empresa}_PRECIFICACAO.parquet`, com
+  todas as rodadas (antes só as 3 últimas), e cobre 29 empresas.
+- "Último movimento" na barra lateral passa a ser o último dia com venda
+  (`max(DATA_MOVIMENTO)`, via DuckDB), não a data de sincronização do arquivo.
+
+### Corrigido
+
+- **Despesas**: lançamento sem descrição harmonizada ficava sem categoria em
+  vez de usar a descrição bruta (efeito do pandas 3).
+
 ## 1.7.15 — 2026-09-18
 
 ### Adicionado

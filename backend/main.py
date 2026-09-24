@@ -41,6 +41,10 @@ import db
 import inicio_automatico
 import harmonizar_clientes
 import cache_atacado
+import cache_telas
+import consulta_parquet
+import margem_price as mgp
+import historico_precificacao as hist_prec
 import versao
 from alertas_clientes import avaliar_alertas_clientes, normalizar_regras_alerta
 from auth import criar_token, exigir_login
@@ -110,7 +114,11 @@ from analise_clientes import causa_migracao_cliente, montar_painel_clientes, top
 from painel_diagnostico import montar_painel_diagnostico  # noqa: E402
 from estoque_cobertura import montar_cobertura_estoque, montar_resumo_estoque  # noqa: E402
 from despesas import montar_detalhe_despesas, montar_resumo_despesas  # noqa: E402
-from precificacao import montar_pos_precificacao  # noqa: E402
+from precificacao import (  # noqa: E402
+    filtrar_rodada,
+    listar_rodadas_dump,
+    montar_pos_precificacao,
+)
 
 CAMINHO_BASE_PADRAO = os.path.join(RAIZ_PROJETO, "base_de_dados.xlsx")
 
@@ -295,8 +303,8 @@ def obter_catalogo(usuario: str = Depends(exigir_login)):
 # ---------------------------------------------------------------------------
 # Dois caminhos compartilhados (Dashboard + Analisador)
 #
-# caminho_fonte_dados  — somente leitura: /{empresa}/{empresa}_MOVIMENTO_ATUAL.csv
-#                         + /{empresa}/{empresa}_PRODUTO.csv
+# caminho_fonte_dados  — somente leitura: /{empresa}/{empresa}_MOVIMENTO_ATUAL
+#                         + /{empresa}/{empresa}_PRODUTO (parquet)
 #                         + Estoque/Vendas legados opcionais, na mesma pasta
 # caminho_trabalho     — escrita: /{cliente}/summary_dashboard.json, config.json, harm.xlsx, tags
 #
@@ -520,7 +528,7 @@ def _validar_nome_empresa(nome: str) -> str:
 
 
 def _listar_empresas_fonte() -> list[str]:
-    """Lista subpastas com MOVIMENTO_ATUAL.csv + PRODUTO.csv diretamente dentro, somente leitura."""
+    """Lista subpastas com MOVIMENTO_ATUAL + PRODUTO (parquet) diretamente dentro, somente leitura."""
     caminho = _resolver_caminho_fonte()
     if not caminho or not os.path.isdir(caminho):
         return []
@@ -1111,7 +1119,7 @@ def _lru_set(cache: OrderedDict, key: str, value: dict, max_size: int = _CACHE_E
 def _caminho_referencia_fonte(caminho_movimento: Path, caminho_produto: Path) -> Path:
     """Arquivo com a mtime mais recente entre MOVIMENTO_ATUAL e PRODUTO.
 
-    A fonte por empresa hoje é dois CSVs, não um único arquivo — este é o
+    A fonte por empresa hoje é dois arquivos, não um único — este é o
     substituto de "o mtime do arquivo fonte" usado em cache/frescor.
     """
     caminho_movimento = Path(caminho_movimento)
@@ -1121,15 +1129,58 @@ def _caminho_referencia_fonte(caminho_movimento: Path, caminho_produto: Path) ->
     return caminho_movimento
 
 
-def _data_ultimo_movimento_bi(pasta_fonte: str) -> Optional[date]:
-    """Data de modificação dos CSVs na fonte (somente leitura).
+def _chave_disco_tela(pasta_trabalho: str, chave: tuple) -> tuple:
+    """Chave do cache em disco: a da RAM + corte D-1 + regra de nomes de cliente.
 
-    O MOVIMENTO_ATUAL traz DATA_MOVIMENTO real, mas por ora usa-se a data de
-    última escrita dos arquivos como proxy de "última atualização" (mesmo
-    critério de antes, quando a fonte era um único XLSX mensal).
+    A regra de nomes muda a base sem mudar a fonte; o corte muda à meia-noite.
+    Os dois já invalidam a base em RAM, então precisam invalidar o disco também.
+    """
+    return (chave, af.data_corte_padrao(), harmonizar_clientes.mtime_regra(pasta_trabalho))
+
+
+def _tela_do_disco(empresa: str, tela: str, chave: tuple) -> Optional[dict]:
+    """Resultado da tela gravado pelo lote da manhã (ou por outra máquina)."""
+    try:
+        _pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
+    except HTTPException:
+        return None
+    return cache_telas.ler(Path(pasta_trabalho), tela, _chave_disco_tela(pasta_trabalho, chave))
+
+
+def _tela_para_disco(empresa: str, tela: str, chave: tuple, resultado: dict) -> None:
+    try:
+        _pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
+        _assert_escrita_fora_da_fonte(pasta_trabalho)
+    except HTTPException:
+        return
+    cache_telas.gravar(Path(pasta_trabalho), tela, _chave_disco_tela(pasta_trabalho, chave), resultado)
+
+
+def _guardar_lru(cache: OrderedDict, trava, chave, valor, maximo: int) -> None:
+    with trava:
+        cache[chave] = valor
+        cache.move_to_end(chave)
+        while len(cache) > maximo:
+            cache.popitem(last=False)
+
+
+def _data_ultimo_movimento_bi(pasta_fonte: str) -> Optional[date]:
+    """Maior DATA_MOVIMENTO da fonte — o "Último movimento" da barra lateral.
+
+    Sai das estatísticas do parquet (`consulta_parquet.ultimo_movimento`), sem
+    ler as linhas. Até a fonte virar parquet era a data de modificação do
+    arquivo, que diz quando o OneDrive sincronizou, não o último dia com venda;
+    ela segue como reserva se a consulta falhar.
     """
     try:
         caminho_movimento, caminho_produto, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
+        try:
+            ultimo = consulta_parquet.ultimo_movimento(caminho_movimento)
+            if ultimo is not None:
+                # A base vai até D-1: dia de hoje que já esteja no arquivo não conta.
+                return min(ultimo, af.data_corte_padrao())
+        except Exception as exc:
+            logger.warning("Falha ao consultar último movimento em %s: %s", pasta_fonte, exc)
         caminho_referencia = _caminho_referencia_fonte(caminho_movimento, caminho_produto)
         return date.fromtimestamp(os.path.getmtime(caminho_referencia))
     except ErroNormalizacao as exc:
@@ -1189,6 +1240,7 @@ def _garantir_summary_dashboard_arquivo_sem_trava(
         pasta_trabalho,
         caminho_atacado,
         mtime_minimo=harmonizar_clientes.mtime_regra(pasta_trabalho),
+        data_corte=af.data_corte_padrao(),
     ):
         if caminho_gz.is_file():
             return caminho_gz
@@ -1232,6 +1284,7 @@ def _garantir_summary_dashboard_arquivo_sem_trava(
             pasta_trabalho,
             df,
             data_ultimo_movimento=data_ultimo,
+            data_corte=af.data_corte_padrao(),
         )
     except HTTPException:
         raise
@@ -1381,9 +1434,13 @@ def _carregar_base_empresa_sem_trava(empresa: str) -> tuple[pd.DataFrame, int]:
     except ErroNormalizacao as exc:
         raise HTTPException(status_code=400, detail=str(exc))
 
+    # O corte D-1 entra na chave: virou o dia, a base em RAM já não serve,
+    # mesmo sem a fonte mudar.
+    data_corte = af.data_corte_padrao()
     mtime = (
         os.path.getmtime(_caminho_referencia_fonte(caminho_movimento, caminho_produto)),
         harmonizar_clientes.mtime_regra(pasta_trabalho),
+        data_corte,
     )
     em_cache = _cache_base_empresa.get(empresa)
     if em_cache and em_cache["mtime"] == mtime:
@@ -1391,7 +1448,7 @@ def _carregar_base_empresa_sem_trava(empresa: str) -> tuple[pd.DataFrame, int]:
         return em_cache["df"], em_cache["linhas_vazias"]
 
     try:
-        df_bruto = _carregar_atacado_df(pasta_fonte, pasta_trabalho)
+        df_bruto = af.cortar_ate(_carregar_atacado_df(pasta_fonte, pasta_trabalho), data_corte)
         df, linhas_vazias = af.validar_e_limpar(df_bruto, receita_em_texto_br=False)
     except ErroNormalizacao as exc:
         raise HTTPException(status_code=400, detail=str(exc))
@@ -2761,6 +2818,11 @@ def obter_cobertura_estoque(
         if cacheado is not None:
             _cache_estoque_cobertura.move_to_end(chave_cache)
             return cacheado
+    em_disco = _tela_do_disco(empresa, "estoque", chave_cache)
+    if em_disco is not None:
+        _guardar_lru(_cache_estoque_cobertura, _cache_estoque_cobertura_lock, chave_cache, em_disco,
+                     _CACHE_ESTOQUE_MAX)
+        return em_disco
 
     estoque, vendas, lojas = _ler_estoque_vendas(empresa, caminho_produto, loja_norm, grupos_norm)
 
@@ -2781,6 +2843,7 @@ def obter_cobertura_estoque(
         _cache_estoque_cobertura.move_to_end(chave_cache)
         while len(_cache_estoque_cobertura) > _CACHE_ESTOQUE_MAX:
             _cache_estoque_cobertura.popitem(last=False)
+    _tela_para_disco(empresa, "estoque", chave_cache, resultado)
     return resultado
 
 
@@ -2820,6 +2883,11 @@ def obter_resumo_estoque(
         if cacheado is not None:
             _cache_estoque_cobertura.move_to_end(chave_cache)
             return cacheado
+    em_disco = _tela_do_disco(empresa, "estoque", chave_cache)
+    if em_disco is not None:
+        _guardar_lru(_cache_estoque_cobertura, _cache_estoque_cobertura_lock, chave_cache, em_disco,
+                     _CACHE_ESTOQUE_MAX)
+        return em_disco
 
     estoque, vendas, lojas = _ler_estoque_vendas(empresa, caminho_produto, loja_norm, grupos_norm)
 
@@ -2836,6 +2904,7 @@ def obter_resumo_estoque(
         _cache_estoque_cobertura.move_to_end(chave_cache)
         while len(_cache_estoque_cobertura) > _CACHE_ESTOQUE_MAX:
             _cache_estoque_cobertura.popitem(last=False)
+    _tela_para_disco(empresa, "estoque", chave_cache, resultado)
     return resultado
 
 
@@ -2849,12 +2918,25 @@ def listar_vendedores(
 ):
     """Ranking do último mês contra a média dos 6 anteriores."""
     empresa = _validar_nome_empresa(empresa)
-    df, _linhas_vazias = _carregar_base_telas(
-        empresa, loja=loja, grupos_clientes=_parse_grupos_clientes(grupos_clientes),
+    loja_norm = _normalizar_loja(loja)
+    grupos_norm = _parse_grupos_clientes(grupos_clientes)
+    caminho_movimento, caminho_produto = _caminho_produto_empresa(empresa)
+    try:
+        assinatura = (_assinatura_arquivo(caminho_movimento), _assinatura_arquivo(caminho_produto))
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Não foi possível ler a base: {exc}") from exc
+    chave = (
+        empresa, loja_norm or "", modo_periodo, assinatura, date.today(),
+        _assinatura_cortes_escopo(empresa, loja_norm, grupos_norm),
     )
+    em_disco = _tela_do_disco(empresa, "vendedores", chave)
+    if em_disco is not None:
+        return em_disco
+    df, _linhas_vazias = _carregar_base_telas(empresa, loja=loja, grupos_clientes=grupos_norm)
     resultado = montar_ranking_vendedores(df, modo_periodo=modo_periodo)
     resultado["empresa"] = empresa
     resultado["loja"] = _chave_escopo_loja(loja) or None
+    _tela_para_disco(empresa, "vendedores", chave, resultado)
     return resultado
 
 
@@ -2864,7 +2946,7 @@ def _caminho_controladoria_empresa(empresa: str) -> Path:
     if caminho is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Empresa '{empresa}' não tem arquivo de despesas ({empresa}_CONTROLADORIA.csv).",
+            detail=f"Empresa '{empresa}' não tem arquivo de despesas ({empresa}_CONTROLADORIA).",
         )
     return caminho
 
@@ -2918,7 +3000,7 @@ def obter_resumo_despesas(
         if nome
     )
     loja_norm = _normalizar_loja(loja)
-    df_filtrado = _filtrar_loja_coluna(df, loja, "Loja", "CONTROLADORIA.csv")
+    df_filtrado = _filtrar_loja_coluna(df, loja, "Loja", "CONTROLADORIA")
 
     resultado = montar_resumo_despesas(
         df_filtrado,
@@ -2942,7 +3024,7 @@ def obter_detalhe_despesas(
     """Lançamentos individuais de despesas, para a tabela de detalhe."""
     empresa = _validar_nome_empresa(empresa)
     df = _carregar_despesas_df(empresa)
-    df_filtrado = _filtrar_loja_coluna(df, loja, "Loja", "CONTROLADORIA.csv")
+    df_filtrado = _filtrar_loja_coluna(df, loja, "Loja", "CONTROLADORIA")
 
     resultado = montar_detalhe_despesas(
         df_filtrado, periodo=periodo, categoria=categoria, limite=limite,
@@ -2952,18 +3034,21 @@ def obter_detalhe_despesas(
 
 
 def _caminho_precificacao_empresa(empresa: str) -> Path:
-    pasta_fonte, _pasta_trabalho = _pastas_empresa(empresa)
-    caminho = resolver_caminho_precificacao(Path(pasta_fonte))
+    _pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
+    # O dump vive só no trabalho: é onde `precificacao_do_postgres.py` o grava.
+    caminho = resolver_caminho_precificacao(Path(pasta_trabalho))
     if caminho is None:
         raise HTTPException(
             status_code=404,
-            detail=f"Empresa '{empresa}' não tem arquivo de precificação ({empresa}_PRECIFICACAO.csv).",
+            # A frase "ainda não tem precificação" é o que o frontend reconhece
+            # (utils/semPrecificacao.ts) para mostrar aviso em vez de erro.
+            detail=f"A empresa '{empresa}' ainda não tem precificação registrada.",
         )
     return caminho
 
 
 def _carregar_precificacao_df(empresa: str) -> pd.DataFrame:
-    """Dump de precificação da empresa, cacheado em memória por mtime do CSV."""
+    """Dump de precificação da empresa, cacheado em memória por mtime do arquivo."""
     caminho = _caminho_precificacao_empresa(empresa)
     try:
         assinatura = _assinatura_arquivo(caminho)
@@ -2997,44 +3082,102 @@ _cache_pos_precificacao: OrderedDict[tuple, dict] = OrderedDict()
 _cache_pos_precificacao_lock = threading.Lock()
 
 
+def _fonte_movimento_pos_precificacao(empresa: str, loja: Optional[str]) -> tuple[str, Optional[tuple]]:
+    """Decide a fonte de movimento sem carregar nada (só `stat()` dos parquets):
+    `margem_price` quando a empresa tem CNPJ mapeado (`precificacao_cnpj.json`)
+    e parquet gerado, e nenhuma loja está selecionada — o parquet já soma
+    todas as lojas da empresa por CNPJ (ver `margem_price.py`), então filtrar
+    por 1 loja específica ainda cai no CSV, que já sabe fazer esse recorte.
+    """
+    if loja:
+        return "csv", None
+    pasta_margem = caminhos_padrao.margem_price()
+    if pasta_margem is None:
+        return "csv", None
+    # Raiz da pasta de trabalho (onde `precificacao_cnpj.json` fica) — não a
+    # subpasta da empresa que `_pastas_empresa` devolve.
+    pasta_trabalho = Path(_exigir_caminho_trabalho())
+    assinatura_mgp = mgp.assinatura(empresa, pasta_trabalho, pasta_margem)
+    if assinatura_mgp is None:
+        return "csv", None
+    return "margem_price", assinatura_mgp
+
+
+def _carregar_movimento_pos_precificacao(empresa: str, loja: Optional[str], fonte: str) -> pd.DataFrame:
+    if fonte == "margem_price":
+        pasta_margem = caminhos_padrao.margem_price()
+        pasta_trabalho = Path(_exigir_caminho_trabalho())
+        bruto = mgp.carregar_bruto(empresa, pasta_trabalho, pasta_margem)
+        return mgp.para_movimento_precificacao(bruto)
+    df, _linhas = _carregar_base(empresa, loja=loja, copiar=False)
+    return df
+
+
 @app.get("/api/precificacao/{empresa}")
 def obter_pos_precificacao(
     empresa: str,
     loja: Optional[str] = None,
-    usar_mes_fechado: bool = True,
+    rodada: Optional[str] = None,
+    apenas_precificados: bool = False,
     usuario: str = Depends(exigir_login),
 ):
-    """Última rodada de precificação e como esses pares venderam depois da data.
+    """Uma rodada de precificação e como a loja vendeu antes e depois da data.
 
     O dump não tem loja; o recorte de loja vale só no movimento (desempenho).
-    Cortes de Relatórios não entram: a lista do dump *é* o recorte.
+    Cortes de Relatórios não entram. `apenas_precificados` restringe o
+    movimento aos pares do dump; sem ele vem o catálogo inteiro, com o que
+    ficou fora da rodada marcado como `nao_precificado`.
+
+    `rodada` é o dia (`YYYY-MM-DD`) de `data_exportacao`; sem ela, a mais
+    recente do arquivo — o que preserva o comportamento de quando o dump tinha
+    uma rodada só. O arquivo gerado a partir do Postgres traz as N últimas, e
+    `rodadas` na resposta lista as disponíveis com tamanho, porque rodada vai de
+    3 a ~15 mil linhas e uma minúscula precisa ser reconhecível como escolha.
+
+    O movimento em si prefere `margem_price` (ver `_fonte_movimento_pos_precificacao`),
+    com fallback automático para o CSV por empresa quando a empresa ainda não
+    tem CNPJ mapeado ou parquet gerado.
     """
     empresa = _validar_nome_empresa(empresa)
     loja_norm = _normalizar_loja(loja)
     caminho_dump = _caminho_precificacao_empresa(empresa)
-    caminho_movimento, caminho_produto = _caminho_produto_empresa(empresa)
+
+    fonte_movimento, assinatura_mgp = _fonte_movimento_pos_precificacao(empresa, loja)
     try:
-        assinatura = (
-            _assinatura_arquivo(caminho_dump),
-            _assinatura_arquivo(caminho_movimento),
-            _assinatura_arquivo(caminho_produto),
-        )
+        if fonte_movimento == "margem_price":
+            assinatura_movimento = ("margem_price", assinatura_mgp)
+        else:
+            caminho_movimento, caminho_produto = _caminho_produto_empresa(empresa)
+            assinatura_movimento = (
+                "csv", _assinatura_arquivo(caminho_movimento), _assinatura_arquivo(caminho_produto),
+            )
+        assinatura = (_assinatura_arquivo(caminho_dump), assinatura_movimento)
     except OSError as exc:
         raise HTTPException(status_code=400, detail=f"Não foi possível ler a base: {exc}") from exc
 
-    chave = (empresa, loja_norm or "", usar_mes_fechado, assinatura)
+    chave = (empresa, loja_norm or "", rodada or "", apenas_precificados, assinatura, af.data_corte_padrao())
     with _cache_pos_precificacao_lock:
         cacheado = _cache_pos_precificacao.get(chave)
         if cacheado is not None:
             _cache_pos_precificacao.move_to_end(chave)
             return cacheado
+    em_disco = _tela_do_disco(empresa, "pos-precificacao", chave)
+    if em_disco is not None:
+        _guardar_lru(_cache_pos_precificacao, _cache_pos_precificacao_lock, chave, em_disco,
+                     _CACHE_POS_PRECIFICACAO_MAX)
+        return em_disco
 
     dump = _carregar_precificacao_df(empresa)
-    df, _linhas = _carregar_base(empresa, loja=loja, copiar=False)
-    resultado = montar_pos_precificacao(dump, df, usar_mes_fechado=usar_mes_fechado)
+    rodadas = listar_rodadas_dump(dump)
+    dump_rodada = filtrar_rodada(dump, rodada)
+    df = _carregar_movimento_pos_precificacao(empresa, loja, fonte_movimento)
+    resultado = montar_pos_precificacao(dump_rodada, df, apenas_precificados=apenas_precificados)
     resultado.update({
         "empresa": empresa,
         "loja": _chave_escopo_loja(loja) or None,
+        "rodadas": rodadas,
+        "rodada": rodadas[0]["dia"] if rodada is None and rodadas else rodada,
+        "fonte_movimento": fonte_movimento,
     })
 
     with _cache_pos_precificacao_lock:
@@ -3042,6 +3185,161 @@ def obter_pos_precificacao(
         _cache_pos_precificacao.move_to_end(chave)
         while len(_cache_pos_precificacao) > _CACHE_POS_PRECIFICACAO_MAX:
             _cache_pos_precificacao.popitem(last=False)
+    _tela_para_disco(empresa, "pos-precificacao", chave, resultado)
+    return resultado
+
+
+# Tela Precificação, aba Pós-precificação: histórico por SKU. Eventos + janelas
+# de efeito custam ~0,5 s e não dependem de filtro — cacheados por assinatura do
+# dump e dos parquets; os filtros só recortam.
+_CACHE_HIST_PREC_MAX = 2
+_cache_hist_prec: OrderedDict[tuple, tuple[pd.DataFrame, pd.DataFrame]] = OrderedDict()
+_cache_hist_prec_lock = threading.Lock()
+
+
+def _base_historico_precificacao(empresa: str) -> tuple[pd.DataFrame, pd.DataFrame]:
+    fonte, assinatura_mgp = _fonte_movimento_pos_precificacao(empresa, None)
+    if fonte != "margem_price":
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"O histórico por SKU precisa do parquet do PRICE (margem_price) para '{empresa}': "
+                "mapeie o CNPJ em precificacao_cnpj.json e gere o parquet."
+            ),
+        )
+    try:
+        chave = (empresa, _assinatura_arquivo(_caminho_precificacao_empresa(empresa)), assinatura_mgp)
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Não foi possível ler o dump: {exc}") from exc
+    with _cache_hist_prec_lock:
+        cacheado = _cache_hist_prec.get(chave)
+        if cacheado is not None:
+            _cache_hist_prec.move_to_end(chave)
+            return cacheado
+    dump = _carregar_precificacao_df(empresa)
+    movimento = _carregar_movimento_pos_precificacao(empresa, None, "margem_price")
+    try:
+        eventos = hist_prec.calcular_efeitos(
+            hist_prec.preparar_eventos(dump), hist_prec.preparar_diario(movimento),
+        )
+        serie = hist_prec.preparar_serie(movimento)
+    except hist_prec.ErroHistoricoPrecificacao as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    with _cache_hist_prec_lock:
+        _cache_hist_prec[chave] = (eventos, serie)
+        _cache_hist_prec.move_to_end(chave)
+        while len(_cache_hist_prec) > _CACHE_HIST_PREC_MAX:
+            _cache_hist_prec.popitem(last=False)
+    return eventos, serie
+
+
+def _lista_parametro(valor: Optional[str]) -> Optional[list[str]]:
+    itens = [item.strip() for item in (valor or "").split(",") if item.strip()]
+    return itens or None
+
+
+def _validar_filtros_historico(periodo: int, nivel: Optional[str] = None) -> None:
+    if periodo not in hist_prec.PERIODOS_DIAS:
+        raise HTTPException(status_code=400, detail=f"Período inválido: {periodo}.")
+    if nivel is not None and nivel not in (*hist_prec.NIVEIS, "rodada"):
+        raise HTTPException(status_code=400, detail=f"Nível inválido: {nivel}.")
+
+
+@app.get("/api/precificacao/{empresa}/historico")
+def obter_historico_precificacao(
+    empresa: str,
+    periodo: int = 180,
+    rodadas: Optional[str] = None,
+    faixas: Optional[str] = None,
+    nivel: str = "familia",
+    todos: bool = False,
+    busca: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
+    """Histórico de precificações por SKU num período, sem prender a uma rodada.
+
+    `rodadas` e `faixas` vêm separados por vírgula (dias `YYYY-MM-DD`, letras da
+    faixa). `nivel` agrupa a tabela: familia, fabricante, par, sku ou rodada.
+    `todos` só troca a série do gráfico para a loja inteira.
+    """
+    empresa = _validar_nome_empresa(empresa)
+    _validar_filtros_historico(periodo, nivel)
+    eventos, serie = _base_historico_precificacao(empresa)
+    resultado = hist_prec.montar_historico(
+        eventos, serie, periodo_dias=periodo, rodadas=_lista_parametro(rodadas),
+        faixas=_lista_parametro(faixas), nivel=nivel, todos=todos, busca=busca,
+    )
+    resultado["empresa"] = empresa
+    return resultado
+
+
+@app.get("/api/precificacao/{empresa}/historico/item")
+def obter_item_historico_precificacao(
+    empresa: str,
+    nivel: str,
+    nome: str,
+    periodo: int = 180,
+    rodadas: Optional[str] = None,
+    faixas: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
+    """Painel do item: histórico de precificações, série e SKUs que mais pesam."""
+    empresa = _validar_nome_empresa(empresa)
+    _validar_filtros_historico(periodo)
+    if nivel not in hist_prec.NIVEIS:
+        raise HTTPException(status_code=400, detail=f"Nível inválido: {nivel}.")
+    eventos, serie = _base_historico_precificacao(empresa)
+    return hist_prec.montar_item(
+        eventos, serie, nivel=nivel, nome=nome, periodo_dias=periodo,
+        rodadas=_lista_parametro(rodadas), faixas=_lista_parametro(faixas),
+    )
+
+
+_CACHE_MARGEM_PRICE_MAX = 16
+_cache_margem_price: OrderedDict[tuple, dict] = OrderedDict()
+_cache_margem_price_lock = threading.Lock()
+
+
+@app.get("/api/dashboard/margem-price/{empresa}")
+def obter_margem_price_dashboard(empresa: str):
+    """Margem mensal da empresa inteira, vinda do parquet `margem_price`
+    (soma `receita`/`cmv` de todas as lojas do CNPJ antes de dividir — ver
+    `margem_price.py`; é a fórmula validada contra a tela do PRICE).
+
+    Rota pública (mesmo padrão de `/api/dashboard/*`): o Dashboard não exige
+    login. `disponivel=False` quando a empresa não tem CNPJ mapeado em
+    `precificacao_cnpj.json` ou nenhum parquet foi gerado ainda — o frontend
+    cai de volta para a margem aproximada calculada a partir do summary.
+    """
+    empresa = _validar_nome_empresa(empresa)
+    vazio = {"disponivel": False, "serie_mensal": []}
+    pasta_margem = caminhos_padrao.margem_price()
+    if pasta_margem is None:
+        return vazio
+    pasta_trabalho = Path(_exigir_caminho_trabalho())
+    assinatura_mgp = mgp.assinatura(empresa, pasta_trabalho, pasta_margem)
+    if assinatura_mgp is None:
+        return vazio
+
+    chave = (empresa, assinatura_mgp)
+    with _cache_margem_price_lock:
+        cacheado = _cache_margem_price.get(chave)
+        if cacheado is not None:
+            _cache_margem_price.move_to_end(chave)
+            return cacheado
+
+    try:
+        bruto = mgp.carregar_bruto(empresa, pasta_trabalho, pasta_margem)
+    except mgp.ErroMargemPrice:
+        resultado = vazio
+    else:
+        resultado = {"disponivel": True, "serie_mensal": mgp.margem_mensal(bruto)}
+
+    with _cache_margem_price_lock:
+        _cache_margem_price[chave] = resultado
+        _cache_margem_price.move_to_end(chave)
+        while len(_cache_margem_price) > _CACHE_MARGEM_PRICE_MAX:
+            _cache_margem_price.popitem(last=False)
     return resultado
 
 
@@ -3255,6 +3553,11 @@ def obter_painel_clientes(
         if cacheado is not None:
             _cache_painel_clientes.move_to_end(chave)
             return cacheado
+    em_disco = _tela_do_disco(empresa, "clientes-painel", chave)
+    if em_disco is not None:
+        _guardar_lru(_cache_painel_clientes, _cache_painel_clientes_lock, chave, em_disco,
+                     _CACHE_PAINEL_CLIENTES_MAX)
+        return em_disco
 
     estado_tags = _ler_tags_clientes(empresa, loja=loja)
     config = _ler_config_escopo(empresa, loja) or {}
@@ -3277,6 +3580,7 @@ def obter_painel_clientes(
         _cache_painel_clientes.move_to_end(chave)
         while len(_cache_painel_clientes) > _CACHE_PAINEL_CLIENTES_MAX:
             _cache_painel_clientes.popitem(last=False)
+    _tela_para_disco(empresa, "clientes-painel", chave, resultado)
     return resultado
 
 
@@ -3365,6 +3669,10 @@ def obter_painel_diagnostico(
         if cacheado is not None:
             _cache_diagnostico.move_to_end(chave)
             return cacheado
+    em_disco = _tela_do_disco(empresa, "diagnostico", chave)
+    if em_disco is not None:
+        _guardar_lru(_cache_diagnostico, _cache_diagnostico_lock, chave, em_disco, _CACHE_DIAGNOSTICO_MAX)
+        return em_disco
 
     config = _ler_config_escopo(empresa, loja) or {}
     df, _linhas_vazias = _carregar_base_telas(empresa, loja=loja, grupos_clientes=grupos_norm)
@@ -3388,6 +3696,7 @@ def obter_painel_diagnostico(
         _cache_diagnostico.move_to_end(chave)
         while len(_cache_diagnostico) > _CACHE_DIAGNOSTICO_MAX:
             _cache_diagnostico.popitem(last=False)
+    _tela_para_disco(empresa, "diagnostico", chave, resultado)
     return resultado
 
 
@@ -4605,7 +4914,7 @@ def _analises_alvos(
         # Reutiliza a base já validada e normalizada no cache; antes esta análise
         # relia dezenas de MB mesmo após Dashboard/Analisador carregarem a base.
         df, _linhas_vazias = _carregar_base_empresa(empresa)
-        df = _filtrar_loja_coluna(df, loja, "Loja", "MOVIMENTO_ATUAL.csv")
+        df = _filtrar_loja_coluna(df, loja, "Loja", "MOVIMENTO_ATUAL")
         colunas_origem = [
             "Loja", "NOME_FABRICANTE", "Cliente", "descricao", "Ano", "Mês",
             "Código Interno", "Código de referêcia", "Receita Acumulada 11 Meses", "QTD",
@@ -4816,29 +5125,6 @@ def _arquivo_sob(raiz: str, caminho_relativo: str) -> Optional[str]:
     return destino if os.path.isfile(destino) else None
 
 
-# Pasta `data/` ao lado do executável, para o `summary.json` do modo estático do
-# Dashboard: são ~20 MB de retrato de uma base, que não cabem no pacote (todo
-# release engordaria carregando dado congelado). Aqui é opcional, sobrevive às
-# atualizações e pode ser trocado sem novo release — mesmo tratamento que
-# `base_de_dados.xlsx` já recebe.
-PASTA_DADOS_ESTATICOS = os.path.realpath(os.path.join(RAIZ_PROJETO, "data"))
-PREFIXO_DADOS_ESTATICOS = "data/"
-
-
-def _arquivo_estatico(caminho_relativo: str) -> Optional[str]:
-    """Procura o arquivo no build; para `data/...`, também ao lado do executável.
-
-    A segunda raiz é restrita a `data/` de propósito: liberar a pasta do
-    executável inteira serviria `dados_locais/app.db`, com os hashes de senha.
-    """
-    do_build = _arquivo_sob(PASTA_WEB, caminho_relativo)
-    if do_build or not caminho_relativo.startswith(PREFIXO_DADOS_ESTATICOS):
-        return do_build
-    return _arquivo_sob(
-        PASTA_DADOS_ESTATICOS, caminho_relativo[len(PREFIXO_DADOS_ESTATICOS):]
-    )
-
-
 if os.path.isfile(INDEX_WEB):
     logger.info("Servindo o frontend a partir de %s", PASTA_WEB)
 
@@ -4848,13 +5134,13 @@ if os.path.isfile(INDEX_WEB):
         if caminho == "api" or caminho.startswith("api/"):
             raise HTTPException(status_code=404, detail="Rota não encontrada.")
 
-        arquivo = _arquivo_estatico(caminho) if caminho else None
+        arquivo = _arquivo_sob(PASTA_WEB, caminho) if caminho else None
         if arquivo:
             return FileResponse(arquivo)
 
-        # Pedido de arquivo que não existe (ex.: /data/summary.json antes de
-        # rodar process_data.py) precisa dar 404 — devolver o index.html faria
-        # o fetch receber HTML com status 200 e quebrar no JSON.parse.
+        # Pedido de arquivo que não existe precisa dar 404 — devolver o
+        # index.html faria o fetch receber HTML com status 200 e quebrar no
+        # JSON.parse.
         if os.path.splitext(caminho)[1]:
             raise HTTPException(status_code=404, detail="Arquivo não encontrado.")
 

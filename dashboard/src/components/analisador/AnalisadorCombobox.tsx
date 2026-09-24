@@ -10,6 +10,8 @@ interface AnalisadorComboboxProps {
   multiple?: boolean;
   values?: string[];
   onMultipleChange?: (values: string[]) => void;
+  /** Plural do item no rótulo "N … selecionadas" (padrão: lojas). */
+  unidadePlural?: string;
   /**
    * Rótulo da opção com value "" (ex.: Digitar manualmente / Todas as lojas).
    * Omitir ou `false` esconde a opção vazia (listas obrigatórias, ex.: granularidade).
@@ -61,6 +63,7 @@ export function AnalisadorCombobox({
   multiple = false,
   values = [],
   onMultipleChange,
+  unidadePlural = 'lojas',
   emptyLabel = false,
   searchPlaceholder = 'Buscar…',
   includeOrphanValue = false,
@@ -113,7 +116,7 @@ export function AnalisadorCombobox({
       ? emptyTexto || 'Selecionar…'
       : valoresAtivos.length === 1
         ? valoresAtivos[0]
-        : `${valoresAtivos.length} lojas selecionadas`
+        : `${valoresAtivos.length} ${unidadePlural} selecionadas`
     : value || emptyTexto || 'Selecionar…';
 
   const fechar = useCallback(() => {

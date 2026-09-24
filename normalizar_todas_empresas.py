@@ -9,7 +9,7 @@ lote, o primeiro usuário que abrir cada empresa no horário comercial paga essa
 espera — foi o que provocou o erro de timeout de 45s relatado no Dashboard.
 
 Não grava mais nenhum arquivo intermediário na pasta de trabalho (nem Base.csv,
-nem Liquidez_*.csv): o app lê MOVIMENTO_ATUAL.csv + PRODUTO.csv da fonte direto
+nem Liquidez_*.csv): o app lê MOVIMENTO_ATUAL + PRODUTO (parquet) da fonte direto
 em memória (ver `main._carregar_atacado_df`).
 
 Uso:
@@ -41,6 +41,7 @@ if str(_BACKEND) not in sys.path:
 import caminhos_padrao  # noqa: E402
 import harmonizar_clientes  # noqa: E402
 import cache_atacado  # noqa: E402
+import consulta_parquet  # noqa: E402
 from dashboard_summary import gerar_e_gravar_summary_dashboard  # noqa: E402
 from monitor_empresas import obter_resumo_monitor  # noqa: E402
 from engine import analise_funil as af  # noqa: E402
@@ -106,9 +107,20 @@ def _gerar_summary(fonte_emp: Path, trab_emp: Path) -> Path:
     acesso do dia a essa empresa no app já lê parquet em vez de CSV.
     """
     caminho_movimento, caminho_produto, _estoque, _vendas = resolver_arquivos_dados(fonte_emp)
+    data_corte = af.data_corte_padrao()
     df_bruto = cache_atacado.carregar_atacado_df_cacheado(caminho_movimento, caminho_produto, trab_emp)
+    # Mesmo corte D-1 do app, aplicado depois do cache pelo mesmo motivo.
+    df_bruto = af.cortar_ate(df_bruto, data_corte)
     df, _linhas_vazias = af.validar_e_limpar(df_bruto, receita_em_texto_br=False)
-    return gerar_e_gravar_summary_dashboard(trab_emp, _harmonizar_clientes(trab_emp, df))
+    try:
+        ultimo = consulta_parquet.ultimo_movimento(caminho_movimento)
+        ultimo = min(ultimo, data_corte) if ultimo else None
+    except Exception:  # noqa: BLE001 — rótulo, não pode derrubar o summary
+        ultimo = None
+    return gerar_e_gravar_summary_dashboard(
+        trab_emp, _harmonizar_clientes(trab_emp, df),
+        data_ultimo_movimento=ultimo, data_corte=data_corte,
+    )
 
 
 def normalizar_lote(
@@ -125,13 +137,13 @@ def normalizar_lote(
         desconhecidas = sorted(filtro - set(empresas))
         if desconhecidas:
             raise ErroNormalizacao(
-                "Empresa(s) sem MOVIMENTO_ATUAL.csv/PRODUTO.csv na fonte: " + ", ".join(desconhecidas)
+                "Empresa(s) sem MOVIMENTO_ATUAL/PRODUTO (parquet) na fonte: " + ", ".join(desconhecidas)
             )
         empresas = [n for n in empresas if n in filtro]
 
     if not empresas:
         raise ErroNormalizacao(
-            f"Nenhuma empresa com MOVIMENTO_ATUAL.csv/PRODUTO.csv em {pasta_fonte}"
+            f"Nenhuma empresa com MOVIMENTO_ATUAL/PRODUTO (parquet) em {pasta_fonte}"
         )
 
     log_linhas: list[str] = []
@@ -211,7 +223,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Pré-gera summary_dashboard.json(.gz) de todas as empresas na pasta "
-            "de trabalho, lendo MOVIMENTO_ATUAL.csv + PRODUTO.csv da fonte."
+            "de trabalho, lendo MOVIMENTO_ATUAL + PRODUTO (parquet) da fonte."
         )
     )
     parser.add_argument(

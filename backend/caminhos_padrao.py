@@ -25,6 +25,15 @@ SUFIXO_ONEDRIVE_EMPRESA = "2dconsultores.com.br"
 #: Trecho comum a todos os caminhos, dentro da raiz do OneDrive.
 RAIZ_ECOSSISTEMA = os.path.join("01 - Marco + Monitores", "Ecossistema-Monitoria")
 
+#: Raiz do banco de margem por transação (sistema PRICE, separado do
+#: Ecossistema-Monitoria) — um parquet por CNPJ, atualizado fora do Prisma.
+RAIZ_PRICE = os.path.join("DB", "PRICE")
+
+#: Data warehouse por empresa (`DB/DW/{empresa}/BI/*.dw_2d`), fonte dos arquivos
+#: da consultoria. Daqui sai só o `{empresa}_EMPRESA.dw_2d` (loja → CNPJ).
+RAIZ_DB = "DB"
+SUBPASTA_DW = "DW"
+
 #: Subpastas, relativas a RAIZ_ECOSSISTEMA. Grafia exata das pastas que já
 #: existem no OneDrive — inclusive o acento e a caixa, porque a pasta é criada
 #: por pessoas e não pelo app, e o app não deve criar variação com outro nome.
@@ -32,6 +41,7 @@ SUBPASTA_FONTE = "Dados Alvos"
 SUBPASTA_TRABALHO = "analisador"
 SUBPASTA_ATUALIZACOES = os.path.join("Prisma", "Atualizações")
 SUBPASTA_CARTEIRA = "Carteira"
+SUBPASTA_MARGEM_PRICE = "margem_price"
 
 
 def raiz_onedrive_empresa() -> Optional[str]:
@@ -64,7 +74,7 @@ def raiz_onedrive_empresa() -> Optional[str]:
     return None
 
 
-def _padrao(subpasta: str) -> Optional[str]:
+def _padrao(subpasta: str, raiz_relativa: str = RAIZ_ECOSSISTEMA) -> Optional[str]:
     """Caminho padrão da subpasta, ou None se o OneDrive não estiver na máquina.
 
     Só devolve o que existe: sugerir uma pasta ausente faria o app tentar ler dali
@@ -74,7 +84,7 @@ def _padrao(subpasta: str) -> Optional[str]:
     raiz = raiz_onedrive_empresa()
     if not raiz:
         return None
-    caminho = os.path.join(raiz, RAIZ_ECOSSISTEMA, subpasta)
+    caminho = os.path.join(raiz, raiz_relativa, subpasta)
     return caminho if os.path.isdir(caminho) else None
 
 
@@ -118,3 +128,20 @@ def dossie_carteira() -> Optional[str]:
         return None
     caminho = os.path.join(pasta, "dossie")
     return caminho if os.path.isdir(caminho) else None
+
+
+def margem_price() -> Optional[str]:
+    """Pasta com um parquet de margem por transação por CNPJ (sistema PRICE).
+
+    Fora do Ecossistema-Monitoria (raiz própria `DB/PRICE`) porque é gerada e
+    mantida por outro sistema da consultoria, não pelo lote do Prisma.
+    """
+    return _padrao(SUBPASTA_MARGEM_PRICE, RAIZ_PRICE)
+
+
+def dw() -> Optional[str]:
+    """Pasta `DB/DW`, com uma subpasta por empresa (`{empresa}/BI/*.dw_2d`).
+
+    Somente leitura para o Prisma: é de onde `base_empresas` tira loja → CNPJ.
+    """
+    return _padrao(SUBPASTA_DW, RAIZ_DB)

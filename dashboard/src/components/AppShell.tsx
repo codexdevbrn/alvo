@@ -22,7 +22,7 @@ import {
   Receipt,
   Bot,
   Scissors,
-  BadgePercent,
+  Tags,
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getToken, clearToken, obterStatusAtualizacao, type StatusAtualizacao } from '../api/client';
@@ -35,7 +35,11 @@ import { TopoVendaMediaSelect } from './TopoVendaMediaSelect';
 import { TopoDespesasPeriodoSelect } from './TopoDespesasPeriodoSelect';
 import { TopoCortesToggle } from './TopoCortesToggle';
 import { TopoGruposClientesFiltro } from './TopoGruposClientesFiltro';
+import { abaPrecificacao } from '../utils/abaPrecificacao';
 import { TopoPosPrecificacaoModoToggle } from './TopoPosPrecificacaoModoToggle';
+import { TopoPosPrecificacaoItensToggle } from './TopoPosPrecificacaoItensToggle';
+import { TopoPosPrecificacaoRodadaSelect } from './TopoPosPrecificacaoRodadaSelect';
+import { EncaixeTopoContext } from './encaixeTopo';
 import { useEscopoAtual } from '../hooks/useEscopoAtual';
 
 const URL_CARTEIRA = 'http://127.0.0.1:3001';
@@ -126,11 +130,14 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   const emEstoque = location.pathname.startsWith('/estoque');
   const emDiagnostico = location.pathname.startsWith('/diagnostico');
   const emDespesas = location.pathname.startsWith('/despesas');
-  const emPosPrecificacao = location.pathname.startsWith('/pos-precificacao');
+  const emPrecificacao = location.pathname.startsWith('/precificacao');
+  // Pós precificação é a aba padrão da Precificação (`abaPrecificacao`).
+  const emPosPrecificacao = emPrecificacao && abaPrecificacao(location.search) === 'pos';
   const emAssistente = location.pathname.startsWith('/assistente');
   const emConfig = location.pathname.startsWith('/config');
   const emMercadologico = location.pathname.startsWith('/mercadologico');
   const emDashboard = location.pathname === '/';
+  const [encaixeTopo, setEncaixeTopo] = useState<HTMLDivElement | null>(null);
   const initialCollapsed = lerCollapsed();
   const [collapsed, setCollapsed] = useState(initialCollapsed);
   const [isMobile, setIsMobile] = useState(
@@ -300,11 +307,11 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
               onClick={() => navigate('/despesas')}
             />
             <NavItem
-              icon={<BadgePercent size={17} />}
-              label="Pós precificação"
+              icon={<Tags size={17} />}
+              label="Precificação"
               collapsed={colapsado}
-              ativo={emPosPrecificacao}
-              onClick={() => navigate('/pos-precificacao')}
+              ativo={emPrecificacao}
+              onClick={() => navigate('/precificacao')}
             />
             <NavItem
               icon={<Bot size={17} />}
@@ -382,24 +389,28 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
             <div className="app-shell-escopo">
               {emEstoque && <TopoVendaMediaSelect />}
               {emDespesas && <TopoDespesasPeriodoSelect />}
+              <div ref={setEncaixeTopo} className="app-shell-topo-encaixe" />
+              {emPosPrecificacao && <TopoPosPrecificacaoRodadaSelect />}
+              {emPosPrecificacao && <TopoPosPrecificacaoItensToggle />}
               {emPosPrecificacao && <TopoPosPrecificacaoModoToggle />}
-              {!emAssistente && !emCortes && (
-                <SidebarMesesFechadosToggle desabilitarMesmoPeriodo={emDashboard || emEstoque || emDespesas || emPosPrecificacao} />
+              {!emAssistente && !emCortes && !emPosPrecificacao && !emPrecificacao && (
+                <SidebarMesesFechadosToggle desabilitarMesmoPeriodo={emDashboard || emEstoque || emDespesas} />
               )}
-              {/* Sem empresa selecionada, nenhuma tela aplica corte algum: o
-                  Dashboard cai no summary.json estático (não passa cortes/grupos
-                  para o backend) e Clientes/Vendedores/Estoque nem chegam a
-                  buscar dado. Escondido aqui em vez de só desabilitado — ligado
-                  sem efeito é pior que ausente. */}
-              {!!empresaEscopo && !emDespesas && !emAssistente && !emCortes && !emPosPrecificacao && <TopoCortesToggle />}
-              {!!empresaEscopo && !emDespesas && !emAssistente && !emCortes && !emPosPrecificacao && <TopoGruposClientesFiltro />}
+              {/* Instante transitório antes da 1ª empresa resolver (ver
+                  SidebarEmpresaSelect): nenhuma tela aplica corte algum ainda.
+                  Escondido aqui em vez de só desabilitado — ligado sem efeito
+                  é pior que ausente. */}
+              {!!empresaEscopo && !emDespesas && !emAssistente && !emCortes && !emPosPrecificacao && !emPrecificacao && <TopoCortesToggle />}
+              {!!empresaEscopo && !emDespesas && !emAssistente && !emCortes && !emPosPrecificacao && !emPrecificacao && <TopoGruposClientesFiltro />}
               <SidebarEmpresaSelect />
-              <SidebarLojaSelect />
+              {/* As outras abas da Precificação leem o parquet do PRICE, que já
+                  soma as lojas; a Pós precificação filtra o movimento por loja. */}
+              {(!emPrecificacao || emPosPrecificacao) && <SidebarLojaSelect />}
             </div>
           </div>
         )}
         {statusAtualizacao && <BannerAtualizacao status={statusAtualizacao} />}
-        {children}
+        <EncaixeTopoContext.Provider value={encaixeTopo}>{children}</EncaixeTopoContext.Provider>
       </main>
     </div>
   );

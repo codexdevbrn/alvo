@@ -17,10 +17,13 @@ from analise_clientes import _cortes_validos, _meses_ate, _ordem_faixas
 from engine.analise_funil import (
     clientes_queda_quantidade,
     comparativo_receita_ano_anterior,
+    correlacao_produto_cliente,
     curva_pareto,
     erosao_clientes_por_produto,
     faixa_por_curva,
+    impacto_financeiro_churn,
     nomes_faixas,
+    produtos_alta_e_queda,
     sem_venda_clientes,
     tendencia_produtos,
 )
@@ -42,6 +45,8 @@ from periodo_mensal import (
 LIMITE_CASCATA = 6
 # Produtos por lado no tornado (alta e queda).
 LIMITE_TORNADO = 8
+# Produtos por lado no radar de sinais precoces (variação %, ver `_radar_percentual`).
+LIMITE_RADAR_PERCENTUAL = 6
 # Produtos considerados no KPI de concentração da queda.
 TOPO_CONCENTRACAO = 3
 # Meses de cada lado do fluxo de faixas. Trimestre móvel, não mês contra mês:
@@ -106,11 +111,13 @@ def _resposta_vazia(mensagem: str) -> dict:
         "tensao": None,
         "cascata": {"passos": [], "cobertura_pct": None},
         "tornado": [],
+        "radar_percentual": {"disponivel": False, "mensagem": mensagem, "alta": [], "queda": []},
         "fluxo_faixas": _fluxo_faixas_vazio(),
         "streak": {"periodos": [], "perda": [], "receita": [], "ganho": []},
         "risco": {"disponivel": False, "mensagem": mensagem, "clientes": [], "composicao": []},
         "queda_quantidade": {"disponivel": False, "mensagem": mensagem, "clientes": []},
         "matriz_erosao": {"disponivel": False, "mensagem": mensagem, "produtos": [], "clientes": []},
+        "impacto_churn": {"receita_sob_risco": None, "maior_retracao_pct": None, "variacao_global_pct": None},
         "margem_giro": _margem_giro_vazio(mensagem),
     }
 
@@ -342,6 +349,62 @@ def _tornado(delta_produtos: pd.DataFrame) -> list[dict]:
     ]
     linhas.sort(key=lambda linha: linha["delta_receita"], reverse=True)
     return linhas
+
+
+def _radar_percentual(recorte: pd.DataFrame, tornado: list[dict]) -> dict:
+    """ATO II: sinal de tendência nascente que o Tornado ainda não vê — produto
+    pequeno mudando de patamar rápido, antes de virar dinheiro suficiente pra
+    entrar no ranking por delta em R$.
+
+    `_tornado` rejeita ranquear por variação percentual pura de propósito
+    (ver o docstring dela): R$10 → R$100 é +900% e não significa nada. Aqui a
+    régua é o oposto — só entra quem já tem receita relevante (piso = mediana
+    da receita anterior entre os produtos que se moveram) — e quem o Tornado
+    já mostrou sai daqui, porque o radar existe pra cobrir só o que o
+    ranking por R$ ainda não pegou.
+    """
+    vazio = {"disponivel": False, "mensagem": "Sem período suficiente para comparar.", "alta": [], "queda": []}
+    em_alta, em_queda = produtos_alta_e_queda(recorte, granularidade="Mensal", top_n=40)
+    combinado = pd.concat([em_alta, em_queda])
+    if combinado.empty:
+        return vazio
+
+    piso = float(combinado["Receita_Periodo_Anterior"].median())
+    ja_no_tornado = {linha["descricao"] for linha in tornado}
+
+    def _linhas(tabela: pd.DataFrame, ascendente: bool) -> list[dict]:
+        filtrado = tabela[
+            (tabela["Receita_Periodo_Anterior"] >= piso)
+            # Devolução maior que a venda do período deixa a receita atual
+            # negativa — não é sinal de tendência, é anomalia de estorno, e
+            # "R$ 449 → -R$ 1.052" lê como conta quebrada, não como alerta.
+            & (tabela["Receita_Periodo_Atual"] >= 0)
+            & (~tabela["descricao"].isin(ja_no_tornado))
+        ]
+        # Empate no percentual (vários produtos zerados = -100%) é comum —
+        # desempata por quem tinha mais receita antes, senão a ordem dentro do
+        # empate é arbitrária e o card pode abrir com o produto menos relevante.
+        filtrado = filtrado.sort_values(
+            ["Variacao_Percentual", "Receita_Periodo_Anterior"], ascending=[ascendente, False],
+        ).head(LIMITE_RADAR_PERCENTUAL)
+        return [
+            {
+                "descricao": str(linha.descricao),
+                "receita_anterior": _arredondar(linha.Receita_Periodo_Anterior),
+                "receita_atual": _arredondar(linha.Receita_Periodo_Atual),
+                "variacao_pct": _arredondar(linha.Variacao_Percentual),
+            }
+            for linha in filtrado.itertuples()
+        ]
+
+    alta, queda = _linhas(em_alta, ascendente=False), _linhas(em_queda, ascendente=True)
+    if not alta and not queda:
+        return {
+            "disponivel": False,
+            "mensagem": "Nenhum sinal relevante fora do que o Tornado já mostra.",
+            "alta": [], "queda": [],
+        }
+    return {"disponivel": True, "mensagem": None, "alta": alta, "queda": queda}
 
 
 def _fluxo_faixas_vazio(mensagem: str | None = None) -> dict:
@@ -643,6 +706,19 @@ def _queda_quantidade(recorte: pd.DataFrame) -> dict:
     return {"disponivel": True, "mensagem": None, "clientes": clientes}
 
 
+def _status_causa_erosao(recorte: pd.DataFrame, erosao: pd.DataFrame) -> dict[tuple[str, str], str]:
+    """Classifica CADA evento de erosão (não só o Top 15 do boletim) com o
+    mesmo motor de `correlacao_produto_cliente` — a matriz mostra até
+    `LIMITE_EROSAO_PRODUTOS` × `LIMITE_EROSAO_CLIENTES` células, e uma célula
+    visível sem causa classificada leria como buraco no dado, não como corte
+    de ranking."""
+    if erosao.empty:
+        return {}
+    _, alertas = tendencia_produtos(recorte, granularidade="Mensal", periodos_queda_consecutiva=QUEDA_CONSECUTIVA_MINIMA)
+    classificado = correlacao_produto_cliente(recorte, erosao, alertas, granularidade="Mensal", top_n=len(erosao))
+    return {(str(linha.Cliente), str(linha.descricao)): str(linha.Status) for linha in classificado.itertuples()}
+
+
 def _matriz_erosao(recorte: pd.DataFrame) -> dict:
     """ATO III: cruzamento cliente × produto de quem caiu, e em quê — mesma
     régua do relatório de erosão do Analisador (`erosao_clientes_por_produto`),
@@ -665,11 +741,12 @@ def _matriz_erosao(recorte: pd.DataFrame) -> dict:
 
     tabela = filtrado[filtrado["Cliente"].isin(top_clientes)]
     por_par = {(linha.Cliente, linha.descricao): linha for linha in tabela.itertuples()}
+    status_por_par = _status_causa_erosao(recorte, erosao)
 
     def _celula(cliente: str, produto: str) -> dict:
         linha = por_par.get((cliente, produto))
         if linha is None:
-            return {"produto": produto, "perda_rs": None, "receita_anterior": None, "variacao_pct": None}
+            return {"produto": produto, "perda_rs": None, "receita_anterior": None, "variacao_pct": None, "status": None}
         return {
             "produto": produto,
             "perda_rs": _arredondar(linha.Reducao_Receita),
@@ -678,6 +755,7 @@ def _matriz_erosao(recorte: pd.DataFrame) -> dict:
             # `ClienteRisco.variacao_pct` em client.ts) — `Reducao_Percentual`
             # sai positiva do motor de análise.
             "variacao_pct": _arredondar(-linha.Reducao_Percentual),
+            "status": status_por_par.get((cliente, produto)),
         }
 
     clientes = [
@@ -690,6 +768,23 @@ def _matriz_erosao(recorte: pd.DataFrame) -> dict:
     ]
 
     return {"disponivel": True, "mensagem": None, "produtos": top_produtos, "clientes": clientes}
+
+
+def _impacto_churn(recorte: pd.DataFrame) -> dict:
+    """ATO III: tamanho do risco em R$ — o número que a Tensão (Ato I) deixa
+    de fora de propósito por causa do padrão de compra intermitente (ver
+    `_tensao`). Aqui é exposição — soma de toda queda individual cliente x
+    produto —, não perda confirmada: mora na pauta, junto de quem está em
+    risco, não no resumo do topo.
+    """
+    erosao = erosao_clientes_por_produto(recorte, granularidade="Mensal", reducao_minima_percentual=0.0)
+    resultado = impacto_financeiro_churn(recorte, erosao, granularidade="Mensal").iloc[0]
+    variacao = resultado["Variacao_Global_Periodo_Pct"]
+    return {
+        "receita_sob_risco": _arredondar(resultado["Receita_Sob_Risco"]),
+        "maior_retracao_pct": _arredondar(resultado["Maior_Retracao_Individual_Pct"]),
+        "variacao_global_pct": _arredondar(variacao) if variacao is not None else None,
+    }
 
 
 def _margem_giro(
@@ -787,6 +882,7 @@ def montar_painel_diagnostico(
         return _resposta_vazia(str(erro))
 
     delta_produtos = _delta_por_produto(recorte)
+    tornado = _tornado(delta_produtos)
 
     return {
         "disponivel": True,
@@ -795,11 +891,13 @@ def montar_painel_diagnostico(
         "rotulo_periodo": rotulo_periodo(referencia),
         "tensao": _tensao(recorte, delta_produtos),
         "cascata": _cascata(recorte),
-        "tornado": _tornado(delta_produtos),
+        "tornado": tornado,
+        "radar_percentual": _radar_percentual(recorte, tornado),
         "fluxo_faixas": _fluxo_faixas(recorte, referencia, cortes),
         "streak": _streak(recorte, referencia),
         "risco": _risco_clientes(recorte, referencia, cortes),
         "queda_quantidade": _queda_quantidade(recorte),
         "matriz_erosao": _matriz_erosao(recorte),
+        "impacto_churn": _impacto_churn(recorte),
         "margem_giro": _margem_giro(recorte, estoque, vendas),
     }

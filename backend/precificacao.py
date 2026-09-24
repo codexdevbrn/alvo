@@ -1,13 +1,15 @@
 """Acompanhamento pós-precificação.
 
 O dump `{empresa}_PRECIFICACAO.csv` diz *quem* entrou na rodada e *qual* alvo
-de margem foi gravado. O movimento da empresa diz *como* esses pares
-família × fabricante venderam depois da data do dump, contra uma janela de
-mesmo comprimento imediatamente anterior.
+de margem foi gravado. O movimento da empresa diz *como* a loja vendeu antes
+e depois da data do dump.
 
 Sem código de produto no dump: o join é `descricao` (= DESCRICAO_HARMONIZADA)
-+ `fabricante`. Família ou fabricante que não estava no dump não entra — senão
-a tela misturaria o que foi precificado com o resto do catálogo.
++ `fabricante`. Com `apenas_precificados`, só os pares do dump entram no
+movimento; sem ele, entra o catálogo inteiro e família/fabricante fora do
+dump vira item `nao_precificado` (sem alvo). O alvo geral só existe no
+recorte precificado — comparar a margem da loja inteira com o alvo de uma
+parte dela seria número sem significado.
 
 A série mensal cobre as duas janelas (antes + depois) para o gráfico parecer
 com o da tela de precificação: margem, lucro bruto / dia com venda e
@@ -19,7 +21,6 @@ from __future__ import annotations
 
 import math
 from collections import Counter
-from datetime import date
 from typing import Any
 
 import pandas as pd
@@ -27,7 +28,6 @@ import pandas as pd
 from periodo_mensal import (
     deslocar_mes,
     inicio_mes,
-    mes_atual_calendario,
     numero,
     rotulo_periodo,
     variacao,
@@ -39,7 +39,7 @@ COLUNA_RECEITA = "Receita"
 COLUNA_CMV = "CMV"
 COLUNA_QTD = "QTD"
 
-SITUACOES = ("acima", "abaixo", "no_alvo", "sem_venda", "sem_alvo")
+SITUACOES = ("acima", "abaixo", "no_alvo", "sem_venda", "sem_alvo", "nao_precificado")
 
 # Janela da visão "Detalhada": dia a dia, não mês a mês. Fixa e pequena de
 # propósito — é um zoom no entorno do corte, não outra forma de ver a janela
@@ -110,13 +110,6 @@ def _datas_movimento(movimento: pd.DataFrame) -> pd.Series:
     return pd.Series(pd.NaT, index=movimento.index, dtype="datetime64[ns]")
 
 
-def _teto_mes_fechado(ultimo: pd.Timestamp, hoje: date) -> pd.Timestamp:
-    """Último instante da janela 'depois' quando o mês corrente ainda está aberto."""
-    if inicio_mes(ultimo) != mes_atual_calendario(hoje):
-        return ultimo
-    return inicio_mes(ultimo) - pd.Timedelta(days=1)
-
-
 def _contar_dias_venda(df: pd.DataFrame) -> int:
     if df.empty or "_data" not in df.columns:
         return 0
@@ -135,23 +128,8 @@ def _contar_dias_venda(df: pd.DataFrame) -> int:
     return int(validos.dt.normalize().nunique())
 
 
-def _agregar(df: pd.DataFrame) -> dict[str, Any]:
-    if df.empty:
-        return {
-            "receita": 0.0,
-            "cmv": 0.0,
-            "qtd": 0.0,
-            "lucro": 0.0,
-            "margem": None,
-            "dias_venda": 0,
-            "lucro_dia": None,
-            "qtd_dia": None,
-        }
-    receita = float(df[COLUNA_RECEITA].sum())
-    cmv = float(df[COLUNA_CMV].sum()) if COLUNA_CMV in df.columns else 0.0
-    qtd = float(df[COLUNA_QTD].sum()) if COLUNA_QTD in df.columns else 0.0
+def _montar_agregado(receita: float, cmv: float, qtd: float, dias: int) -> dict[str, Any]:
     lucro = receita - cmv
-    dias = _contar_dias_venda(df)
     return {
         "receita": receita,
         "cmv": cmv,
@@ -161,6 +139,37 @@ def _agregar(df: pd.DataFrame) -> dict[str, Any]:
         "dias_venda": dias,
         "lucro_dia": _por_dia(lucro, dias),
         "qtd_dia": _por_dia(qtd, dias),
+    }
+
+
+def _agregar(df: pd.DataFrame) -> dict[str, Any]:
+    if df.empty:
+        return _montar_agregado(0.0, 0.0, 0.0, 0)
+    receita = float(df[COLUNA_RECEITA].sum())
+    cmv = float(df[COLUNA_CMV].sum()) if COLUNA_CMV in df.columns else 0.0
+    qtd = float(df[COLUNA_QTD].sum()) if COLUNA_QTD in df.columns else 0.0
+    return _montar_agregado(receita, cmv, qtd, _contar_dias_venda(df))
+
+
+def _agregar_por_chave(df: pd.DataFrame, coluna: str) -> dict[str, dict[str, Any]]:
+    """`_agregar` de cada família/fabricante num groupby só.
+
+    No recorte "todos" são ~700 itens; chamar `_agregar` por item (e por
+    janela fixa) fatiava o movimento milhares de vezes e levava a tela a
+    ~17 s. Mesmas regras de `_agregar`/`_contar_dias_venda`."""
+    if df.empty or coluna not in df.columns or "_data" not in df.columns:
+        return {}
+    chave = _chave_texto(df[coluna])
+    somas = df.groupby(chave)[[COLUNA_RECEITA, COLUNA_CMV, COLUNA_QTD]].sum()
+    ativo = df["_data"].notna() & (
+        (df[COLUNA_RECEITA].fillna(0) != 0) | (df[COLUNA_QTD].fillna(0) != 0)
+    )
+    dias = df.loc[ativo, "_data"].dt.normalize().groupby(chave[ativo]).nunique()
+    return {
+        k: _montar_agregado(float(rec), float(cmv), float(qtd), int(dias.get(k, 0)))
+        for k, rec, cmv, qtd in zip(
+            somas.index, somas[COLUNA_RECEITA], somas[COLUNA_CMV], somas[COLUNA_QTD],
+        )
     }
 
 
@@ -187,24 +196,41 @@ def _fatia_por_dias(
     return mov_pares.loc[mascara]
 
 
-def _resumo_janela_fixa(
-    dump_grupo: pd.DataFrame,
-    mov_pares: pd.DataFrame,
-    data_corte: pd.Timestamp | None,
-    dias: int,
-    ultimo_disponivel: pd.Timestamp | None,
-) -> dict:
-    antes = _fatia_por_dias(mov_pares, data_corte, dias, "antes")
-    depois = _fatia_por_dias(mov_pares, data_corte, dias, "depois")
-    ant = _agregar(antes)
-    dep = _agregar(depois)
-    alvo = _ponderar(dump_grupo["margem_alvo"], dump_grupo["receita"])
-    gap = None if dep["margem"] is None or alvo is None else dep["margem"] - alvo
-    completa = bool(
+def _variacoes_por_dia(ant: dict[str, Any], dep: dict[str, Any]) -> dict[str, float | None]:
+    """Variação antes → depois pela média por dia com venda, não pelo total.
+
+    "Antes" vai do primeiro dado até o corte e "depois" do corte ao último —
+    comprimentos diferentes, então o total inflava a variação (IBAD mostrava
+    +210% de lucro com 47 dias de um lado e 133 do outro). As janelas fixas
+    (semana/mês) têm o mesmo comprimento dos dois lados e seguem no total."""
+    def var(chave: str) -> float | None:
+        atual = _por_dia(dep[chave], dep["dias_venda"])
+        base = _por_dia(ant[chave], ant["dias_venda"])
+        if atual is None or base is None:
+            return None
+        return _json_opt(variacao(atual, base))
+
+    return {
+        "variacao_receita_pct": var("receita"),
+        "variacao_lucro_pct": var("lucro"),
+        "variacao_qtd_pct": var("qtd"),
+    }
+
+
+def _janela_completa(
+    data_corte: pd.Timestamp | None, dias: int, ultimo_disponivel: pd.Timestamp | None,
+) -> bool:
+    return bool(
         data_corte is not None
         and ultimo_disponivel is not None
         and ultimo_disponivel >= data_corte + pd.Timedelta(days=dias - 1)
     )
+
+
+def _janela_fixa(
+    ant: dict[str, Any], dep: dict[str, Any], alvo: float | None, dias: int, completa: bool,
+) -> dict:
+    gap = None if dep["margem"] is None or alvo is None else dep["margem"] - alvo
     return {
         "dias": dias,
         "completa": completa,
@@ -228,6 +254,22 @@ def _resumo_janela_fixa(
         "margem_alvo": _json_opt(alvo),
         "gap_alvo_pp": _json_opt(gap),
     }
+
+
+def _resumo_janela_fixa(
+    dump_grupo: pd.DataFrame,
+    mov_pares: pd.DataFrame,
+    data_corte: pd.Timestamp | None,
+    dias: int,
+    ultimo_disponivel: pd.Timestamp | None,
+) -> dict:
+    return _janela_fixa(
+        _agregar(_fatia_por_dias(mov_pares, data_corte, dias, "antes")),
+        _agregar(_fatia_por_dias(mov_pares, data_corte, dias, "depois")),
+        _ponderar(dump_grupo["margem_alvo"], dump_grupo["receita"]),
+        dias,
+        _janela_completa(data_corte, dias, ultimo_disponivel),
+    )
 
 
 def _janela_fixa_vazia(dias: int) -> dict:
@@ -271,17 +313,18 @@ def _janelas_fixas(
 def _item_entidade(
     nome: str,
     dump_grupo: pd.DataFrame,
-    antes: pd.DataFrame,
-    depois: pd.DataFrame,
+    alvo: float | None,
+    ant: dict[str, Any],
+    dep: dict[str, Any],
     serie: list[dict],
     serie_diaria: list[dict],
     janelas: dict[str, dict],
 ) -> dict:
-    ant = _agregar(antes)
-    dep = _agregar(depois)
-    alvo = _ponderar(dump_grupo["margem_alvo"], dump_grupo["receita"])
+    precificado = not dump_grupo.empty
     gap = None if dep["margem"] is None or alvo is None else dep["margem"] - alvo
-    if dep["receita"] <= 0:
+    if not precificado:
+        situacao = "nao_precificado"
+    elif dep["receita"] <= 0:
         situacao = "sem_venda"
     elif gap is None:
         situacao = "sem_alvo"
@@ -293,6 +336,7 @@ def _item_entidade(
         situacao = "abaixo"
     return {
         "nome": nome,
+        "precificado": precificado,
         "skus_dump": int(len(dump_grupo)),
         "receita_dump": _json_num(dump_grupo["receita"].sum()),
         "margem_anterior_dump": _json_opt(_ponderar(dump_grupo["margem_anterior"], dump_grupo["receita"])),
@@ -311,9 +355,7 @@ def _item_entidade(
         "lucro_dia_depois": _json_opt(dep["lucro_dia"]),
         "qtd_dia_antes": _json_opt(ant["qtd_dia"]),
         "qtd_dia_depois": _json_opt(dep["qtd_dia"]),
-        "variacao_receita_pct": _json_opt(variacao(dep["receita"], ant["receita"])),
-        "variacao_lucro_pct": _json_opt(variacao(dep["lucro"], ant["lucro"])),
-        "variacao_qtd_pct": _json_opt(variacao(dep["qtd"], ant["qtd"])),
+        **_variacoes_por_dia(ant, dep),
         "gap_alvo_pp": _json_opt(gap),
         "situacao": situacao,
         "serie_mensal": serie,
@@ -322,19 +364,75 @@ def _item_entidade(
     }
 
 
+def listar_rodadas_dump(dump: pd.DataFrame) -> list[dict]:
+    """Rodadas dentro do dump, da mais recente para a mais antiga.
+
+    Rodada é o **dia** de `data_exportacao`, não o timestamp: o exportador grava
+    linha a linha em microssegundo, então uma exportação de 3804 linhas tem 3804
+    timestamps distintos. `linhas` e `pares` vão junto porque o tamanho varia de
+    3 a ~15 mil linhas entre rodadas da mesma empresa — sem esse número, uma
+    rodada minúscula na tela parece defeito em vez de escolha.
+    """
+    if dump is None or dump.empty or "data_exportacao" not in dump.columns:
+        return []
+    datas = pd.to_datetime(dump["data_exportacao"], errors="coerce")
+    validas = datas.notna()
+    if not bool(validas.any()):
+        return []
+
+    base = dump.loc[validas].assign(_dia=datas.loc[validas].dt.date)
+    chave = _chave_texto(base["descricao"]) + "\x1f" + _chave_texto(base["fabricante"])
+    base = base.assign(_par=chave)
+    agrupado = base.groupby("_dia").agg(linhas=("_par", "size"), pares=("_par", "nunique"))
+    return [
+        {"dia": dia.isoformat(), "linhas": int(linha.linhas), "pares": int(linha.pares)}
+        for dia, linha in agrupado.sort_index(ascending=False).iterrows()
+    ]
+
+
+def filtrar_rodada(dump: pd.DataFrame, dia: str | None = None) -> pd.DataFrame:
+    """Recorta o dump em **uma** rodada; sem `dia`, a mais recente.
+
+    Necessário porque `montar_pos_precificacao` deriva `data_corte` do máximo de
+    `data_exportacao` e monta o universo de pares com todas as linhas recebidas:
+    passar várias rodadas de uma vez faria par de rodada antiga contar como se
+    fosse da última, e `margem_alvo` ponderaria o mesmo produto uma vez por
+    rodada. `dia` desconhecido devolve vazio, e a tela mostra o estado vazio em
+    vez de silenciosamente exibir outra rodada.
+    """
+    if dump is None or dump.empty or "data_exportacao" not in dump.columns:
+        return dump if dump is not None else pd.DataFrame()
+    datas = pd.to_datetime(dump["data_exportacao"], errors="coerce")
+    if not bool(datas.notna().any()):
+        return dump.iloc[0:0]
+
+    dias = datas.dt.date
+    if dia is None:
+        alvo = dias.max()
+    else:
+        try:
+            alvo = pd.Timestamp(dia).date()
+        except (ValueError, TypeError):
+            return dump.iloc[0:0]
+    return dump.loc[dias == alvo]
+
+
 def montar_pos_precificacao(
     dump: pd.DataFrame,
     movimento: pd.DataFrame,
     *,
-    usar_mes_fechado: bool = True,
-    hoje: date | None = None,
+    apenas_precificados: bool = True,
 ) -> dict:
     """Resumo da última rodada de precificação + desempenho no movimento.
 
     `dump` já vem de `carregar_csv_precificacao`. `movimento` é a base canônica
     (com `descricao`, `NOME_FABRICANTE`, `Receita`, `CMV`, `QTD` e data).
+
+    Sem toggle de mês fechado/completo: a janela usada é sempre o que o
+    movimento trouxer, ponta a ponta — pro `margem_price` (fonte padrão) isso
+    já é o período certo, porque o parquet em si já vem recortado (ver
+    `margem_price.py`); não há corte extra a aplicar aqui.
     """
-    hoje_ref = hoje or date.today()
     vazio = _resposta_vazia()
     if dump is None or dump.empty:
         return vazio
@@ -360,35 +458,42 @@ def montar_pos_precificacao(
 
     if movimento is None or movimento.empty or COLUNA_RECEITA not in movimento.columns:
         mov_pares = pd.DataFrame()
+        primeiro = None
         ultimo = None
     elif "descricao" not in movimento.columns or "NOME_FABRICANTE" not in movimento.columns:
         mov_pares = pd.DataFrame()
+        primeiro = None
         ultimo = None
     else:
-        chave_mov = _chave_texto(movimento["descricao"]) + "\x1f" + _chave_texto(movimento["NOME_FABRICANTE"])
         colunas = [coluna for coluna in (
             "descricao", "NOME_FABRICANTE", COLUNA_RECEITA, COLUNA_CMV, COLUNA_QTD,
             COLUNA_DATA_DIARIA, COLUNA_DATA_MES, "Periodo_Mensal",
         ) if coluna in movimento.columns]
-        mov_pares = movimento.loc[chave_mov.isin(chaves), colunas].copy()
+        # `mov_pares` é o movimento do recorte: só os pares do dump, ou tudo.
+        if apenas_precificados:
+            chave_mov = _chave_texto(movimento["descricao"]) + "\x1f" + _chave_texto(movimento["NOME_FABRICANTE"])
+            mov_pares = movimento.loc[chave_mov.isin(chaves), colunas].copy()
+        else:
+            mov_pares = movimento[colunas].copy()
         if COLUNA_CMV not in mov_pares.columns:
             mov_pares[COLUNA_CMV] = 0.0
         if COLUNA_QTD not in mov_pares.columns:
             mov_pares[COLUNA_QTD] = 0.0
         datas = _datas_movimento(mov_pares)
         mov_pares["_data"] = datas
-        ultimo = datas.max() if bool(datas.notna().any()) else None
-        if usar_mes_fechado and ultimo is not None and not pd.isna(ultimo):
-            ultimo = _teto_mes_fechado(pd.Timestamp(ultimo), hoje_ref)
+        tem_data = bool(datas.notna().any())
+        primeiro = datas.min() if tem_data else None
+        ultimo = datas.max() if tem_data else None
 
+    # "Antes" cobre do primeiro dado real até a precificação, "depois" da
+    # precificação até o último dado real — sem espelhar duração um do outro
+    # (isso fazia a janela "antes" encolher/crescer artificialmente conforme
+    # o tempo desde a rodada).
     inicio_depois = data_corte
     fim_depois = pd.Timestamp(ultimo) if ultimo is not None and not pd.isna(ultimo) else None
-    inicio_antes = None
+    inicio_antes = pd.Timestamp(primeiro) if primeiro is not None and not pd.isna(primeiro) else None
     fim_antes = data_corte
-    if inicio_depois is not None and fim_depois is not None and fim_depois >= inicio_depois:
-        duracao = fim_depois - inicio_depois
-        inicio_antes = inicio_depois - duracao
-    elif inicio_depois is not None and (fim_depois is None or fim_depois < inicio_depois):
+    if inicio_depois is not None and fim_depois is not None and fim_depois < inicio_depois:
         fim_depois = None
 
     if "_data" in mov_pares.columns and not mov_pares.empty:
@@ -406,19 +511,37 @@ def montar_pos_precificacao(
 
     ant = _agregar(antes)
     dep = _agregar(depois)
-    alvo_geral = _ponderar(dump["margem_alvo"], dump["receita"])
+    # Dump vazio no lugar do real tira o alvo (geral e das janelas fixas) do
+    # recorte "todos": o alvo só descreve a parte precificada.
+    dump_alvo = dump if apenas_precificados else dump.iloc[0:0]
+    alvo_geral = _ponderar(dump_alvo["margem_alvo"], dump_alvo["receita"])
     gap_geral = None if dep["margem"] is None or alvo_geral is None else dep["margem"] - alvo_geral
 
     precos = dump["preco_sugerido"] if "preco_sugerido" in dump.columns else pd.Series(dtype=float)
     skus_com_preco = int(precos.notna().sum()) if not precos.empty else 0
 
+    janela = pd.concat([antes, depois]) if not antes.empty or not depois.empty else depois
+
+    # "Antes" já cobre do primeiro dado real, então antes+depois é a janela
+    # inteira sem buraco — mas `_meses_entre` ainda é ponta a ponta pela data
+    # mínima/máxima *da linha*, e uma linha isolada com data avulsa (estorno,
+    # ajuste, timestamp errado) esticaria o eixo até um mês sem venda nenhuma.
+    # `_recortar_meses_com_dado` corta essas pontas pelo que a agregação
+    # mensal realmente tem, não pela data crua — o gráfico se ajusta ao dado.
     inicio_serie = inicio_antes if inicio_antes is not None else inicio_depois
     fim_serie = fim_depois if fim_depois is not None else fim_antes
     meses = _meses_entre(inicio_serie, fim_serie)
-    janela = pd.concat([antes, depois]) if not antes.empty or not depois.empty else depois
-    serie_geral = _pontos_serie(_totais_mensais(janela), meses)
-    series_prod = _series_por_nome(janela, "descricao", dump["descricao"], meses)
-    series_fab = _series_por_nome(janela, "NOME_FABRICANTE", dump["fabricante"], meses)
+    totais_geral = _totais_mensais(janela)
+    mes_corte = inicio_mes(data_corte) if data_corte is not None else None
+    meses = _recortar_meses_com_dado(meses, totais_geral, mes_corte)
+    serie_geral = _pontos_serie(totais_geral, meses)
+    nomes_prod = dump["descricao"]
+    nomes_fab = dump["fabricante"]
+    if not apenas_precificados and not mov_pares.empty:
+        nomes_prod = pd.concat([nomes_prod, mov_pares["descricao"]]).drop_duplicates()
+        nomes_fab = pd.concat([nomes_fab, mov_pares["NOME_FABRICANTE"]]).drop_duplicates()
+    series_prod = _series_por_nome(janela, "descricao", nomes_prod, meses)
+    series_fab = _series_por_nome(janela, "NOME_FABRICANTE", nomes_fab, meses)
 
     janela_dia_ini = None if data_corte is None else data_corte - pd.Timedelta(days=JANELA_DETALHE_DIAS)
     janela_dia_fim = None if data_corte is None else data_corte + pd.Timedelta(days=JANELA_DETALHE_DIAS)
@@ -428,17 +551,19 @@ def montar_pos_precificacao(
         janela_dia_fim = min(janela_dia_fim, fim_depois)
     dias_detalhe = _dias_entre(janela_dia_ini, janela_dia_fim)
     serie_diaria_geral = _pontos_serie_diaria(_totais_diarios(janela), dias_detalhe)
-    series_prod_dia = _series_por_nome_dia(janela, "descricao", dump["descricao"], dias_detalhe)
-    series_fab_dia = _series_por_nome_dia(janela, "NOME_FABRICANTE", dump["fabricante"], dias_detalhe)
+    series_prod_dia = _series_por_nome_dia(janela, "descricao", nomes_prod, dias_detalhe)
+    series_fab_dia = _series_por_nome_dia(janela, "NOME_FABRICANTE", nomes_fab, dias_detalhe)
 
-    janelas_geral = _janelas_fixas(dump, mov_pares, data_corte, fim_depois)
+    janelas_geral = _janelas_fixas(dump_alvo, mov_pares, data_corte, fim_depois)
     produtos = _rollup(
         dump, antes, depois, "descricao", "descricao", series_prod, series_prod_dia,
         mov_pares, data_corte, fim_depois,
+        incluir_nao_precificados=not apenas_precificados,
     )
     fabricantes = _rollup(
         dump, antes, depois, "fabricante", "NOME_FABRICANTE", series_fab, series_fab_dia,
         mov_pares, data_corte, fim_depois,
+        incluir_nao_precificados=not apenas_precificados,
     )
 
     return {
@@ -471,9 +596,7 @@ def montar_pos_precificacao(
             "lucro_dia_depois": _json_opt(dep["lucro_dia"]),
             "qtd_dia_antes": _json_opt(ant["qtd_dia"]),
             "qtd_dia_depois": _json_opt(dep["qtd_dia"]),
-            "variacao_receita_pct": _json_opt(variacao(dep["receita"], ant["receita"])),
-            "variacao_lucro_pct": _json_opt(variacao(dep["lucro"], ant["lucro"])),
-            "variacao_qtd_pct": _json_opt(variacao(dep["qtd"], ant["qtd"])),
+            **_variacoes_por_dia(ant, dep),
             "gap_alvo_pp": _json_opt(gap_geral),
             "situacoes": _contar_situacoes(produtos),
             "janelas": janelas_geral,
@@ -495,6 +618,31 @@ def _meses_entre(inicio: pd.Timestamp | None, fim: pd.Timestamp | None) -> list[
         meses.append(cursor)
         cursor = deslocar_mes(cursor, 1)
     return meses
+
+
+def _recortar_meses_com_dado(
+    meses: list[pd.Timestamp], totais: pd.DataFrame, mes_corte: pd.Timestamp | None,
+) -> list[pd.Timestamp]:
+    """Corta as pontas do eixo mensal sem dado real. `meses` nasce ponta a
+    ponta pela data mínima/máxima *da linha* em `mov_pares`; uma linha isolada
+    com data avulsa (estorno, ajuste, timestamp de origem errado) esticaria o
+    gráfico até um mês sem nenhuma venda de verdade. O mês da precificação
+    sempre entra, mesmo vazio — é a referência do corte no gráfico."""
+    if totais.empty or "dias_venda" not in totais.columns:
+        com_dado = set()
+    else:
+        # `totais` tem uma linha por mês que apareceu em `mov_pares`, mesmo
+        # que só com um lançamento de valor zero (ajuste/estorno pontual) —
+        # `dias_venda > 0` é o mesmo critério de "mês ativo" usado no resto
+        # do módulo (`_agregar`/`_contar_dias_venda`), não só "teve linha".
+        com_dado = set(totais.index[totais["dias_venda"] > 0])
+    if mes_corte is not None:
+        com_dado.add(mes_corte)
+    presentes = [mes for mes in meses if mes in com_dado]
+    if not presentes:
+        return meses
+    primeiro, ultimo = presentes[0], presentes[-1]
+    return [mes for mes in meses if primeiro <= mes <= ultimo]
 
 
 def _totais_mensais(df: pd.DataFrame, extra_grupo: str | None = None) -> pd.DataFrame:
@@ -526,29 +674,15 @@ def _totais_mensais(df: pd.DataFrame, extra_grupo: str | None = None) -> pd.Data
     return totais
 
 
-def _ler_mes(totais: pd.DataFrame, mes: pd.Timestamp) -> tuple[float, float, float, int]:
-    if totais.empty or mes not in totais.index:
-        return 0.0, 0.0, 0.0, 0
-    linha = totais.loc[mes]
-    if isinstance(linha, pd.DataFrame):
-        return (
-            float(linha["receita"].sum()),
-            float(linha["cmv"].sum()),
-            float(linha["qtd"].sum()),
-            int(linha["dias_venda"].sum()),
-        )
-    return (
-        float(linha["receita"]),
-        float(linha["cmv"]),
-        float(linha["qtd"]),
-        int(linha["dias_venda"]),
-    )
-
-
 def _pontos_serie(totais: pd.DataFrame, meses: list[pd.Timestamp]) -> list[dict]:
+    linhas = {} if totais.empty else totais.to_dict("index")
     pontos = []
     for mes in meses:
-        rec, cmv, qtd, dias = _ler_mes(totais, mes)
+        linha = linhas.get(mes)
+        rec, cmv, qtd, dias = (
+            (0.0, 0.0, 0.0, 0) if linha is None
+            else (float(linha["receita"]), float(linha["cmv"]), float(linha["qtd"]), int(linha["dias_venda"]))
+        )
         lucro = rec - cmv
         pontos.append({
             "periodo": mes.strftime("%Y-%m"),
@@ -595,15 +729,6 @@ def _totais_diarios(df: pd.DataFrame, extra_grupo: str | None = None) -> pd.Data
     )
 
 
-def _ler_dia(totais: pd.DataFrame, dia: pd.Timestamp) -> tuple[float, float, float]:
-    if totais.empty or dia not in totais.index:
-        return 0.0, 0.0, 0.0
-    linha = totais.loc[dia]
-    if isinstance(linha, pd.DataFrame):
-        return float(linha["receita"].sum()), float(linha["cmv"].sum()), float(linha["qtd"].sum())
-    return float(linha["receita"]), float(linha["cmv"]), float(linha["qtd"])
-
-
 def _pontos_serie_diaria(totais: pd.DataFrame, dias: list[pd.Timestamp]) -> list[dict]:
     """Um ponto por dia *com venda* da janela de detalhe.
 
@@ -611,9 +736,13 @@ def _pontos_serie_diaria(totais: pd.DataFrame, dias: list[pd.Timestamp]) -> list
     ausência de loja aberta, e plotar isso quebrava o gráfico em dentes de
     serra. A granularidade já é o dia, então `lucro_dia`/`qtd_dia` são o
     próprio lucro/qtd do dia."""
+    linhas = {} if totais.empty else totais.to_dict("index")
     pontos = []
     for dia in dias:
-        rec, cmv, qtd = _ler_dia(totais, dia)
+        linha = linhas.get(dia)
+        if linha is None:
+            continue
+        rec, cmv, qtd = float(linha["receita"]), float(linha["cmv"]), float(linha["qtd"])
         if rec == 0 and qtd == 0:
             continue
         lucro = rec - cmv
@@ -652,16 +781,11 @@ def _series_por_nome_dia(
     tmp = df.copy()
     tmp["_ent"] = _chave_texto(tmp[coluna])
     totais = _totais_diarios(tmp, extra_grupo="_ent")
-    nivel0 = set(totais.index.get_level_values(0)) if not totais.empty else set()
-    saida: dict[str, list[dict]] = {}
-    for nome in unicos:
-        chave = nome.casefold()
-        if chave not in nivel0:
-            saida[nome] = _pontos_serie_diaria(pd.DataFrame(), dias)
-            continue
-        fatia = totais.loc[totais.index.get_level_values(0) == chave].droplevel(0)
-        saida[nome] = _pontos_serie_diaria(fatia, dias)
-    return saida
+    fatias = {} if totais.empty else {
+        chave: fatia.droplevel(0) for chave, fatia in totais.groupby(level=0, sort=False)
+    }
+    vazio = pd.DataFrame()
+    return {nome: _pontos_serie_diaria(fatias.get(nome.casefold(), vazio), dias) for nome in unicos}
 
 
 def _series_por_nome(
@@ -685,32 +809,11 @@ def _series_por_nome(
     tmp = df.copy()
     tmp["_ent"] = _chave_texto(tmp[coluna])
     totais = _totais_mensais(tmp, extra_grupo="_ent")
-    nivel0 = set(totais.index.get_level_values(0)) if not totais.empty else set()
-    saida: dict[str, list[dict]] = {}
-    for nome in unicos:
-        chave = nome.casefold()
-        if chave not in nivel0:
-            saida[nome] = _pontos_serie(pd.DataFrame(), meses)
-            continue
-        fatia = totais.loc[totais.index.get_level_values(0) == chave].droplevel(0)
-        saida[nome] = _pontos_serie(fatia, meses)
-    return saida
-
-
-def _agrupar_por_chave(df: pd.DataFrame, coluna: str) -> dict[str, pd.DataFrame]:
-    """Pré-agrupa `df` pela chave normalizada de `coluna`, uma vez só.
-
-    `_rollup` usa isto para antes/depois/mov_pares e faz só um lookup em dict
-    por família/fabricante do dump — antes disso, `_chave_texto` (fillna +
-    astype + strip + casefold, várias passadas de string na coluna inteira)
-    era recalculado para CADA entidade do dump, tornando a tela O(entidades ×
-    linhas de movimento). Com dump de centenas de famílias e movimento de
-    dezenas de milhares de linhas, isso é a diferença entre a tela abrir na
-    hora e travar por vários segundos.
-    """
-    if df.empty or coluna not in df.columns:
-        return {}
-    return {chave: sub for chave, sub in df.groupby(_chave_texto(df[coluna]))}
+    fatias = {} if totais.empty else {
+        chave: fatia.droplevel(0) for chave, fatia in totais.groupby(level=0, sort=False)
+    }
+    vazio = pd.DataFrame()
+    return {nome: _pontos_serie(fatias.get(nome.casefold(), vazio), meses) for nome in unicos}
 
 
 def _rollup(
@@ -724,29 +827,53 @@ def _rollup(
     mov_pares: pd.DataFrame,
     data_corte: pd.Timestamp | None,
     ultimo_disponivel: pd.Timestamp | None,
+    *,
+    incluir_nao_precificados: bool = False,
 ) -> list[dict]:
-    itens = []
+    zero = _agregar(pd.DataFrame())
     vazia = series.get("", [])
     vazia_dia = series_dia.get("", [])
-    antes_por_chave = _agrupar_por_chave(antes, coluna_mov)
-    depois_por_chave = _agrupar_por_chave(depois, coluna_mov)
-    mov_por_chave = _agrupar_por_chave(mov_pares, coluna_mov)
-    antes_vazio = antes.iloc[0:0]
-    depois_vazio = depois.iloc[0:0]
-    mov_vazio = mov_pares.iloc[0:0]
+    ant_por_chave = _agregar_por_chave(antes, coluna_mov)
+    dep_por_chave = _agregar_por_chave(depois, coluna_mov)
+    janelas_por_chave = [
+        (
+            nome_janela,
+            dias,
+            _agregar_por_chave(_fatia_por_dias(mov_pares, data_corte, dias, "antes"), coluna_mov),
+            _agregar_por_chave(_fatia_por_dias(mov_pares, data_corte, dias, "depois"), coluna_mov),
+            _janela_completa(data_corte, dias, ultimo_disponivel),
+        )
+        for nome_janela, dias in JANELAS_FIXAS
+    ]
+
+    def item(rotulo: str, chave: str, grupo: pd.DataFrame) -> dict:
+        alvo = _ponderar(grupo["margem_alvo"], grupo["receita"])
+        janelas = {
+            nome_janela: _janela_fixa(j_ant.get(chave, zero), j_dep.get(chave, zero), alvo, dias, completa)
+            for nome_janela, dias, j_ant, j_dep, completa in janelas_por_chave
+        }
+        return _item_entidade(
+            rotulo, grupo, alvo,
+            ant_por_chave.get(chave, zero), dep_por_chave.get(chave, zero),
+            series.get(rotulo, vazia), series_dia.get(rotulo, vazia_dia), janelas,
+        )
+
+    itens = []
+    vistos: set[str] = set()
     for nome, grupo in dump.groupby(coluna_dump, dropna=False):
-        rotulo = str(nome).strip() or "—"
         chave = str(nome).strip().casefold()
-        ant = antes_por_chave.get(chave, antes_vazio)
-        dep = depois_por_chave.get(chave, depois_vazio)
-        mov_ent = mov_por_chave.get(chave, mov_vazio)
-        itens.append(_item_entidade(
-            rotulo, grupo, ant, dep,
-            series.get(rotulo, vazia),
-            series_dia.get(rotulo, vazia_dia),
-            _janelas_fixas(grupo, mov_ent, data_corte, ultimo_disponivel),
-        ))
-    itens.sort(key=lambda item: (item["lucro_depois"], item["receita_depois"]), reverse=True)
+        vistos.add(chave)
+        itens.append(item(str(nome).strip() or "—", chave, grupo))
+    if incluir_nao_precificados and not mov_pares.empty and coluna_mov in mov_pares.columns:
+        dump_vazio = dump.iloc[0:0]
+        coluna = mov_pares[coluna_mov]
+        rotulos = coluna.groupby(_chave_texto(coluna).values, sort=False).first()
+        for chave, valor in rotulos.items():
+            if chave in vistos:
+                continue
+            rotulo = "—" if pd.isna(valor) or not str(valor).strip() else str(valor).strip()
+            itens.append(item(rotulo, chave, dump_vazio))
+    itens.sort(key=lambda it: (it["lucro_depois"], it["receita_depois"]), reverse=True)
     return itens
 
 

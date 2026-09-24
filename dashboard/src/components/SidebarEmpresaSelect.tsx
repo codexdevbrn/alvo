@@ -1,19 +1,9 @@
 import { useEffect, useState } from 'react';
 import { listarEmpresasDashboard } from '../api/client';
-import { EVENTO_EMPRESA, selecionarEmpresaGlobal } from '../utils/empresaSelecionada';
+import { EVENTO_EMPRESA, escolherEmpresaInicial, selecionarEmpresaGlobal } from '../utils/empresaSelecionada';
 import { AnalisadorCombobox } from './analisador/AnalisadorCombobox';
 
 const LS_EMPRESA = 'alvo_empresa';
-
-/**
- * Empresa usada quando nada foi escolhido nesta máquina. É uma pasta de verdade
- * na fonte e no trabalho, como qualquer outra empresa — não o modo estático.
- *
- * O seletor não oferece mais a opção vazia ("Dados padrão", que lia o
- * summary.json embutido): base de demonstração passa a ser uma empresa da
- * lista. Quem já tinha a opção vazia salva cai aqui na primeira carga.
- */
-const EMPRESA_MOCK = 'Dados Mockados';
 
 function lerEmpresa(): string {
   try {
@@ -33,11 +23,15 @@ export function SidebarEmpresaSelect() {
       listarEmpresasDashboard()
         .then((lista) => {
           setEmpresas(lista);
-          if (lerEmpresa() || !lista.length) return;
+          if (lerEmpresa()) return;
           // Sem escolha salva: a mockada, ou a primeira da lista se ela não
           // estiver publicada nesta instalação. Deixar vazio não é opção — o
-          // seletor não tem mais como voltar a esse estado.
-          const inicial = lista.includes(EMPRESA_MOCK) ? EMPRESA_MOCK : lista[0];
+          // seletor não tem mais como voltar a esse estado. Normalmente já
+          // resolvida pelo DashboardPage antes deste componente montar (ver
+          // comentário lá); herda o valor de lá quando `lerEmpresa()` já
+          // retorna algo.
+          const inicial = escolherEmpresaInicial(lista);
+          if (!inicial) return;
           setEmpresa(inicial);
           selecionarEmpresaGlobal(inicial);
         })

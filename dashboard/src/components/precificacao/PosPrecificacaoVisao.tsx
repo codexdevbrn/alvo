@@ -6,13 +6,13 @@ import {
   BadgePercent,
   Loader2,
   Search,
+  Tags,
 } from 'lucide-react';
 import {
   Area,
   AreaChart,
   CartesianGrid,
   LabelList,
-  ReferenceLine,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -26,11 +26,14 @@ import {
   type PontoSeriePrecificacao,
   type PosPrecificacaoResposta,
   type ResumoPosPrecificacao,
+  type RodadaPrecificacao,
   type SituacaoPrecificacao,
 } from '../../api/client';
 import { formatCompacto, formatCurrency, formatPercent } from '../../utils/formatters';
-import { useMesesFechados } from '../../hooks/useMesesFechados';
-import { modoParaBooleano } from '../../utils/mesesFechados';
+import { useItensPrecificacao } from '../../hooks/useItensPrecificacao';
+import { useRodadaPrecificacao } from '../../hooks/useRodadaPrecificacao';
+import { publicarRodadas } from '../../utils/rodadaPrecificacao';
+import { ehSemPrecificacao } from '../../utils/semPrecificacao';
 
 type Props = {
   empresa: string;
@@ -41,6 +44,7 @@ type Props = {
 type AbaLista = 'produtos' | 'fabricantes';
 
 const TODOS = '__todos__';
+const SEM_RODADAS: RodadaPrecificacao[] = [];
 
 // Espelha `JANELA_DETALHE_DIAS` do backend (precificacao.py) — só pra legenda,
 // a janela real quem decide é o servidor.
@@ -57,6 +61,7 @@ const ROTULO_SITUACAO: Record<SituacaoPrecificacao, string> = {
   no_alvo: 'no alvo',
   sem_venda: 'sem venda depois',
   sem_alvo: 'sem alvo',
+  nao_precificado: 'não precificado',
 };
 
 const DIAS_SEMANA_ABREV = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
@@ -81,6 +86,12 @@ function textoSinal(valor: number | null | undefined, sufixo = '%'): string {
     return `${sinal}${valor.toLocaleString('pt-BR', { maximumFractionDigits: 1, minimumFractionDigits: 1 })} pp`;
   }
   return `${sinal}${formatPercent(valor, 1)}`;
+}
+
+/** Variação antes → depois da visão geral e dos itens: é da média por dia com
+ *  venda (as duas janelas têm comprimentos diferentes), não do total. */
+function porDia(valor: number | null | undefined): string {
+  return valor == null || !Number.isFinite(valor) ? '—' : `${textoSinal(valor)} /dia`;
 }
 
 function formatQtd(valor: number | null | undefined): string {
@@ -128,27 +139,38 @@ function variacaoMomCampo(serie: PontoSeriePrecificacao[], chave: 'margem' | 'lu
 }
 
 export function PosPrecificacaoVisao({ empresa, loja, modoGrafico }: Props) {
-  const [dados, setDados] = useState<PosPrecificacaoResposta | null>(null);
+  const [resposta, setResposta] = useState<{ escopo: string; dados: PosPrecificacaoResposta } | null>(null);
   const [carregando, setCarregando] = useState(true);
   const [erro, setErro] = useState<string | null>(null);
   const [aba, setAba] = useState<AbaLista>('produtos');
   const [busca, setBusca] = useState('');
   const [selecao, setSelecao] = useState<string | null>(null);
-  const [modoPeriodo] = useMesesFechados();
-  const usarMesesFechados = modoParaBooleano(modoPeriodo);
+  /** Rodada escolhida no topo (`TopoPosPrecificacaoRodadaSelect`), guardada
+   *  por empresa: o primeiro pedido depois de trocar de empresa não pode levar
+   *  uma data que só existe no dump da anterior, o que voltaria vazio. */
+  const { escolhida: rodada, escolher: escolherRodada } = useRodadaPrecificacao(empresa);
+  const [itensEscopo] = useItensPrecificacao();
+  const apenasPrecificados = itensEscopo === 'precificados';
+
+  /** O que identifica o resultado como "desta tela". `rodada` fica de fora de
+   *  propósito: trocar de rodada mantém a tela montada, porque o recálculo leva
+   *  alguns segundos e o seletor não pode sumir de baixo do cursor. */
+  const escopo = `${empresa}|${loja ?? ''}|${itensEscopo}`;
 
   useEffect(() => {
     let vivo = true;
     setCarregando(true);
     setErro(null);
     setSelecao(null);
-    void obterPosPrecificacao(empresa, { loja, usarMesesFechados })
-      .then((resposta) => {
-        if (vivo) setDados(resposta);
+    void obterPosPrecificacao(empresa, { loja, rodada, apenasPrecificados })
+      .then((dados) => {
+        // O escopo pedido viaja junto: comparar com o que o backend devolve
+        // dependeria de ele reescrever a string de loja do mesmo jeito.
+        if (vivo) setResposta({ escopo, dados });
       })
       .catch((falha) => {
         if (!vivo) return;
-        setDados(null);
+        setResposta(null);
         setErro(falha instanceof Error ? falha.message : 'Falha ao carregar a precificação.');
       })
       .finally(() => {
@@ -157,12 +179,24 @@ export function PosPrecificacaoVisao({ empresa, loja, modoGrafico }: Props) {
     return () => {
       vivo = false;
     };
-  }, [empresa, loja, usarMesesFechados]);
+  }, [empresa, loja, rodada, apenasPrecificados, escopo]);
 
   useEffect(() => {
     setSelecao(null);
     setBusca('');
   }, [aba]);
+
+  /** Resultado do escopo atual. Durante a troca de empresa a resposta anterior
+   *  ainda está em `resposta`, e usá-la mostraria número de outra empresa. */
+  const dados = resposta?.escopo === escopo ? resposta.dados : null;
+  const rodadas = dados?.rodadas ?? SEM_RODADAS;
+  /** Recalculando com a tela já montada — é o caso da troca de rodada. */
+  const recarregando = carregando && dados != null;
+  const rodadaAtiva = dados?.rodada ?? rodada;
+
+  useEffect(() => {
+    publicarRodadas(empresa, { rodadas, ativa: rodadaAtiva, ocupado: recarregando });
+  }, [empresa, rodadas, rodadaAtiva, recarregando]);
 
   const itens = aba === 'produtos' ? (dados?.produtos ?? []) : (dados?.fabricantes ?? []);
   const itensDestaque = useMemo(
@@ -175,10 +209,24 @@ export function PosPrecificacaoVisao({ empresa, loja, modoGrafico }: Props) {
     return itens.filter((item) => normalizarBusca(item.nome).includes(termo));
   }, [itens, busca]);
 
-  if (carregando) {
+  // Só toma a tela quando não há nada para mostrar. Troca de rodada recalcula
+  // com a tela montada e sinaliza no próprio seletor.
+  if (carregando && !dados) {
     return (
       <div className="glass-card glass-card-flat estoque-carregando">
         <Loader2 size={20} className="dashboard-filter-spinner" /> Cruzando dump e movimento…
+      </div>
+    );
+  }
+
+  if (ehSemPrecificacao(erro)) {
+    return (
+      <div className="glass-card glass-card-flat estoque-vazio">
+        <Tags size={24} aria-hidden="true" />
+        <div>
+          <strong>Empresa ainda não precificada</strong>
+          <p>Não há rodada de precificação para esta empresa. A aba passa a mostrar os dados assim que houver uma — a atualização é diária.</p>
+        </div>
       </div>
     );
   }
@@ -188,7 +236,7 @@ export function PosPrecificacaoVisao({ empresa, loja, modoGrafico }: Props) {
       <div className="glass-card glass-card-flat estoque-vazio">
         <AlertTriangle size={24} aria-hidden="true" />
         <div>
-          <strong>Sem dump de precificação</strong>
+          <strong>Não foi possível carregar a pós-precificação</strong>
           <p>{erro}</p>
         </div>
       </div>
@@ -196,12 +244,20 @@ export function PosPrecificacaoVisao({ empresa, loja, modoGrafico }: Props) {
   }
 
   if (!dados || dados.linhas_dump === 0) {
+    // O seletor de rodada do topo continua visível aqui: rodada vazia sem ele
+    // deixaria o usuário preso, sem caminho de volta para uma com conteúdo.
     return (
-      <div className="glass-card glass-card-flat estoque-vazio">
-        <BadgePercent size={24} aria-hidden="true" />
-        <div>
-          <strong>Nada precificado</strong>
-          <p>O arquivo existe, mas não tem linha com família e fabricante.</p>
+      <div className="estoque-visao despesas-visao">
+        <div className="glass-card glass-card-flat estoque-vazio">
+          <BadgePercent size={24} aria-hidden="true" />
+          <div>
+            <strong>Nada precificado</strong>
+            <p>
+              {rodadas.length > 1
+                ? 'Esta rodada não tem linha com família e fabricante. Escolha outra em Rodada, no topo.'
+                : 'O arquivo existe, mas não tem linha com família e fabricante.'}
+            </p>
+          </div>
         </div>
       </div>
     );
@@ -218,11 +274,46 @@ export function PosPrecificacaoVisao({ empresa, loja, modoGrafico }: Props) {
   const kpis = itemAtivo ?? resumoComoKpis(dados.resumo);
   const avisoAberto = !dados.tem_movimento_depois;
   const gap = kpis.gap_alvo_pp;
+  const margemVsAntes =
+    kpis.margem_depois != null && kpis.margem_antes != null ? kpis.margem_depois - kpis.margem_antes : null;
   const sit = dados.resumo.situacoes;
-  const rotuloEscopo = itemAtivo ? itemAtivo.nome : `todas as ${dados.familias} famílias`;
+  const rotuloEscopo = itemAtivo
+    ? itemAtivo.nome
+    : apenasPrecificados
+      ? `as ${dados.produtos.length} famílias precificadas`
+      : `todas as ${dados.produtos.length} famílias`;
+  /** Rodada maior que a atual, para oferecer quando a atual não tem "depois"
+   *  para mostrar. O critério é `pares`, e não "tem venda depois": saber isso
+   *  exigiria calcular as outras rodadas, e cada cálculo custa alguns segundos.
+   *  Por isso o texto afirma só o tamanho — não promete que lá tem venda. */
+  const rodadaAtual = rodadas.find((item) => item.dia === dados.rodada) ?? null;
+  const rodadaSugerida = avisoAberto
+    ? rodadas.reduce<RodadaPrecificacao | null>((melhor, item) => {
+        if (item.dia === dados.rodada) return melhor;
+        if (item.pares <= (rodadaAtual?.pares ?? 0)) return melhor;
+        return melhor == null || item.pares > melhor.pares ? item : melhor;
+      }, null)
+    : null;
+
   const leitura = avisoAberto
-    ? `Precificação em ${dataBr(dados.data_precificacao)}. Movimento ainda sem venda depois da data — só o que foi marcado.`
-    : `${rotuloEscopo}: lucro bruto ${formatCurrency(kpis.lucro_depois)} (${kpis.lucro_dia_depois != null ? `${formatCurrency(kpis.lucro_dia_depois)}/dia com venda` : 'sem dia com venda'}). Qtd ${formatQtd(kpis.qtd_depois)}${kpis.qtd_dia_depois != null ? ` (${formatQtd(kpis.qtd_dia_depois)}/dia)` : ''}. Margem ${kpis.margem_depois != null ? formatPercent(kpis.margem_depois, 1) : '—'} vs alvo ${kpis.margem_alvo != null ? formatPercent(kpis.margem_alvo, 1) : '—'}${gap != null ? ` (${textoSinal(gap, 'pp')})` : ''}.`;
+    ? (
+      <>
+        {`Precificação em ${dataBr(dados.data_precificacao)}. Movimento ainda sem venda depois da data — só o que foi marcado.`}
+        {rodadaSugerida && (
+          <>
+            {' '}
+            <button
+              type="button"
+              className="leitura-faixa-acao"
+              onClick={() => escolherRodada(rodadaSugerida.dia)}
+            >
+              Ver a rodada de {dataBr(rodadaSugerida.dia)} ({rodadaSugerida.pares.toLocaleString('pt-BR')} pares)
+            </button>
+          </>
+        )}
+      </>
+    )
+    : `${rotuloEscopo}: lucro bruto ${formatCurrency(kpis.lucro_depois)} (${kpis.lucro_dia_depois != null ? `${formatCurrency(kpis.lucro_dia_depois)}/dia com venda` : 'sem dia com venda'}). Qtd ${formatQtd(kpis.qtd_depois)}${kpis.qtd_dia_depois != null ? ` (${formatQtd(kpis.qtd_dia_depois)}/dia)` : ''}. Margem ${kpis.margem_depois != null ? formatPercent(kpis.margem_depois, 1) : '—'}${kpis.margem_alvo != null ? ` vs alvo ${formatPercent(kpis.margem_alvo, 1)}` : ''}${gap != null ? ` (${textoSinal(gap, 'pp')})` : ''}.`;
 
   const maxReceita = Math.max(...filtrados.map((item) => item.receita_depois), 0);
 
@@ -251,7 +342,7 @@ export function PosPrecificacaoVisao({ empresa, loja, modoGrafico }: Props) {
         )}
         <GraficoSerie
           titulo="Margem %"
-          nota={itemAtivo ? itemAtivo.nome : 'Pares do dump'}
+          nota={itemAtivo ? itemAtivo.nome : apenasPrecificados ? 'Pares do dump' : 'Loja inteira'}
           serie={serieGrafico}
           dataKey="margem"
           cor="var(--accent)"
@@ -288,24 +379,42 @@ export function PosPrecificacaoVisao({ empresa, loja, modoGrafico }: Props) {
       </section>
 
       <section className="pos-precificacao-metros" aria-label="Indicadores do recorte">
-        <Metro rotulo="Lucro depois" valor={formatCurrency(kpis.lucro_depois)} delta={textoSinal(kpis.variacao_lucro_pct)} alta={(kpis.variacao_lucro_pct ?? 0) >= 0} />
+        <Metro rotulo="Lucro depois" valor={formatCurrency(kpis.lucro_depois)} delta={porDia(kpis.variacao_lucro_pct)} alta={(kpis.variacao_lucro_pct ?? 0) >= 0} />
         <Metro rotulo="Lucro / dia" valor={kpis.lucro_dia_depois == null ? '—' : formatCurrency(kpis.lucro_dia_depois)} delta={kpis.dias_venda_depois > 0 ? `${kpis.dias_venda_depois} dias com venda` : 'sem venda'} />
-        <Metro rotulo="Quantidade" valor={formatQtd(kpis.qtd_depois)} delta={textoSinal(kpis.variacao_qtd_pct)} alta={(kpis.variacao_qtd_pct ?? 0) >= 0} />
-        <Metro
-          rotulo="Margem vs alvo"
-          valor={gap == null ? '—' : textoSinal(gap, 'pp')}
-          delta={kpis.margem_depois == null ? 'sem venda' : `${formatPercent(kpis.margem_depois, 1)} · alvo ${kpis.margem_alvo != null ? formatPercent(kpis.margem_alvo, 1) : '—'}`}
-          alta={gap == null ? undefined : gap >= 0}
-        />
+        <Metro rotulo="Quantidade" valor={formatQtd(kpis.qtd_depois)} delta={porDia(kpis.variacao_qtd_pct)} alta={(kpis.variacao_qtd_pct ?? 0) >= 0} />
+        {kpis.margem_alvo != null ? (
+          <Metro
+            rotulo="Margem vs alvo"
+            valor={gap == null ? '—' : textoSinal(gap, 'pp')}
+            delta={kpis.margem_depois == null ? 'sem venda' : `${formatPercent(kpis.margem_depois, 1)} · alvo ${formatPercent(kpis.margem_alvo, 1)}`}
+            alta={gap == null ? undefined : gap >= 0}
+          />
+        ) : (
+          // Sem alvo (modo Todos, ou item fora da rodada): a comparação útil é
+          // com a margem de antes da precificação.
+          <Metro
+            rotulo="Margem depois"
+            valor={kpis.margem_depois == null ? '—' : formatPercent(kpis.margem_depois, 1)}
+            delta={
+              kpis.margem_depois == null
+                ? 'sem venda'
+                : margemVsAntes == null
+                  ? 'sem venda antes'
+                  : `${textoSinal(margemVsAntes, 'pp')} · antes ${formatPercent(kpis.margem_antes as number, 1)}`
+            }
+            alta={margemVsAntes == null ? undefined : margemVsAntes >= 0}
+          />
+        )}
       </section>
 
       <section className="glass-card glass-card-flat estoque-visao-card">
         <header className="estoque-card-topo pos-precificacao-lista-topo">
           <div>
-            <h2>O que foi precificado e como andou</h2>
+            <h2>{apenasPrecificados ? 'O que foi precificado e como andou' : 'Todos os itens e como andaram'}</h2>
             <p>
               Clique na linha pra mandar o recorte pro gráfico.
-              {` ${sit.acima} acima do alvo · ${sit.abaixo} abaixo · ${sit.sem_venda} sem venda.`}
+              {` ${sit.acima} acima do alvo · ${sit.abaixo} abaixo · ${sit.sem_venda} sem venda`}
+              {sit.nao_precificado > 0 ? ` · ${sit.nao_precificado} não precificados.` : '.'}
             </p>
           </div>
           <div className="pos-precificacao-lista-controles">
@@ -354,9 +463,18 @@ export function PosPrecificacaoVisao({ empresa, loja, modoGrafico }: Props) {
   );
 }
 
+/** Escolhe qual rodada o cálculo usa.
+ *
+ *  O tamanho vai no rótulo porque rodada varia de 3 a ~15 mil linhas na mesma
+ *  empresa: sem o número à vista, cair numa rodada de 1 par lê como tela
+ *  quebrada em vez de escolha. Conta `pares` (família × fabricante), não
+ *  `linhas`, porque par é o que enche as listas — linha é grão de SKU e repete.
+ *
+ *  Uma rodada só não é escolha, então não desenha nada. */
 function resumoComoKpis(resumo: ResumoPosPrecificacao): ItemPosPrecificacao {
   return {
     nome: 'Todos',
+    precificado: true,
     skus_dump: 0,
     receita_dump: resumo.receita_dump,
     margem_anterior_dump: resumo.margem_anterior_dump,
@@ -681,7 +799,7 @@ function GraficoSerie({
           <p className="pos-precificacao-grafico-vazio">Sem série neste recorte.</p>
         ) : (
           <ResponsiveContainer width="100%" height={200}>
-            <AreaChart data={serie} margin={{ top: 20, right: 14, left: 14, bottom: 4 }}>
+            <AreaChart data={serie} margin={{ top: 20, right: 26, left: 24, bottom: 4 }}>
               <defs>
                 <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
                   <stop offset="0%" stopColor={cor} stopOpacity={0.35} />
@@ -689,23 +807,17 @@ function GraficoSerie({
                 </linearGradient>
               </defs>
               <CartesianGrid stroke="var(--border)" vertical={false} />
-              <XAxis dataKey="rotulo" tick={{ fill: 'var(--text-muted)', fontSize: 11 }} axisLine={false} tickLine={false} />
+              <XAxis
+                dataKey="rotulo"
+                tick={{ fill: 'var(--text-muted)', fontSize: 11 }}
+                axisLine={false}
+                tickLine={false}
+                // Série mensal: todos os meses (o automático escondia o primeiro).
+                // Diária (~40 pontos) não cabe — deixa o Recharts espaçar.
+                interval={serie.length <= 12 ? 0 : 'preserveStartEnd'}
+                minTickGap={8}
+              />
               <YAxis hide />
-              {rotuloCorte && (
-                <ReferenceLine
-                  x={rotuloCorte}
-                  stroke="var(--accent)"
-                  strokeWidth={1.5}
-                  strokeDasharray="4 4"
-                  label={{
-                    value: 'Precificação',
-                    position: 'insideBottomLeft',
-                    fill: 'var(--accent)',
-                    fontSize: 10,
-                    offset: 4,
-                  }}
-                />
-              )}
               <Tooltip
                 content={({ active, payload, label }) => {
                   if (!active || !payload?.length) return null;
@@ -713,7 +825,10 @@ function GraficoSerie({
                   const diaSemana = diaSemanaAbrev(ponto.periodo);
                   return (
                     <div className="vendedores-chart-tooltip">
-                      <strong>{label}{diaSemana ? ` · ${diaSemana}` : ''}</strong>
+                      <strong>
+                        {label}{diaSemana ? ` · ${diaSemana}` : ''}
+                        {ponto.rotulo === rotuloCorte ? ' · precificação' : ''}
+                      </strong>
                       <dl>
                         <div><dt>Margem</dt><dd>{ponto.margem == null ? '—' : formatPercent(ponto.margem, 1)}</dd></div>
                         <div><dt>Lucro / dia</dt><dd>{ponto.lucro_dia == null ? '—' : formatCurrency(ponto.lucro_dia)}</dd></div>
@@ -732,7 +847,23 @@ function GraficoSerie({
                 strokeWidth={2}
                 fill={`url(#${fillId})`}
                 connectNulls={false}
-                dot={{ r: mostrarRotulos ? 3 : 2, fill: cor, strokeWidth: 0 }}
+                dot={({ cx, cy, index }: { cx?: number; cy?: number; index?: number }) => {
+                  const chave = `ponto-${index}`;
+                  if (cx == null || cy == null) return <g key={chave} />;
+                  // O ponto da precificação é o marcador do corte: bolinha no
+                  // próprio traçado, no lugar da linha vertical que cruzava o gráfico.
+                  if (index != null && serie[index]?.rotulo === rotuloCorte) {
+                    return (
+                      <g key={chave}>
+                        <circle cx={cx} cy={cy} r={6.5} fill="none" stroke="var(--accent)" strokeOpacity={0.45} strokeWidth={1.5} />
+                        <circle cx={cx} cy={cy} r={3.5} fill="var(--accent)" stroke="var(--bg-card)" strokeWidth={1.5}>
+                          <title>Precificação</title>
+                        </circle>
+                      </g>
+                    );
+                  }
+                  return <circle key={chave} cx={cx} cy={cy} r={mostrarRotulos ? 3 : 2} fill={cor} />;
+                }}
                 activeDot={{ r: 5 }}
                 isAnimationActive={false}
               >
@@ -811,10 +942,10 @@ function LinhaPrecificada({
         </i>
         <div className="despesas-lista-rodape">
           <em>
-            {item.skus_dump} SKU
+            {item.precificado ? `${item.skus_dump} SKU` : 'fora da rodada'}
             {item.lucro_dia_depois != null ? ` · ${formatCurrency(item.lucro_dia_depois)}/dia` : ''}
             {item.qtd_dia_depois != null ? ` · ${formatQtd(item.qtd_dia_depois)} un/dia` : ''}
-            {item.variacao_lucro_pct != null ? ` · ${textoSinal(item.variacao_lucro_pct)} lucro` : ''}
+            {item.variacao_lucro_pct != null ? ` · ${textoSinal(item.variacao_lucro_pct)} lucro/dia` : ''}
           </em>
           <span className={`pos-precificacao-chip is-${item.situacao}`}>
             {item.margem_depois != null ? formatPercent(item.margem_depois, 1) : '—'}
@@ -823,10 +954,12 @@ function LinhaPrecificada({
             {ROTULO_SITUACAO[item.situacao]}
           </span>
         </div>
-        <div className="pos-precificacao-linha-janelas">
-          <JanelaMini titulo="Semana" janela={item.janelas.semana} />
-          <JanelaMini titulo="Mês" janela={item.janelas.mes} />
-        </div>
+        {ativo && (
+          <div className="pos-precificacao-linha-janelas">
+            <JanelaMini titulo="Semana" janela={item.janelas.semana} />
+            <JanelaMini titulo="Mês" janela={item.janelas.mes} />
+          </div>
+        )}
       </button>
     </li>
   );

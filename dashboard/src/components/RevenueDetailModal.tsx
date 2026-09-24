@@ -4,6 +4,7 @@ import { PeriodSelector } from './PeriodSelector';
 import { abrevMesAtual, resolverPeriodoEfetivo, rotuloCorteFechadoParaGrafico } from '../utils/periodoFechado';
 import { HistoryChart } from './HistoryChart';
 import { formatPercent } from '../utils/formatters';
+import { margemLinha } from '../types/dashboard';
 import type { DashboardData, DashboardStats, GranularidadeDash } from '../types/dashboard';
 
 // ==========================================
@@ -133,7 +134,7 @@ export function RevenueDetailModal({
                                     fontSize: isMobile ? '1.15rem' : '1.5rem',
                                     flexWrap: 'wrap'
                                 }}>
-                                    {historyType === 'revenue' && <><DollarSign color="var(--accent)" size={isMobile ? 18 : 24} /> Receita</>}
+                                    {historyType === 'revenue' && <><DollarSign color="var(--accent)" size={isMobile ? 18 : 24} /> Lucro Bruto</>}
                                     {historyType === 'mfr' && <><ShoppingCart color="var(--accent)" size={isMobile ? 18 : 24} /> Volume</>}
                                     {historyType === 'desc' && <><Users color="var(--accent)" size={isMobile ? 18 : 24} /> Clientes</>}
                                     {client.length === 1 && <span style={{ color: 'var(--text-secondary)', fontSize: isMobile ? '0.85rem' : '1.1rem', fontWeight: 400 }}>— {data?.maps.c[client[0]]}</span>}
@@ -186,7 +187,7 @@ export function RevenueDetailModal({
                                             if (desc.length && !desc.includes(r[4])) return;
                                             if (store.length && !store.includes(r[1])) return;
 
-                                            rev += r[6];
+                                            rev += margemLinha(r);
                                             vol += 1;
                                             cli.add(r[2]);
                                         });

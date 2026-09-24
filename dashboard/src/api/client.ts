@@ -1065,6 +1065,36 @@ export async function obterSummaryEmpresa(
   }
 }
 
+export interface PontoMargemPrice {
+  periodo: string;
+  rotulo: string;
+  receita: number;
+  cmv: number;
+  lucro: number;
+  margem: number | null;
+  qtd: number;
+  dias_venda: number;
+  lucro_dia: number | null;
+  qtd_dia: number | null;
+}
+
+export interface RespostaMargemPrice {
+  disponivel: boolean;
+  serie_mensal: PontoMargemPrice[];
+}
+
+/** Margem mensal ponderada da empresa inteira (todas as lojas, ver
+ * `backend/margem_price.py`) — fonte mais precisa que a aproximação por
+ * descrição calculada no frontend. `disponivel=false` quando a empresa ainda
+ * não tem CNPJ mapeado ou parquet gerado; a tela cai de volta na aproximação. */
+export async function obterMargemPrice(
+  empresa: string,
+  signal?: AbortSignal,
+): Promise<RespostaMargemPrice> {
+  const res = await chamar(`/api/dashboard/margem-price/${encodeURIComponent(empresa)}`, { signal });
+  return tratarResposta(res);
+}
+
 export interface TabelaResultado {
   colunas: string[];
   linhas: unknown[][];
@@ -1376,7 +1406,7 @@ export async function obterDetalheDespesas(
 
 export type PeriodoIso = { inicio: string | null; fim: string | null };
 
-export type SituacaoPrecificacao = 'acima' | 'abaixo' | 'no_alvo' | 'sem_venda' | 'sem_alvo';
+export type SituacaoPrecificacao = 'acima' | 'abaixo' | 'no_alvo' | 'sem_venda' | 'sem_alvo' | 'nao_precificado';
 
 export type PontoSeriePrecificacao = {
   periodo: string;
@@ -1423,6 +1453,8 @@ export type JanelasFixasPrecificacao = Record<ChaveJanelaFixa, JanelaFixaPrecifi
 
 export type ItemPosPrecificacao = {
   nome: string;
+  /** Falso = família/fabricante fora da rodada (só no recorte "todos"). */
+  precificado: boolean;
   skus_dump: number;
   receita_dump: number;
   margem_anterior_dump: number | null;
@@ -1477,9 +1509,23 @@ export type ResumoPosPrecificacao = {
   janelas: JanelasFixasPrecificacao;
 };
 
+/** Uma rodada disponível no dump: um dia de `data_exportacao`.
+ *  `linhas` e `pares` vêm junto porque rodada varia de 3 a ~15 mil linhas na
+ *  mesma empresa — sem o tamanho à vista, rodada pequena parece tela quebrada
+ *  em vez de escolha. */
+export type RodadaPrecificacao = {
+  dia: string;
+  linhas: number;
+  pares: number;
+};
+
 export type PosPrecificacaoResposta = {
   empresa: string;
   loja: string | null;
+  /** Todas as rodadas do arquivo, da mais recente para a mais antiga. */
+  rodadas: RodadaPrecificacao[];
+  /** Rodada que este resultado calculou. */
+  rodada: string | null;
   data_precificacao: string | null;
   periodo_corte: string | null;
   periodo_antes: PeriodoIso;
@@ -1500,21 +1546,161 @@ export type PosPrecificacaoResposta = {
 
 export async function obterPosPrecificacao(
   empresa: string,
-  parametros: { loja?: string | null; usarMesesFechados?: boolean } = {},
+  parametros: { loja?: string | null; rodada?: string | null; apenasPrecificados?: boolean } = {},
   signal?: AbortSignal,
 ): Promise<PosPrecificacaoResposta> {
   const query = new URLSearchParams();
   if (parametros.loja) query.set('loja', parametros.loja);
-  if (parametros.usarMesesFechados === false) query.set('usar_mes_fechado', 'false');
+  if (parametros.apenasPrecificados) query.set('apenas_precificados', 'true');
+  // Sem `rodada` o backend calcula a mais recente do arquivo.
+  if (parametros.rodada) query.set('rodada', parametros.rodada);
   const qs = query.toString() ? `?${query}` : '';
   const url = `/api/precificacao/${encodeURIComponent(empresa)}${qs}`;
   if (signal?.aborted) {
     throw new DOMException('Aborted', 'AbortError');
   }
-  return comCache(`pos_precificacao_v2_${empresa}_${qs}`, async () => {
+  // v15: sem `apenas_precificados` a resposta é a loja inteira (menos o balde
+  // "NÃO HARMONIZADO", como no PRICE), cada item traz `precificado` e a
+  // variação antes/depois é por dia. O cache vive em localStorage e sobrevive
+  // ao F5 — sem bump, a chave antiga devolveria a resposta de antes.
+  return comCache(`pos_precificacao_v15_${empresa}_${qs}`, async () => {
     const res = await chamar(url, { headers: authHeaders() });
     return tratarResposta(res);
   });
+}
+
+// ---------------------------------------------------------------------------
+// Precificação — aba Pós-precificação (histórico por SKU, sem prender a rodada)
+// ---------------------------------------------------------------------------
+
+export type SituacaoHistorico = 'acima' | 'no_alvo' | 'abaixo' | 'sem_venda' | 'sem_alvo';
+export type NivelHistorico = 'familia' | 'fabricante' | 'par' | 'sku' | 'rodada';
+
+export type MetricasHistorico = {
+  alvo: number | null;
+  margem_no_dia: number | null;
+  margem_antes: number | null;
+  margem_depois: number | null;
+  gap_pp: number | null;
+  receita_antes: number;
+  receita_depois: number;
+  lucro_dia_antes: number | null;
+  lucro_dia_depois: number | null;
+  qtd_dia_antes: number | null;
+  qtd_dia_depois: number | null;
+  efeito_lucro_pct: number | null;
+  efeito_qtd_pct: number | null;
+  situacao: SituacaoHistorico;
+};
+
+export type LinhaHistorico = MetricasHistorico & {
+  nome: string;
+  skus: number;
+  precificacoes: number;
+  ultima: string | null;
+  faixas: string[];
+  descricao?: string;
+  fabricante?: string;
+  fx?: string;
+};
+
+export type RodadaLinhaTempo = {
+  dia: string;
+  skus: number;
+  pares: number;
+  mensuravel: boolean;
+  no_periodo: boolean;
+  selecionada: boolean;
+};
+
+export type MarcadorPrecificacao = { dia: string; periodo: string; skus: number };
+
+export type KpisHistorico = Partial<MetricasHistorico> & {
+  skus: number;
+  pares: number;
+  rodadas: number;
+  receita_coberta_pct: number | null;
+  pct_acima: number | null;
+  situacoes: Partial<Record<SituacaoHistorico, number>>;
+};
+
+export type HistoricoPrecificacaoResposta = {
+  empresa: string;
+  periodo_dias: number;
+  janela_dias: number;
+  inicio_periodo: string | null;
+  inicio_movimento: string | null;
+  fim_movimento: string | null;
+  faixas_disponiveis: string[];
+  linha_tempo: RodadaLinhaTempo[];
+  kpis: KpisHistorico;
+  serie_mensal: PontoSeriePrecificacao[];
+  marcadores: MarcadorPrecificacao[];
+  nivel: NivelHistorico;
+  linhas: LinhaHistorico[];
+  total_linhas: number;
+};
+
+export type ItemHistoricoPrecificacao = {
+  nivel: NivelHistorico;
+  nome: string;
+  skus_total: number;
+  fabricantes: number;
+  faixas: string[];
+  historico: {
+    dia: string;
+    alvo: number | null;
+    margem_no_dia: number | null;
+    skus: number;
+    mensuravel: boolean;
+    no_filtro: boolean;
+  }[];
+  serie_mensal: PontoSeriePrecificacao[];
+  marcadores: MarcadorPrecificacao[];
+  skus: (MetricasHistorico & { codigo: string; descricao: string; fabricante: string; fx: string })[];
+};
+
+export type FiltrosHistorico = {
+  periodo: number;
+  rodadas: string[];
+  faixas: string[];
+};
+
+function queryFiltros(filtros: FiltrosHistorico, extra: Record<string, string>): string {
+  const q = new URLSearchParams({ periodo: String(filtros.periodo), ...extra });
+  if (filtros.rodadas.length) q.set('rodadas', filtros.rodadas.join(','));
+  if (filtros.faixas.length) q.set('faixas', filtros.faixas.join(','));
+  return q.toString();
+}
+
+/** Sem cache em localStorage de propósito: o dump muda quando a coleta do
+ *  Postgres roda, e a chave não teria como saber — o backend já cacheia o
+ *  cálculo pesado, e cada filtro custa ~1 s. */
+export async function obterHistoricoPrecificacao(
+  empresa: string,
+  filtros: FiltrosHistorico & { nivel: NivelHistorico; todos: boolean; busca: string },
+  signal?: AbortSignal,
+): Promise<HistoricoPrecificacaoResposta> {
+  const extra: Record<string, string> = { nivel: filtros.nivel };
+  if (filtros.todos) extra.todos = 'true';
+  if (filtros.busca.trim()) extra.busca = filtros.busca.trim();
+  const res = await chamar(
+    `/api/precificacao/${encodeURIComponent(empresa)}/historico?${queryFiltros(filtros, extra)}`,
+    { headers: authHeaders(), signal },
+  );
+  return tratarResposta(res);
+}
+
+export async function obterItemHistoricoPrecificacao(
+  empresa: string,
+  filtros: FiltrosHistorico & { nivel: Exclude<NivelHistorico, 'rodada'>; nome: string },
+  signal?: AbortSignal,
+): Promise<ItemHistoricoPrecificacao> {
+  const res = await chamar(
+    `/api/precificacao/${encodeURIComponent(empresa)}/historico/item?${queryFiltros(filtros, { nivel: filtros.nivel, nome: filtros.nome })}`,
+    { headers: authHeaders(), signal },
+  );
+  return tratarResposta(res);
 }
 
 // ---------------------------------------------------------------------------
@@ -1528,7 +1714,7 @@ export type MetricaMonitor =
   | 'receita_dia'
   | 'lucro'
   | 'lucro_dia'
-  /** % de receita em produtos sem descrição harmonizada (ver PRODUTO.csv). */
+  /** % de receita em produtos sem descrição harmonizada (ver PRODUTO). */
   | 'nao_harmonizado';
 
 /** Um card da tela de monitoramento. `estado` diferente de 'ok' vem sem serie:
@@ -2154,6 +2340,13 @@ export type QuedaQuantidadeDiagnostico = {
   clientes: ClienteQuedaQuantidade[];
 };
 
+/** Causa heurística da erosão, mesma régua do boletim "Correlação Produto x
+ *  Cliente": Abandono de Categoria (3+ clientes no mesmo produto/período),
+ *  Fim de Ciclo (produto já em alerta de queda consecutiva), Ruptura
+ *  Estratégica (cliente parou de comprar, produto era ≥70% do que ele levava)
+ *  ou Caso Específico (nenhum padrão acima). */
+export type StatusCausaErosao = 'Abandono de Categoria' | 'Fim de Ciclo' | 'Ruptura Estratégica' | 'Caso Específico';
+
 export type CelulaErosao = {
   produto: string;
   /** `null` = este cliente não teve queda neste produto (não é zero). */
@@ -2161,6 +2354,8 @@ export type CelulaErosao = {
   receita_anterior: number | null;
   /** Negativo = caiu (convenção do projeto; a tela não inverte sinal). */
   variacao_pct: number | null;
+  /** `null` junto com `perda_rs: null` = célula vazia, sem causa a classificar. */
+  status: StatusCausaErosao | null;
 };
 
 export type ClienteErosao = {
@@ -2200,6 +2395,30 @@ export type MargemGiroDiagnostico = {
   bullet: FaixaMargemGiro[];
 };
 
+export type ProdutoRadarPercentual = {
+  descricao: string;
+  receita_anterior: number | null;
+  receita_atual: number | null;
+  variacao_pct: number | null;
+};
+
+export type RadarPercentualDiagnostico = {
+  disponivel: boolean;
+  mensagem: string | null;
+  /** Produtos já cobertos pelo Tornado (ver `tornado`) não aparecem aqui de novo. */
+  alta: ProdutoRadarPercentual[];
+  queda: ProdutoRadarPercentual[];
+};
+
+export type ImpactoChurnDiagnostico = {
+  /** Soma de toda queda individual cliente x produto — exposição, não perda confirmada. */
+  receita_sob_risco: number | null;
+  /** Maior retração percentual entre os eventos de erosão do período. */
+  maior_retracao_pct: number | null;
+  /** Variação global de receita entre os dois últimos períodos (mesmo número da Tensão). */
+  variacao_global_pct: number | null;
+};
+
 export type DiagnosticoResposta = {
   disponivel: boolean;
   mensagem: string | null;
@@ -2208,11 +2427,13 @@ export type DiagnosticoResposta = {
   tensao: TensaoDiagnostico | null;
   cascata: CascataDiagnostico;
   tornado: LinhaTornado[];
+  radar_percentual: RadarPercentualDiagnostico;
   fluxo_faixas: FluxoFaixasDiagnostico;
   streak: StreakDiagnostico;
   risco: RiscoDiagnostico;
   queda_quantidade: QuedaQuantidadeDiagnostico;
   matriz_erosao: MatrizErosaoDiagnostico;
+  impacto_churn: ImpactoChurnDiagnostico;
   margem_giro: MargemGiroDiagnostico;
   empresa?: string;
   loja?: string | null;

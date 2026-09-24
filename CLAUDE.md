@@ -6,16 +6,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Projeto Prisma = Dashboard de vendas ("Alvo") + Analisador de Monitoria, unificados num único projeto web.
 
-- **Dashboard** (`/`, público) — visualização de receita/quantidade por período, loja, cliente, fabricante e produto. Duas fontes de dados possíveis:
-  - **Modo estático** (empresa `''`, padrão): lê `dashboard/public/data/summary.json`, gerado offline por `process_data.py` a partir de `base_de_dados.xlsx` (export do Power BI).
-  - **Modo por empresa**: usuário escolhe uma empresa no seletor (`EmpresaSelector`), e o frontend busca `GET /api/dashboard/summary/{empresa}` no backend, que lê os dois CSV da empresa na pasta fonte (sem gerar nada em disco) e devolve o summary (`backend/dashboard_summary.py`), com cache em memória por mtime.
+- **Dashboard** (`/`, público) — visualização de lucro bruto/quantidade por período, loja, cliente, fabricante e produto. Sempre por empresa: usuário escolhe uma empresa no seletor (`SidebarEmpresaSelect`), e o frontend busca `GET /api/dashboard/summary/{empresa}` no backend, que lê os dois CSV da empresa na pasta fonte (sem gerar nada em disco) e devolve o summary (`backend/dashboard_summary.py`), com cache em memória por mtime. Sem empresa salva, o seletor resolve uma automaticamente (empresa mock de demonstração, ou a primeira da lista) — não existe mais um modo "sem empresa". O valor monetário principal (hero, breakdowns por loja/cliente/fabricante/produto, gráfico) é **lucro bruto** (receita líquida − CMV), não receita crua — cada linha de `rows` já vem com CMV (`dashboard/src/types/dashboard.ts::margemLinha`), e o card "Margem" do `MetricsGrid` é lucro bruto − despesas (P&L: receita → CMV → lucro bruto → despesas → margem).
 - **Analisador de Monitoria** (`/analisador`, atrás de login) — configuração de exclusões/cortes de clientes e produtos sobre a base padrão (`base_de_dados.xlsx`) ou, com empresa selecionada, sobre a base dessa empresa lida direto da fonte; relatórios do catálogo, export Excel/PDF. Precisa do backend em `backend/` (FastAPI), que reaproveita o motor de análise (`engine/analise_funil.py`) do app desktop original (`erickxc/analisador-monitoria-2d`).
 
 Os dois módulos compartilham **dois caminhos** (chaves SQLite em `config_app`):
 
 | Chave | Papel | Conteúdo |
 |---|---|---|
-| `caminho_fonte_dados` | **Somente leitura absoluta** | `/{cliente}/{cliente}_MOVIMENTO_ATUAL.csv` + `/{cliente}_PRODUTO.csv` (`;`, aspas duplas), direto na pasta do cliente |
+| `caminho_fonte_dados` | **Somente leitura absoluta** | `/{cliente}/{cliente}_MOVIMENTO_ATUAL.parquet` + `/{cliente}_PRODUTO.parquet` (+ `_CONTROLADORIA.parquet` opcional), direto na pasta do cliente |
 | `caminho_trabalho` | Escrita | `/{cliente}/config.json`, `summary_dashboard.json`, `resumo_monitor.json`, backups; sem `Base.csv`/`harm.xlsx` intermediário |
 
 **Caminhos padrão** (`backend/caminhos_padrao.py`): quando nada foi configurado, os três caminhos são resolvidos dentro do OneDrive corporativo — `Dados Alvos` (fonte), `analisador` (trabalho) e `Prisma\Atualizações` (canal), todos sob `<OneDrive>\01 - Marco + Monitores\Ecossistema-Monitoria`. A raiz local do OneDrive é descoberta em tempo de execução (`%OneDriveCommercial%`, com varredura do perfil como reserva), porque ela contém o nome do usuário do Windows e não pode ser fixada no código. Assim uma máquina nova funciona sem ninguém digitar caminho. O que o usuário salvar em Configurações tem precedência, e só pastas que existem são sugeridas.
@@ -47,9 +45,7 @@ npm run preview
 
 Vite tem proxy de `/api` → `http://127.0.0.1:8003` (`dashboard/vite.config.ts`), então em dev o frontend chama `/api` relativo.
 
-**Atualizar dados do dashboard (modo estático)**: `python process_data.py` na raiz (lê `base_de_dados.xlsx`, grava `dashboard/public/data/summary.json`).
-
-**Regenerar summary/resumo de uma empresa**: `python normalizar_base.py "<pasta_fonte>/<empresa>" --trabalho "<pasta_trabalho>/<empresa>"` — lê os dois CSV da fonte (`{empresa}_MOVIMENTO_ATUAL.csv` + `{empresa}_PRODUTO.csv`) e grava `summary_dashboard.json`/`resumo_monitor.json` na pasta de trabalho; a descrição harmonizada já vem pronta em `DESCRICAO_HARMONIZADA` no `_PRODUTO.csv`, sem passo manual.
+**Regenerar summary/resumo de uma empresa**: `python normalizar_base.py "<pasta_fonte>/<empresa>" --trabalho "<pasta_trabalho>/<empresa>"` — lê os dois parquet da fonte (`{empresa}_MOVIMENTO_ATUAL` + `{empresa}_PRODUTO`) e grava `summary_dashboard.json`/`resumo_monitor.json` na pasta de trabalho; a descrição harmonizada já vem pronta em `DESCRICAO_HARMONIZADA` no `_PRODUTO`, sem passo manual.
 
 **Testes do backend**: `cd backend && python -m pytest -q`. Não há testes automatizados no frontend.
 
@@ -109,7 +105,7 @@ Os dois endpoints usam `_exigir_origem_local`, como `/aplicar`: alteram o logon 
 
 ### Como a atualização funciona
 
-O canal é uma pasta compartilhada (na prática o OneDrive da empresa) configurada em Configurações → Atualizações, gravada em `config_app.caminho_atualizacoes`. O app lê o `version.json`, compara com `versao.VERSAO` e oferece o update; ao aplicar, confere o sha256, entrega a troca ao `atualizador.exe` e se encerra. O atualizador espera o processo morrer, extrai ao lado, **preserva `dados_locais/`, `logs/`, `data/` e `base_de_dados.xlsx`**, troca as pastas, religa e só apaga o backup depois de confirmar que a versão nova respondeu. Log em `<pai da instalação>\Prisma-atualizacao.log`.
+O canal é uma pasta compartilhada (na prática o OneDrive da empresa) configurada em Configurações → Atualizações, gravada em `config_app.caminho_atualizacoes`. O app lê o `version.json`, compara com `versao.VERSAO` e oferece o update; ao aplicar, confere o sha256, entrega a troca ao `atualizador.exe` e se encerra. O atualizador espera o processo morrer, extrai ao lado, **preserva `dados_locais/`, `logs/` e `base_de_dados.xlsx`**, troca as pastas, religa e só apaga o backup depois de confirmar que a versão nova respondeu. Log em `<pai da instalação>\Prisma-atualizacao.log`.
 
 Três coisas a não mexer sem entender:
 
@@ -193,17 +189,16 @@ Três consequências a ter em mente:
 - **Qualquer combinação de lojas** (lista vazia = todas). O escopo viaja no contrato de sempre — nome puro para uma loja, `@lojas:[...]` para várias (`codificarEscopoLojas`) — e é ele que nomeia o escopo em que `config.json` e `clientes_tags.json` são lidos e gravados. Ordenar antes de codificar não é cosmético: a mesma seleção precisa gerar sempre a mesma chave, senão a config salva não é reencontrada. O combobox multi só confirma ao fechar o painel, comportamento que já era o do Analisador.
 - **Nenhuma tela tem seletor de loja próprio.** Saíram o filtro "Loja" da `FilterBar`, o do Analisador, o do Estoque e o de Clientes. No Dashboard a loja não é filtro: os nomes viram índices em `maps.s` e entram no mesmo cálculo de antes — o summary já traz a loja em cada linha, então não há ida ao servidor.
 - **A lista de lojas sai de `GET /api/dashboard/empresas/{empresa}/lojas`**, que lê o `resumo_monitor.json` (poucos KB), não a base. O seletor aparece no Dashboard público: tirar a lista da base carregaria o XLSX inteiro para preencher um combobox, anulando o ganho do summary pré-gerado. Empresa sem summary responde lista vazia e o seletor some, em vez de a tela quebrar.
-- `data/summary.json` vs `public/data/summary.json` — o dashboard estático lê o JSON gerado por `process_data.py`; `public/data/` é servido estaticamente pelo Vite/build, `src/data/` é uma cópia usada em import direto no código — ao regenerar dados, checar se as duas precisam ser atualizadas. Não se aplica ao modo por empresa, que busca do backend em runtime.
-- `types/dashboard.ts` — tipos compartilhados do shape de `summary.json` (mesmo formato tanto no estático quanto no gerado em runtime por empresa).
+- `types/dashboard.ts` — tipos compartilhados do shape do summary (o mesmo que `dashboard_summary.py` gera em runtime por empresa).
 - Filtros do Dashboard usam debounce (`useDebouncedValue`, ~300ms) + `useTransition` para recalcular sem travar a UI ao clicar rápido em filtros.
 
 ### Backend (`backend/`)
-- `main.py` — app FastAPI, define todas as rotas: login, catálogo, base (Excel padrão ou os dois CSV por empresa, lidos direto da fonte), prévias, caminhos fonte/trabalho, config.json por empresa, dashboard por empresa, análise, export. CORS liberado só para `http://localhost:5173`.
+- `main.py` — app FastAPI, define todas as rotas: login, catálogo, base (Excel padrão ou os dois parquet por empresa, lidos direto da fonte), prévias, caminhos fonte/trabalho, config.json por empresa, dashboard por empresa, análise, export. CORS liberado só para `http://localhost:5173`.
 - `auth.py` — geração/validação de token (`criar_token`, `exigir_login` como dependency do FastAPI). As rotas `/api/dashboard/*` **não** exigem login — o dashboard é público (app de uso interno).
 - `db.py` — camada SQLite: usuários (login do Analisador) e `config_app` (chave/valor genérico: `caminho_fonte_dados`, `caminho_trabalho`, com fallback das chaves legadas). Banco em `backend/dados_locais/app.db`.
 - `monitor_empresas.py` — resumo de poucos KB por empresa (`resumo_monitor.json`), derivado do summary e usado pela tela de Monitoramento e pelo seletor de lojas. O cache é invalidado pelo mtime do summary, e é o **lote noturno** (`normalizar_todas_empresas`) que o regera junto do summary. Sem isso a invalidação diária caía no primeiro usuário a abrir a tela: reconstruir os 46 resumos custa ~18 s de CPU com os arquivos já locais, mais o download de ~65 MB de summary numa máquina em que o OneDrive ainda não baixou — contra 0,4 s lendo os resumos prontos. Se a tela voltar a demorar, o suspeito é o lote não ter rodado.
-- `_carregar_base_empresa_sem_trava` / `_assert_escrita_fora_da_fonte` — ao selecionar empresa, lê os dois CSV direto da fonte e cacheia em RAM por mtime; nada é persistido no trabalho (nem `Base.csv` nem intermediário). A data do último movimento no topo do dashboard vem de `DATA_MOVIMENTO` (`_data_ultimo_movimento_bi`), não mais de mtime de arquivo. Aborta se o destino estiver sob a fonte ou se fonte == trabalho.
-- `cache_atacado.py` — cache em parquet do join MOVIMENTO_ATUAL+PRODUTO, na pasta de trabalho (`_cache_atacado.parquet`). O cache em RAM (`_cache_base_empresa`) guarda só 1 empresa por vez, então trocar de empresa ou reiniciar o backend força reparse do CSV — numa empresa grande (IBAD, ~277 MB) isso é ~19s; ler o parquet equivalente é ~0,4s. Frescor é o mtime do CSV mais recente entre os dois arquivos, carimbado no próprio parquet via `os.utime` (sem sidecar). Escrita é atômica (tmp + `os.replace`) e best-effort: falha ao gravar (disco cheio, OneDrive travando o arquivo) não impede o carregamento, só volta a reparsear na próxima vez. `normalizar_todas_empresas.py` usa o mesmo cache no lote noturno — o CSV muda todo dia então o lote sempre reparseia, mas grava o parquet fresco de quebra, e o primeiro acesso do dia no app já lê parquet em vez de CSV.
+- `_carregar_base_empresa_sem_trava` / `_assert_escrita_fora_da_fonte` — ao selecionar empresa, lê os dois parquet direto da fonte e cacheia em RAM por mtime; nada é persistido no trabalho (nem `Base.csv` nem intermediário). A data do último movimento no topo do dashboard vem de `DATA_MOVIMENTO` (`_data_ultimo_movimento_bi`), não mais de mtime de arquivo. Aborta se o destino estiver sob a fonte ou se fonte == trabalho.
+- `cache_atacado.py` — cache em parquet do join MOVIMENTO_ATUAL+PRODUTO, na pasta de trabalho (`_cache_atacado.parquet`). Nasceu quando a fonte era CSV (IBAD: ~19 s de parse contra ~0,4 s do cache); com a fonte em parquet o join direto custa ~1 s, então o ganho encolheu e o cache é candidato a sair quando as telas passarem a consultar via `consulta_parquet`. Frescor é o mtime do mais recente entre os dois arquivos da fonte, carimbado no próprio parquet via `os.utime` (sem sidecar). Escrita é atômica (tmp + `os.replace`) e best-effort: falha ao gravar (disco cheio, OneDrive travando o arquivo) não impede o carregamento.
 - `dashboard_summary.py` — gera o summary do Dashboard (mesmo shape de `summary.json`) a partir de um DataFrame já limpo pelo motor (`carregar_csv_base_empresa`), vetorizado com pandas (evita `iterrows`, lento nas ~650 mil linhas típicas de uma base).
 - `engine/` — motor de análise reaproveitado do app desktop original:
   - `analise_funil.py` — lógica central de análise do funil de vendas (classificação ABC de clientes/produtos, erosão, churn, migração, tendências) a partir da base carregada (`carregar_csv`/`carregar_csv_base_empresa`). `carregar_csv_base_empresa` faz o join `{empresa}_MOVIMENTO_ATUAL.csv` × `{empresa}_PRODUTO.csv` pela chave de produto, monta `CMV`, `Vendedor`, `Data_Venda_Diaria` e a `descricao` a partir de `DESCRICAO_HARMONIZADA` (fallback para a bruta). `montar_estoque_e_vendas` deriva estoque/vendas de `QUANTIDADE_ESTOQUE` do PRODUTO, com custo unitário = CMV total ÷ QTD total do produto.
@@ -259,8 +254,43 @@ calcula isso não acontece, porque eles saem da própria curva.
 A contagem às vezes para abaixo do máximo (os 18 acima) porque o corte é ancorado na grade de 0,5% em vez de virar um número de quatro casas decimais — foi escolha explícita: o percentual continua sendo a régua legível do relatório. Sem busca passo a passo: as entradas da curva estão ordenadas, então é `searchsorted`.
 
 ### Pastas fonte e trabalho
-- **Fonte** (RO): subpastas por cliente com `{cliente}_MOVIMENTO_ATUAL.csv` + `{cliente}_PRODUTO.csv` direto na pasta (sem subpasta `BI/`), `;` e aspas duplas. Listagem de empresas = subpastas da fonte que têm os dois arquivos (`resolver_arquivos_dados`).
+- **Fonte** (RO): subpastas por cliente com `{cliente}_MOVIMENTO_ATUAL` + `{cliente}_PRODUTO` direto na pasta (sem subpasta `BI/`), em parquet. Listagem de empresas = subpastas da fonte que têm os dois arquivos (`resolver_arquivos_dados`).
 - **Trabalho** (RW): subpastas por cliente com `config.json` (Analisador), `summary_dashboard.json`, `resumo_monitor.json` e opcionalmente `clientes_harm.json`. Sem `Base.csv`/`harm.xlsx` — a base em si nunca é persistida fora da fonte. O app pode criar a pasta do cliente aqui na primeira seleção.
+
+### Fonte em parquet, e consultas SQL em cima dela
+
+A fonte é **só parquet** desde set/2026, com o mesmo esquema nas 41 empresas: identificador `string`, `DATA_MOVIMENTO`/`DATA_VENC` `date32`, `DIA`/`MES`/`ANO` `int32`, valores `double`. CSV que sobre na pasta é ignorado. O movimento da Altese caiu de 325 MB para 10,6 MB, e carregar a base foi de 14,5 s para 1,5 s (IBAD, 1,46 milhão de linhas: ~19 s → 1,0 s). O gargalo passou a ser a limpeza em pandas depois da leitura (`validar_e_limpar`, 2,7 s na Altese).
+
+`analise_funil._ler_tabela_empresa` é o leitor único, travado em `tests/test_fonte_parquet.py`:
+
+- **Confere colunas pelo rodapé e lê só as pedidas.** O `_PRODUTO` da Altese tem 2,6 milhões de linhas e o join com o movimento usa 2 das 6 colunas.
+- **Identificador sai texto mesmo que venha numérico.** O join movimento × produto é por texto: código gravado como float por causa de um nulo (`100.0`) não casaria com "100" — sem erro, só receita sumindo. Campo `""` vira ausente.
+- **`date32` sai `datetime64[ns]`.** O pandas o entregaria como objeto `date`, e todo cálculo de período iria pelo caminho lento.
+
+Os testes gravam as linhas descritas como texto ("1.234,56") no esquema real da fonte, via `tests/fonte_parquet_util.escrever_fonte`.
+
+`_PRECIFICACAO.parquet` também é parquet, mas vive na **pasta de trabalho**: quem grava é o lote `precificacao_do_postgres.py`, e a reserva na fonte (CSV exportado à mão) saiu.
+
+**Consultas SQL: `backend/consulta_parquet.py` (DuckDB).** Lê do disco só as colunas e os blocos que a pergunta precisa, sem carregar a base na RAM. Conexão em memória por chamada (DuckDB não aceita a mesma conexão em duas threads, e o FastAPI atende em paralelo), caminho sempre como parâmetro (`read_parquet(?)`), nunca interpolado. Primeiro uso: o "Último movimento" da barra lateral é `max(DATA_MOVIMENTO)`, tirado das estatísticas do rodapé (~20 ms, 0,2 ms em cache) — antes era a data de modificação do arquivo, que diz quando o OneDrive sincronizou. Para dar escala: receita, CMV, lucro, clientes e famílias por mês × loja do IBAD, com o join no catálogo, sai em 0,21 s, contra ~6,6 s só para carregar e limpar a mesma base em pandas.
+
+### Corte D-1 e preparo da manhã
+
+**A base vai sempre até ontem.** `af.data_corte_padrao()` (D-1; `PRISMA_DATA_CORTE=AAAA-MM-DD` força outra data) e `af.cortar_ate` tiram as linhas de `Data_Venda_Diaria` depois do corte. O dia corrente chega parcial, e "hoje até agora" contra dias cheios faz toda tela ler queda. O corte roda **depois** do `_cache_atacado.parquet` (chaveado pela fonte; gravar o corte nele congelaria a data), e a data entra na chave da base em RAM e no `summary_dashboard.corte`, que o frescor do summary confere — virou o dia, tudo que foi calculado com o corte velho deixa de valer mesmo sem a fonte mudar. O "Último movimento" também é limitado ao corte.
+
+**Telas pesadas têm cache em disco** (`backend/cache_telas.py`, `{trabalho}/{empresa}/_cache_telas/`): Clientes, Diagnóstico, Vendedores, Estoque (resumo e mapa) e Pós-precificação. A chave é a mesma tupla que a tela já usava na RAM (empresa, loja, modo, assinatura da base, dia, cortes, tags), mais corte D-1 e regra de nomes; ela vira hash no nome do arquivo e fica gravada dentro, conferida na leitura. Qualquer mudança que invalidaria a RAM muda a chave, e o arquivo antigo não é mais achado. Antes, cada máquina recalculava cada tela na primeira abertura do dia (Clientes ~8 s na IBAD).
+
+**`preparar_telas.py`** chama esses endpoints para cada empresa, com os parâmetros do prefetch do frontend (escopo "todas as lojas", 3 modos de período, venda média 6, mapa de estoque com limite 1200), via `TestClient` — o arquivo preparado é o que a tela calcularia. 4 empresas em paralelo, maiores primeiro. Empresa que não mudou sai do disco em < 1 s.
+
+**Lote da manhã** (`executar_lote_noturno.ps1`): summaries → base CNPJ → precificação → telas → análises IA. Duas tarefas do usuário: `Prisma-LoteManha` às 05:30 com `-AguardarFonteAte 09:30` — `aguardar_fonte.py` espera o movimento de cada empresa ser atualizado **hoje** (não "ter venda de ontem": numa segunda, loja fechada no domingo nunca teria o dia) e o lote segue assim que a fonte chega ou o prazo vence; e `Prisma-LoteNoturno` às 13:00 e 18:00, sem espera, para quem chega atrasado (em set/2026, 31 empresas chegavam entre 08:18 e 08:31 e 10 por volta das 17h). Empresa que não mudou sai do cache em < 1 s, então as passadas extras custam pouco. A tarefa `Prisma - abrir diariamente` (08:00) só sobe o backend (`Prisma.exe` sem argumento). A antiga `Prisma-NormalizarTodasEmpresas` (`Prisma.exe --pre-gerar` numa pasta de build que não existia mais, falhando desde 10/09) foi excluída em 24/09/2026.
+
+### Base empresa / loja / CNPJ (`base_empresas.parquet`)
+
+Precificação (Postgres do PRICE) e margem por transação (`DB/PRICE/margem_price`) são indexadas por **CNPJ**; o Prisma, por pasta de empresa e `ID_LOJA`. A ponte oficial é o `{empresa}_EMPRESA.dw_2d` do DW (`<OneDrive>/DB/DW/{empresa}/BI/`, CSV `;`, uma linha por loja com `ID_LOJA;CNPJ;NOME;CEP;TIPO_TRIBUTACAO`). `montar_base_empresas.py` mantém `{trabalho}/base_empresas.parquet` (`backend/base_empresas.py`) só com as empresas da fonte (Dados Alvos), e o lote noturno o roda antes do dump de precificação. É **incremental**: o mapa salvo fica; empresa que entra na Dados Alvos tem o `_EMPRESA.dw_2d` buscado e é adicionada (sem arquivo no DW, tenta de novo no dia seguinte); empresa que sai da Dados Alvos sai do mapa. `--refazer` relê o DW de todas, para quando uma empresa abre ou fecha loja.
+
+- O nome da pasta no DW é o da fonte e o `ID_LOJA` é o do movimento — casa sem tradução.
+- Loja que o DW traz sem CNPJ (a Cativo exporta só os nomes das lojas) é completada por `{trabalho}/base_empresas_complemento.json` (empresa → {loja: CNPJ}), aplicado a cada execução. O complemento só preenche vazio e acrescenta loja que o DW não lista; CNPJ que o DW já traz não é sobrescrito.
+- O lote de precificação usa a base primeiro; `precificacao_cnpj.json` virou **reserva** de nível empresa.
+- A inferência por código de produto (`sugerir_cnpj_precificacao.py`) conferiu com a base nas 28 empresas em que as duas existiam; ficou como ferramenta de conferência.
 
 ### Harmonização de nomes de cliente (`clientes_harm.json`)
 

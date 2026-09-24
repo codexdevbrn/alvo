@@ -1,4 +1,4 @@
-"""Leitura de MOVIMENTO_ATUAL.csv + PRODUTO.csv da fonte por empresa."""
+"""Leitura de MOVIMENTO_ATUAL + PRODUTO (parquet) da fonte por empresa."""
 
 from pathlib import Path
 
@@ -8,11 +8,8 @@ import pytest
 # Importar main inclui a raiz do projeto no sys.path, como acontece no servidor.
 import main  # noqa: F401
 from engine import analise_funil as af
+from fonte_parquet_util import escrever_fonte
 from normalizar_base import ErroNormalizacao, resolver_arquivos_dados
-
-
-def _escrever_csv(caminho: Path, linhas: list[dict]) -> None:
-    pd.DataFrame(linhas).to_csv(caminho, sep=";", index=False, encoding="utf-8-sig")
 
 
 def _empresa(tmp_path: Path, nome: str = "Empresa") -> Path:
@@ -26,22 +23,22 @@ def test_resolver_arquivos_dados_exige_movimento_e_produto(tmp_path):
     with pytest.raises(ErroNormalizacao):
         resolver_arquivos_dados(pasta)
 
-    _escrever_csv(pasta / "Empresa_MOVIMENTO_ATUAL.csv", [{"ID_LOJA": "1"}])
+    escrever_fonte(pasta / "Empresa_MOVIMENTO_ATUAL.parquet", [{"ID_LOJA": "1"}])
     with pytest.raises(ErroNormalizacao):
         resolver_arquivos_dados(pasta)
 
-    _escrever_csv(pasta / "Empresa_PRODUTO.csv", [{"ID_LOJA": "1"}])
+    escrever_fonte(pasta / "Empresa_PRODUTO.parquet", [{"ID_LOJA": "1"}])
     movimento, produto, estoque, vendas = resolver_arquivos_dados(pasta)
-    assert movimento.name == "Empresa_MOVIMENTO_ATUAL.csv"
-    assert produto.name == "Empresa_PRODUTO.csv"
+    assert movimento.name == "Empresa_MOVIMENTO_ATUAL.parquet"
+    assert produto.name == "Empresa_PRODUTO.parquet"
     assert estoque is None
     assert vendas is None
 
 
 def test_resolver_arquivos_dados_acha_estoque_e_vendas_opcionais(tmp_path):
     pasta = _empresa(tmp_path)
-    _escrever_csv(pasta / "Empresa_MOVIMENTO_ATUAL.csv", [{"ID_LOJA": "1"}])
-    _escrever_csv(pasta / "Empresa_PRODUTO.csv", [{"ID_LOJA": "1"}])
+    escrever_fonte(pasta / "Empresa_MOVIMENTO_ATUAL.parquet", [{"ID_LOJA": "1"}])
+    escrever_fonte(pasta / "Empresa_PRODUTO.parquet", [{"ID_LOJA": "1"}])
     (pasta / "Dados_Estoque_Empresa.csv").write_text("x", encoding="utf-8")
     (pasta / "Dados_Vendas_Empresa.csv").write_text("x", encoding="utf-8")
 
@@ -86,13 +83,13 @@ def _linha_produto(**overrides) -> dict:
 
 def test_carrega_e_junta_descricao_harmonizada(tmp_path):
     pasta = _empresa(tmp_path)
-    caminho_movimento = pasta / "Empresa_MOVIMENTO_ATUAL.csv"
-    caminho_produto = pasta / "Empresa_PRODUTO.csv"
-    _escrever_csv(caminho_movimento, [
+    caminho_movimento = pasta / "Empresa_MOVIMENTO_ATUAL.parquet"
+    caminho_produto = pasta / "Empresa_PRODUTO.parquet"
+    escrever_fonte(caminho_movimento, [
         _linha_movimento(),
         _linha_movimento(CODIGO_PRODUTO="200", DESCRICAO_PRODUTO="sem harmonizacao"),
     ])
-    _escrever_csv(caminho_produto, [
+    escrever_fonte(caminho_produto, [
         _linha_produto(),
         _linha_produto(CODIGO_INTERNO_PRODUTO="200", DESCRICAO_HARMONIZADA=""),
     ])
@@ -114,14 +111,14 @@ def test_carrega_e_junta_descricao_harmonizada(tmp_path):
 
 def test_montar_estoque_e_vendas_usa_produto_e_cmv_medio(tmp_path):
     pasta = _empresa(tmp_path)
-    caminho_movimento = pasta / "Empresa_MOVIMENTO_ATUAL.csv"
-    caminho_produto = pasta / "Empresa_PRODUTO.csv"
-    _escrever_csv(caminho_movimento, [
+    caminho_movimento = pasta / "Empresa_MOVIMENTO_ATUAL.parquet"
+    caminho_produto = pasta / "Empresa_PRODUTO.parquet"
+    escrever_fonte(caminho_movimento, [
         # Produto 100: duas vendas, CMV total 1600 / QTD total 6 = custo unitário 266,67ish
         _linha_movimento(CMV="800,00", QUANTIDADE="3"),
         _linha_movimento(CMV="800,00", QUANTIDADE="3"),
     ])
-    _escrever_csv(caminho_produto, [_linha_produto(QUANTIDADE_ESTOQUE="12")])
+    escrever_fonte(caminho_produto, [_linha_produto(QUANTIDADE_ESTOQUE="12")])
 
     df_base = af.carregar_csv_base_empresa(caminho_movimento, caminho_produto)
     estoque, vendas = af.montar_estoque_e_vendas(df_base, caminho_produto)
@@ -139,10 +136,10 @@ def test_montar_estoque_e_vendas_usa_produto_e_cmv_medio(tmp_path):
 
 def test_validar_e_limpar_aceita_mes_numerico(tmp_path):
     pasta = _empresa(tmp_path)
-    caminho_movimento = pasta / "Empresa_MOVIMENTO_ATUAL.csv"
-    caminho_produto = pasta / "Empresa_PRODUTO.csv"
-    _escrever_csv(caminho_movimento, [_linha_movimento()])
-    _escrever_csv(caminho_produto, [_linha_produto()])
+    caminho_movimento = pasta / "Empresa_MOVIMENTO_ATUAL.parquet"
+    caminho_produto = pasta / "Empresa_PRODUTO.parquet"
+    escrever_fonte(caminho_movimento, [_linha_movimento()])
+    escrever_fonte(caminho_produto, [_linha_produto()])
 
     df_bruto = af.carregar_csv_base_empresa(caminho_movimento, caminho_produto)
     df, linhas_vazias = af.validar_e_limpar(df_bruto, receita_em_texto_br=False)

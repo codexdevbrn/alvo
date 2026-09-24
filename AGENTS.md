@@ -6,9 +6,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 Projeto Prisma = Dashboard de vendas ("Alvo") + Analisador de Monitoria, unificados num único projeto web.
 
-- **Dashboard** (`/`, público) — visualização de receita/quantidade por período, loja, cliente, fabricante e produto. Duas fontes de dados possíveis:
-  - **Modo estático** (empresa `''`, padrão): lê `dashboard/public/data/summary.json`, gerado offline por `process_data.py` a partir de `base_de_dados.xlsx` (export do Power BI).
-  - **Modo por empresa**: usuário escolhe uma empresa no seletor (`EmpresaSelector`), e o frontend busca `GET /api/dashboard/summary/{empresa}` no backend, que lê diretamente `fonte/empresa/Dados Mais Atacado.xlsx` e grava somente o summary na pasta de trabalho, com cache em memória por mtime.
+- **Dashboard** (`/`, público) — visualização de receita/quantidade por período, loja, cliente, fabricante e produto. Sempre por empresa: usuário escolhe uma empresa no seletor (`SidebarEmpresaSelect`), e o frontend busca `GET /api/dashboard/summary/{empresa}` no backend, que lê diretamente `fonte/empresa/Dados Mais Atacado.xlsx` e grava somente o summary na pasta de trabalho, com cache em memória por mtime.
 - **Analisador de Monitoria** (`/analisador`, atrás de login) — configuração de exclusões/cortes de clientes e produtos sobre a base padrão (`base_de_dados.xlsx`) ou, com empresa selecionada, sobre o XLSX normalizado da pasta fonte; relatórios do catálogo, export Excel/PDF. Precisa do backend em `backend/` (FastAPI), que reaproveita o motor de análise (`engine/analise_funil.py`) do app desktop original (`erickxc/analisador-monitoria-2d`).
 
 Os dois módulos compartilham **dois caminhos** (chaves SQLite em `config_app`):
@@ -43,8 +41,6 @@ npm run preview
 
 Vite tem proxy de `/api` → `http://localhost:8000` (`dashboard/vite.config.ts`), então em dev o frontend chama `/api` relativo.
 
-**Atualizar dados do dashboard (modo estático)**: `python process_data.py` na raiz (lê `base_de_dados.xlsx`, grava `dashboard/public/data/summary.json`).
-
 **Harmonizar descrições de produto de uma empresa**: `python harmonizar_descricoes.py "<pasta_trabalho>/<empresa>"` (lê `harm.xlsx` da pasta de trabalho, reescreve a coluna `descricao` do `Base.csv`; `--dry-run` só mostra o relatório sem gravar; backup `Base.antes-harm.csv` na primeira execução). A normalização BI→Base: `python normalizar_base.py "<pasta_fonte>/<empresa>" --trabalho "<pasta_trabalho>/<empresa>"`.
 
 Não há suíte de testes automatizada configurada em nenhum dos dois lados.
@@ -57,8 +53,7 @@ Não há suíte de testes automatizada configurada em nenhum dos dois lados.
 - `pages/` — `DashboardPage`, `LoginPage`, `AnalisadorPage` — um componente de página por rota.
 - `components/` — componentes do Dashboard na raiz (`MetricsGrid`, `HistoryChart`, `BreakdownSection`, `FilterBar`, `PeriodSelector`, `EmpresaSelector`, `RevenueDetailModal`, etc.); componentes específicos do Analisador ficam em `components/analisador/` (`ConfigModal`, `ExportarModal`, `ResultTable`, `PreviaClientesTable`, `PreviaProdutosTable`, `NumberStepper`).
 - `EmpresaSelector` / `ConfigModal` — dois campos de caminho (fonte RO + trabalho RW), compartilhados conceitualmente entre Dashboard e Analisador.
-- `data/summary.json` vs `public/data/summary.json` — o dashboard estático lê o JSON gerado por `process_data.py`; `public/data/` é servido estaticamente pelo Vite/build, `src/data/` é uma cópia usada em import direto no código — ao regenerar dados, checar se as duas precisam ser atualizadas. Não se aplica ao modo por empresa, que busca do backend em runtime.
-- `types/dashboard.ts` — tipos compartilhados do shape de `summary.json` (mesmo formato tanto no estático quanto no gerado em runtime por empresa).
+- `types/dashboard.ts` — tipos compartilhados do shape do summary gerado em runtime por empresa.
 - Filtros do Dashboard usam debounce (`useDebouncedValue`, ~300ms) + `useTransition` para recalcular sem travar a UI ao clicar rápido em filtros.
 
 ### Backend (`backend/`)

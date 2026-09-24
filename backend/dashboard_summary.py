@@ -1,31 +1,30 @@
 """
 Geração do "summary" do Dashboard (rota /) a partir de um DataFrame limpo.
 
-Produz um dict com EXATAMENTE o mesmo shape do dashboard/public/data/summary.json
-gerado por process_data.py na raiz do projeto (contrato consumido por
-dashboard/src/types/dashboard.ts e DashboardPage.tsx):
+Produz um dict com o shape (contrato consumido por dashboard/src/types/dashboard.ts
+e DashboardPage.tsx):
 
     {
       "maps": {"s": [...], "c": [...], "m": [...], "d": [...], "r": [...], "p": [...]},
-      "rows": [[p, s, c, m, d, r, rev, qty], ...],   # índices nos maps + valores
+      "rows": [[p, s, c, m, d, r, rev, qty, cmv], ...],   # índices nos maps + valores
       "monthly": [{"name": "jan/24", "rev": ..., "cmv": ..., "pid": 202401, "year": 2024}, ...],
       "yoy": {"2024": ..., "2025": ...},
       "updated_at": "dd/mm/aaaa hh:mm",
       "kpis": {"rev": ..., "qty": ..., "avg": ..., "cnt": ..., "cmv": ...}
     }
 
-`cmv` em `monthly`/`kpis` é o Custo da Mercadoria Vendida somado no período — base
-para "Lucro bruto" (receita - CMV) na tela de Monitoramento. Empresa cuja fonte
-não preenche a coluna chega com `cmv` zerado; `kpis.cmv == 0` sinaliza "sem CMV"
-para quem consome o summary (`monitor_empresas.py` usa isso para esconder a
-métrica de lucro dessa empresa, em vez de mostrar lucro == receita).
+`cmv` é o Custo da Mercadoria Vendida somado no período — base para "Lucro
+bruto" (receita - CMV), a métrica que o Dashboard (`/`) exibe como valor
+principal em vez de receita crua (ver `types/dashboard.ts::margemLinha` no
+frontend). Empresa cuja fonte não preenche a coluna chega com `cmv` zerado, e
+`kpis.cmv == 0` sinaliza "sem CMV" para quem consome o summary
+(`monitor_empresas.py` usa isso para esconder a métrica de lucro dessa
+empresa, em vez de mostrar lucro == receita).
 
-A diferença em relação a process_data.py é a origem dos dados: aqui o
-DataFrame vem de engine.analise_funil.carregar_csv() (Base.csv por empresa,
+O DataFrame vem de engine.analise_funil.carregar_csv() (Base.csv por empresa,
 schema canônico do Analisador), que já entrega Receita como float, QTD como
-int e Data_Venda como datetime — então a lógica foi adaptada para essas
-colunas e vetorizada (o iterrows do script original seria lento com 647k
-linhas por requisição).
+int e Data_Venda como datetime — a lógica é vetorizada (iterrows seria lento
+com 647k linhas por requisição).
 
 Cache em disco: `summary_dashboard.json` na pasta de trabalho da empresa,
 invalidado quando Base.csv fica mais novo (mtime).
@@ -60,6 +59,9 @@ MESES_NOME = {
 NOME_SUMMARY_DASHBOARD = "summary_dashboard.json"
 NOME_SUMMARY_DASHBOARD_GZ = "summary_dashboard.json.gz"
 NOME_VERSAO_SUMMARY = "summary_dashboard.versao"
+#: Data de corte (D-1) com que o summary foi gerado. Virou o dia, o summary de
+#: ontem não traz o dia que acabou de fechar, mesmo com a fonte igual.
+NOME_CORTE_SUMMARY = "summary_dashboard.corte"
 
 #: Muda quando o shape do summary muda — sem isso, um summary já gravado com
 #: mtime >= fonte é lido como fresco pra sempre, mesmo depois de um campo novo
@@ -68,7 +70,10 @@ NOME_VERSAO_SUMMARY = "summary_dashboard.versao"
 #: o ganho do cache. Por isso o número mora num arquivo à parte, poucos bytes,
 #: e não dentro do JSON grande. Bumpar aqui invalida os summaries já gravados;
 #: eles regeneram na próxima leitura. 2: passou a somar CMV em kpis/monthly.
-VERSAO_SUMMARY = 2
+#: 3: cmv por linha em `rows` — dashboard passou a exibir lucro bruto (receita
+#: - cmv) como valor principal, em vez de receita crua, e precisa do CMV no
+#: mesmo nível de granularidade da receita (por loja/cliente/fabricante/produto).
+VERSAO_SUMMARY = 3
 
 
 def caminho_summary_dashboard(pasta_trabalho: str | Path) -> Path:
@@ -81,6 +86,17 @@ def caminho_summary_dashboard_gz(pasta_trabalho: str | Path) -> Path:
 
 def caminho_versao_summary(pasta_trabalho: str | Path) -> Path:
     return Path(pasta_trabalho) / NOME_VERSAO_SUMMARY
+
+
+def caminho_corte_summary(pasta_trabalho: str | Path) -> Path:
+    return Path(pasta_trabalho) / NOME_CORTE_SUMMARY
+
+
+def _corte_summary_gravado(pasta_trabalho: str | Path) -> str:
+    try:
+        return caminho_corte_summary(pasta_trabalho).read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
 
 
 def _versao_summary_gravada(pasta_trabalho: str | Path) -> int:
@@ -96,6 +112,7 @@ def summary_dashboard_atualizado(
     caminho_base_csv: str | Path,
     *,
     mtime_minimo: float = 0.0,
+    data_corte: date | None = None,
 ) -> bool:
     """True se o JSON (ou .gz) em disco existe, não é mais antigo que a fonte e
     foi gravado com o shape atual do summary (ver `VERSAO_SUMMARY`).
@@ -104,6 +121,8 @@ def summary_dashboard_atualizado(
     quando mudam sem a fonte mudar — hoje, a regra de harmonização de clientes.
     """
     if _versao_summary_gravada(pasta_trabalho) != VERSAO_SUMMARY:
+        return False
+    if data_corte is not None and _corte_summary_gravado(pasta_trabalho) != data_corte.isoformat():
         return False
     caminho_csv = Path(caminho_base_csv)
     if not caminho_csv.is_file():
@@ -188,14 +207,21 @@ def gerar_e_gravar_summary_dashboard(
     *,
     data_ultimo_movimento: date | None = None,
     updated_at: str | None = None,
+    data_corte: date | None = None,
 ) -> Path:
-    """Gera o summary a partir do DataFrame e grava summary_dashboard.json(+.gz)."""
+    """Gera o summary a partir do DataFrame e grava summary_dashboard.json(+.gz).
+
+    Com `data_corte`, grava também `summary_dashboard.corte`, que o frescor confere.
+    """
     summary = gerar_summary(
         df,
         updated_at=updated_at,
         data_ultimo_movimento=data_ultimo_movimento,
     )
-    return gravar_summary_dashboard(pasta_trabalho, summary)
+    caminho = gravar_summary_dashboard(pasta_trabalho, summary)
+    if data_corte is not None:
+        caminho_corte_summary(pasta_trabalho).write_text(data_corte.isoformat(), encoding="utf-8")
+    return caminho
 
 
 def formatar_ultimo_movimento(
@@ -227,8 +253,7 @@ def gerar_summary(
             "client": df["Cliente"].astype(str),
             "mfr": df["NOME_FABRICANTE"].astype(str),
             "desc": df["descricao"].astype(str),
-            # carregar_csv preenche referência vazia com "" — o dashboard
-            # estático usa o rótulo "S/ REF" (ver process_data.py).
+            # carregar_csv preenche referência vazia com "" — vira "S/ REF".
             "ref": df["Código de referêcia"].astype(str).replace("", "S/ REF"),
             "year": df["Data_Venda"].dt.year,
             "m_num": df["Data_Venda"].dt.month,
@@ -261,7 +286,7 @@ def gerar_summary(
 
     agg = (
         base.groupby(["p_p_id", "store", "client", "mfr", "desc", "ref"], sort=False)
-        .agg(rev=("rev", "sum"), qty=("qty", "sum"))
+        .agg(rev=("rev", "sum"), qty=("qty", "sum"), cmv=("cmv", "sum"))
         .reset_index()
     )
 
@@ -280,8 +305,8 @@ def gerar_summary(
     indices = {chave: {valor: i for i, valor in enumerate(valores)} for chave, valores in maps.items()}
 
     rows = [
-        [p, s, c, m, d, r, round(float(rev), 2), int(qty)]
-        for p, s, c, m, d, r, rev, qty in zip(
+        [p, s, c, m, d, r, round(float(rev), 2), int(qty), round(float(cmv), 2)]
+        for p, s, c, m, d, r, rev, qty, cmv in zip(
             agg["p_p_id"].map(indices["p"]),
             agg["store"].map(indices["s"]),
             agg["client"].map(indices["c"]),
@@ -290,6 +315,7 @@ def gerar_summary(
             agg["ref"].map(indices["r"]),
             agg["rev"],
             agg["qty"],
+            agg["cmv"],
         )
     ]
 
@@ -443,8 +469,10 @@ def aplicar_cortes_no_summary(summary: dict, cortes: dict) -> dict:
     pids = list(maps.get("p") or [])
     rev_pid: dict[int, float] = defaultdict(float)
     qty_pid: dict[int, float] = defaultdict(float)
+    cmv_pid: dict[int, float] = defaultdict(float)
     total_rev = 0.0
     total_qty = 0.0
+    total_cmv = 0.0
     for row in kept:
         try:
             pid = int(pids[int(row[0])])
@@ -452,21 +480,22 @@ def aplicar_cortes_no_summary(summary: dict, cortes: dict) -> dict:
             continue
         rev = float(row[6] or 0)
         qty = float(row[7] or 0)
+        cmv = float(row[8] or 0)
         rev_pid[pid] += rev
         qty_pid[pid] += qty
+        cmv_pid[pid] += cmv
         total_rev += rev
         total_qty += qty
+        total_cmv += cmv
 
     monthly = []
     for item in summary.get("monthly") or []:
         pid = int(item.get("pid") or 0)
         if pid not in rev_pid:
             continue
-        orig_rev = float(item.get("rev") or 0)
-        orig_cmv = float(item.get("cmv") or 0)
         novo = dict(item)
         novo["rev"] = round(rev_pid[pid], 2)
-        novo["cmv"] = round(orig_cmv * (novo["rev"] / orig_rev), 2) if orig_rev else 0.0
+        novo["cmv"] = round(cmv_pid[pid], 2)
         monthly.append(novo)
 
     yoy: dict[str, float] = defaultdict(float)
@@ -474,15 +503,12 @@ def aplicar_cortes_no_summary(summary: dict, cortes: dict) -> dict:
         yoy[str(pid // 100)] += rev
     yoy_out = {ano: round(valor, 2) for ano, valor in yoy.items()}
 
-    orig_kpis = summary.get("kpis") or {}
-    orig_rev = float(orig_kpis.get("rev") or 0)
-    orig_cmv = float(orig_kpis.get("cmv") or 0)
     kpis = {
         "rev": round(total_rev, 2),
         "qty": int(total_qty),
         "avg": round(total_rev / len(kept), 2) if kept else 0.0,
         "cnt": int(len(kept)),
-        "cmv": round(orig_cmv * (total_rev / orig_rev), 2) if orig_rev else 0.0,
+        "cmv": round(total_cmv, 2),
     }
 
     remap_keys = (("p", 0), ("s", 1), ("c", 2), ("m", 3), ("d", 4), ("r", 5))
@@ -513,6 +539,7 @@ def aplicar_cortes_no_summary(summary: dict, cortes: dict) -> dict:
                 remaps["r"][int(row[5])],
                 round(float(row[6] or 0), 2),
                 int(row[7] or 0),
+                round(float(row[8] or 0), 2),
             ])
         except (KeyError, IndexError, TypeError, ValueError):
             continue

@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from painel_diagnostico import montar_painel_diagnostico
+from painel_diagnostico import _radar_percentual, montar_painel_diagnostico
 
 
 def _linha(periodo: str, produto: str, receita: float, cliente: str = "Cliente A", *, qtd: float = 1) -> dict:
@@ -10,6 +10,10 @@ def _linha(periodo: str, produto: str, receita: float, cliente: str = "Cliente A
         "Cliente": cliente,
         "descricao": produto,
         "Periodo_Mensal": periodo,
+        # produtos_alta_e_queda usa Data_Venda pro Total_Ano_Atual (YTD) — base
+        # real sempre tem a coluna, o fixture precisa da mesma pra exercitar
+        # o radar de sinais precoces (`_radar_percentual`).
+        "Data_Venda": pd.Timestamp(f"{periodo}-01"),
         "Receita": receita,
         "QTD": qtd,
     }
@@ -85,6 +89,63 @@ def test_tornado_ordena_por_impacto_em_reais():
     assert tornado[0]["delta_receita"] == 150.0     # 250 - 100
     assert tornado[-1]["delta_receita"] == -400.0   # 700 - 1100
     assert tornado[-1]["variacao_pct"] == -36.36
+
+
+def _base_radar() -> pd.DataFrame:
+    """18 produtos, jul/ago-26. 8 "GanhoFiller" (R$400→700, +75%/+R$300) e 8
+    "PerdaFiller" (R$500→200, -60%/-R$300) enchem os dois lados do Tornado
+    (Top 8), então "SinalPrecoce" (R$500→650, +30%/+R$150) fica de fora do
+    ranking por R$ mesmo tendo receita relevante — é o caso que o radar deve
+    pegar. "Ruido" (R$10→100, +900%/+R$90) tem percentual maior que todo
+    mundo mas receita anterior abaixo da mediana (piso) — deve ficar de fora
+    tanto do Tornado quanto do radar."""
+    linhas = []
+    for i in range(8):
+        linhas.append(_linha("2026-07", f"GanhoFiller{i}", 400))
+        linhas.append(_linha("2026-08", f"GanhoFiller{i}", 700))
+        linhas.append(_linha("2026-07", f"PerdaFiller{i}", 500))
+        linhas.append(_linha("2026-08", f"PerdaFiller{i}", 200))
+    linhas += [
+        _linha("2026-07", "SinalPrecoce", 500),
+        _linha("2026-08", "SinalPrecoce", 650),
+        _linha("2026-07", "Ruido", 10),
+        _linha("2026-08", "Ruido", 100),
+    ]
+    return pd.DataFrame(linhas)
+
+
+def test_radar_percentual_pega_sinal_que_o_tornado_nao_cobre_e_aplica_piso_de_materialidade():
+    painel = montar_painel_diagnostico(_base_radar(), modo_periodo="completo")
+    tornado_nomes = {linha["descricao"] for linha in painel["tornado"]}
+    assert "SinalPrecoce" not in tornado_nomes  # perde pro Top 8 dos fillers em R$
+    assert "Ruido" not in tornado_nomes  # delta em R$ irrelevante (+90)
+
+    radar = painel["radar_percentual"]
+    assert radar["disponivel"] is True
+    # Só quem o Tornado não cobriu E passou do piso de materialidade.
+    assert [linha["descricao"] for linha in radar["alta"]] == ["SinalPrecoce"]
+    assert radar["alta"][0]["variacao_pct"] == 30.0
+    # "Ruido" tem o maior percentual da base (+900%) mas receita anterior (R$10)
+    # abaixo da mediana — fica de fora mesmo sem estar no Tornado.
+    assert all(linha["descricao"] != "Ruido" for linha in radar["alta"])
+    # Os fillers de queda estão todos no Tornado — nada sobra pro radar.
+    assert radar["queda"] == []
+
+
+def test_radar_percentual_exclui_receita_atual_negativa():
+    """Devolução maior que a venda do mês deixa Receita_Periodo_Atual negativa
+    — não é sinal de tendência, é anomalia de estorno, e "R$ 449 → -R$ 1.052"
+    lia como conta quebrada na tela (bug reportado pelo usuário)."""
+    linhas = [
+        _linha("2026-07", "Estorno", 1000),
+        _linha("2026-08", "Estorno", -300),
+        _linha("2026-07", "Produto", 1000),
+        _linha("2026-08", "Produto", 1300),
+    ]
+    radar = _radar_percentual(pd.DataFrame(linhas), tornado=[])
+    nomes = {linha["descricao"] for linha in radar["alta"] + radar["queda"]}
+    assert "Estorno" not in nomes
+    assert "Produto" in nomes
 
 
 def test_base_sem_colunas_responde_indisponivel():
@@ -270,18 +331,43 @@ def test_matriz_erosao_cruza_cliente_e_produto_que_causou_a_queda():
     assert celulas_carla["Lubrificante"] is None
 
 
+def test_matriz_erosao_classifica_a_causa_de_cada_celula():
+    matriz = montar_painel_diagnostico(_base_risco(), modo_periodo="completo")["matriz_erosao"]
+
+    por_cliente = {cliente["cliente"]: cliente for cliente in matriz["clientes"]}
+    celulas_ana = {celula["produto"]: celula["status"] for celula in por_cliente["ANA"]["celulas"]}
+    # ANA não parou de comprar (só caiu 60%) e é a única cliente a cair em
+    # Lubrificante no período: nenhum padrão sistêmico bate, vira "Caso Específico".
+    assert celulas_ana["Lubrificante"] == "Caso Específico"
+    assert celulas_ana["Pneu"] is None  # célula vazia continua sem status
+
+    celulas_carla = {celula["produto"]: celula["status"] for celula in por_cliente["CARLA"]["celulas"]}
+    # CARLA parou de comprar (100% de queda >= 70%): Ruptura Estratégica.
+    assert celulas_carla["Pneu"] == "Ruptura Estratégica"
+
+
+def test_impacto_churn_soma_erosao_e_repete_variacao_global_da_tensao():
+    impacto = montar_painel_diagnostico(_base_risco(), modo_periodo="completo")["impacto_churn"]
+
+    # ANA (Lubrificante, -600, -60%) + CARLA (Pneu, -300, -100%, parou de comprar).
+    assert impacto["receita_sob_risco"] == 900.0
+    assert impacto["maior_retracao_pct"] == 100.0
+    # Receita jul 2100 -> ago 1400: mesma conta da Tensão para o período global.
+    assert impacto["variacao_global_pct"] == round((1400 - 2100) / 2100 * 100, 2)
+
+
 def _base_margem_giro() -> pd.DataFrame:
     """Dois produtos, jul/ago-2026: Lubrificante (código A) com giro normal,
     Bateria (código B) sem venda nenhuma no `_vendas_margem_giro`."""
     linhas = [
         {"Cliente": "Cliente A", "descricao": "Lubrificante", "Código Interno": "A",
-         "Periodo_Mensal": "2026-07", "Receita": 900, "CMV": 300, "QTD": 10},
+         "Periodo_Mensal": "2026-07", "Data_Venda": pd.Timestamp("2026-07-01"), "Receita": 900, "CMV": 300, "QTD": 10},
         {"Cliente": "Cliente A", "descricao": "Lubrificante", "Código Interno": "A",
-         "Periodo_Mensal": "2026-08", "Receita": 900, "CMV": 300, "QTD": 10},
+         "Periodo_Mensal": "2026-08", "Data_Venda": pd.Timestamp("2026-08-01"), "Receita": 900, "CMV": 300, "QTD": 10},
         {"Cliente": "Cliente B", "descricao": "Bateria", "Código Interno": "B",
-         "Periodo_Mensal": "2026-07", "Receita": 200, "CMV": 160, "QTD": 4},
+         "Periodo_Mensal": "2026-07", "Data_Venda": pd.Timestamp("2026-07-01"), "Receita": 200, "CMV": 160, "QTD": 4},
         {"Cliente": "Cliente B", "descricao": "Bateria", "Código Interno": "B",
-         "Periodo_Mensal": "2026-08", "Receita": 250, "CMV": 200, "QTD": 5},
+         "Periodo_Mensal": "2026-08", "Data_Venda": pd.Timestamp("2026-08-01"), "Receita": 250, "CMV": 200, "QTD": 5},
     ]
     return pd.DataFrame(linhas)
 

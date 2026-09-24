@@ -13,6 +13,8 @@ import unicodedata
 from pathlib import Path
 
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import numpy as np
 
 # ---------------------------------------------------------------------------
@@ -69,8 +71,9 @@ MAPA_COLUNAS_BASE_PADRAO = {
     "[QTD]": "QTD",
 }
 
-# A fonte por empresa manda dois CSVs (MOVIMENTO_ATUAL + PRODUTO), ";" com
-# aspas duplas, direto na pasta da empresa (sem subpasta BI/). O mapeamento
+# A fonte por empresa manda dois parquet (MOVIMENTO_ATUAL + PRODUTO) direto na
+# pasta da empresa (sem subpasta BI/), com esquema tipado: identificador string,
+# DATA_MOVIMENTO date32, valores double. O mapeamento
 # acontece em memória; a fonte nunca recebe escrita nem arquivo intermediário.
 COLUNAS_MOVIMENTO_EMPRESA = [
     "ID_LOJA", "CODIGO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO", "DESCRICAO_PRODUTO",
@@ -83,6 +86,16 @@ COLUNAS_PRODUTO_EMPRESA = [
     "DESCRICAO_PRODUTO", "DESCRICAO_HARMONIZADA", "QUANTIDADE_ESTOQUE",
 ]
 
+#: Identificadores e descrições: sempre texto, é por eles que os arquivos se juntam.
+COLUNAS_TEXTO_MOVIMENTO = (
+    "ID_LOJA", "CODIGO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO", "DESCRICAO_PRODUTO",
+    "NOME_FABRICANTE", "NOME_CLIENTE", "NOME_VENDEDOR",
+)
+COLUNAS_TEXTO_PRODUTO = (
+    "ID_LOJA", "CODIGO_INTERNO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO",
+    "DESCRICAO_PRODUTO", "DESCRICAO_HARMONIZADA",
+)
+
 COLUNAS_CONTROLADORIA_EMPRESA = [
     "ID_LOJA", "DESCRICAO", "DESCRICAO_HARMONIZADA", "MES", "ANO", "VALOR",
 ]
@@ -94,6 +107,9 @@ COLUNAS_PRECIFICACAO_EMPRESA = [
 COLUNAS_PRECIFICACAO_OPCIONAIS = (
     "markup_alvo", "preco_atual", "preco_sugerido", "variacao_pct",
 )
+# Texto e opcionais: o CSV exportado à mão não tem; o gerado do Postgres traz
+# o SKU (`codigo`) e a faixa da curva (`fx`, ex. A1/B2/X3).
+COLUNAS_PRECIFICACAO_TEXTO_OPCIONAIS = ("codigo", "fx")
 
 MAPA_COLUNAS_MOVIMENTO_EMPRESA = {
     "ID_LOJA": "Loja",
@@ -368,28 +384,74 @@ def _parse_data_diaria(valores_data):
     return data_diaria
 
 
-def _ler_csv_empresa(caminho_arquivo, colunas_esperadas, tipos_texto, sep=";"):
-    """CSV da fonte por empresa (utf-8-sig, fallback latin1).
+def _vazio_como_ausente(serie):
+    """`""` vira ausente: o resto do motor trata "sem código de referência" e
+    "sem harmonização" como NaN, que era o que o CSV entregava."""
+    return serie.where(serie != "")
 
-    Movimento/Produto/Controladoria usam `;`. O dump de precificação chega com
-    vírgula — passar `sep=","` nele; o resto do contrato (aspas, encoding) é o mesmo.
+
+def _serie_como_texto(serie):
+    """Coluna de identificador/texto como `str`, ausente como NaN.
+
+    O esquema da fonte já traz identificador como string, mas o join movimento
+    × produto é por texto e não pode depender disso: código que chegasse como
+    inteiro, ou como float por causa de um nulo (`100.0`), deixaria de casar
+    com o "100" do outro arquivo sem erro nenhum — só receita sumindo.
     """
+    if isinstance(serie.dtype, pd.StringDtype):
+        return _vazio_como_ausente(serie)
+    if pd.api.types.is_float_dtype(serie):
+        inteiro = serie.notna() & (serie == serie.round())
+        texto = serie.astype("str")
+        texto = texto.mask(inteiro, serie[inteiro].astype("int64").astype("str"))
+        return texto.where(serie.notna(), np.nan)
+    if pd.api.types.is_numeric_dtype(serie) or pd.api.types.is_bool_dtype(serie):
+        return serie.astype("str").where(serie.notna(), np.nan)
+    if pd.api.types.infer_dtype(serie, skipna=True) != "string":
+        serie = serie.map(lambda v: v if isinstance(v, str) or pd.isna(v) else str(v))
+    return _vazio_como_ausente(serie.astype("str"))
+
+
+def _ler_tabela_empresa(caminho_arquivo, colunas_esperadas, colunas_texto, colunas_opcionais=(), todas=False):
+    """Parquet da fonte por empresa (ou do trabalho, no dump de precificação).
+
+    Confere as colunas pelo rodapé do arquivo antes de ler dado nenhum, e lê só
+    as pedidas: o `_PRODUTO` de uma empresa grande passa de 2 milhões de linhas,
+    e o join com o movimento usa 2 das 6 colunas. `todas=True` lê o arquivo
+    inteiro — é o caso do movimento, que vira a base canônica com tudo que vier.
+
+    Data (`date32`) sai como `datetime64`: o pandas a entregaria como objeto
+    `date` do Python, e todo cálculo de período passaria pelo caminho lento.
+    """
+    caminho_arquivo = Path(caminho_arquivo)
     try:
-        df = pd.read_csv(
-            caminho_arquivo, sep=sep, quotechar='"', encoding="utf-8-sig", dtype=tipos_texto,
-        )
-    except UnicodeDecodeError:
-        df = pd.read_csv(
-            caminho_arquivo, sep=sep, quotechar='"', encoding="latin1", dtype=tipos_texto,
-        )
+        esquema = pq.read_schema(caminho_arquivo)
+        colunas_faltando = [c for c in colunas_esperadas if c not in esquema.names]
+        if colunas_faltando:
+            raise ErroCarregamentoCSV(
+                f"{caminho_arquivo.name} sem colunas: " + ", ".join(colunas_faltando)
+            )
+        colunas = None if todas else [
+            c for c in dict.fromkeys([*colunas_esperadas, *colunas_opcionais]) if c in esquema.names
+        ]
+        df = pd.read_parquet(caminho_arquivo, columns=colunas)
+    except ErroCarregamentoCSV:
+        raise
+    except OSError as exc:
+        mensagem = _mensagem_erro_leitura(caminho_arquivo, exc)
+        raise ErroCarregamentoCSV(
+            mensagem or f"Não foi possível ler {caminho_arquivo.name}: {exc}"
+        ) from exc
     except Exception as exc:
         raise ErroCarregamentoCSV(f"Não foi possível ler {caminho_arquivo.name}: {exc}") from exc
 
-    colunas_faltando = [c for c in colunas_esperadas if c not in df.columns]
-    if colunas_faltando:
-        raise ErroCarregamentoCSV(
-            f"{caminho_arquivo.name} sem colunas: " + ", ".join(colunas_faltando)
-        )
+    for campo in esquema:
+        if campo.name not in df.columns:
+            continue
+        if pa.types.is_date(campo.type):
+            df[campo.name] = pd.to_datetime(df[campo.name]).astype("datetime64[ns]")
+        elif campo.name in colunas_texto:
+            df[campo.name] = _serie_como_texto(df[campo.name])
     return df
 
 
@@ -401,14 +463,54 @@ def _mapa_descricao_harmonizada(produto: pd.DataFrame) -> pd.Series:
     já resolve todas.
     """
     codigo = produto["CODIGO_INTERNO_PRODUTO"].astype(str).str.strip()
-    harmonizada = produto["DESCRICAO_HARMONIZADA"].astype(str).str.strip()
+    # `fillna` antes do `astype`: no pandas 3 o nulo continua nulo depois do
+    # `astype(str)`, e escapava do teste de vazio — um código cuja primeira
+    # linha viesse sem harmonização ficava sem descrição mesmo com outra loja
+    # trazendo a harmonizada.
+    harmonizada = produto["DESCRICAO_HARMONIZADA"].fillna("").astype(str).str.strip()
     vazio = harmonizada.str.lower().isin(("", "nan", "none", "<na>"))
     validos = pd.DataFrame({"codigo": codigo, "harmonizada": harmonizada})[~vazio]
     return validos.drop_duplicates(subset=["codigo"], keep="first").set_index("codigo")["harmonizada"]
 
 
+#: Variável de ambiente para forçar a data de corte (AAAA-MM-DD) — reprocessar
+#: um dia específico ou testar. Sem ela, o corte é sempre ontem.
+VAR_DATA_CORTE = "PRISMA_DATA_CORTE"
+
+
+def data_corte_padrao():
+    """Último dia que entra na base: **ontem** (D-1).
+
+    O dia corrente chega parcial — a fonte é exportada de madrugada e às vezes
+    de novo durante o dia —, e comparar "hoje até agora" com dias cheios faz
+    toda tela ler queda. Com o corte em D-1 o número de um dia é o mesmo de
+    manhã e de tarde, e o que o lote prepara de manhã continua valendo o dia todo.
+    """
+    import datetime as _dt
+
+    bruto = os.environ.get(VAR_DATA_CORTE, "").strip()
+    if bruto:
+        return _dt.date.fromisoformat(bruto)
+    return _dt.date.today() - _dt.timedelta(days=1)
+
+
+def cortar_ate(df, data_corte):
+    """Tira as linhas com `Data_Venda_Diaria` depois de `data_corte`.
+
+    Linha sem data diária fica (base mensal antiga não tem o campo). Roda
+    depois do cache em disco (`cache_atacado`), nunca antes: o cache é chaveado
+    pela fonte, e um corte gravado nele congelaria a data até a fonte mudar.
+    """
+    if df is None or df.empty or "Data_Venda_Diaria" not in df.columns:
+        return df
+    limite = pd.Timestamp(data_corte) + pd.Timedelta(days=1)
+    datas = df["Data_Venda_Diaria"]
+    manter = datas.isna() | (datas < limite)
+    return df if bool(manter.all()) else df.loc[manter].reset_index(drop=True)
+
+
 def carregar_csv_base_empresa(caminho_movimento, caminho_produto):
-    """Lê ``{empresa}_MOVIMENTO_ATUAL.csv`` + ``{empresa}_PRODUTO.csv`` da fonte.
+    """Lê ``{empresa}_MOVIMENTO_ATUAL.parquet`` + ``{empresa}_PRODUTO.parquet`` da fonte.
 
     Identificadores são lidos como texto para preservar zeros à esquerda.
     `descricao` vem de DESCRICAO_HARMONIZADA (catálogo em PRODUTO); quando
@@ -418,21 +520,14 @@ def carregar_csv_base_empresa(caminho_movimento, caminho_produto):
     Retorna o DataFrame bruto já com nomes canônicos; a validação final fica
     em ``validar_e_limpar``.
     """
-    tipos_texto_movimento = {
-        coluna: str for coluna in (
-            "ID_LOJA", "CODIGO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO", "DESCRICAO_PRODUTO",
-            "NOME_FABRICANTE", "NOME_CLIENTE", "NOME_VENDEDOR", "DATA_MOVIMENTO",
-        )
-    }
-    tipos_texto_produto = {
-        coluna: str for coluna in (
-            "ID_LOJA", "CODIGO_INTERNO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO",
-            "DESCRICAO_PRODUTO", "DESCRICAO_HARMONIZADA",
-        )
-    }
-
-    movimento = _ler_csv_empresa(Path(caminho_movimento), COLUNAS_MOVIMENTO_EMPRESA, tipos_texto_movimento)
-    produto = _ler_csv_empresa(Path(caminho_produto), COLUNAS_PRODUTO_EMPRESA, tipos_texto_produto)
+    movimento = _ler_tabela_empresa(
+        Path(caminho_movimento), COLUNAS_MOVIMENTO_EMPRESA, COLUNAS_TEXTO_MOVIMENTO, todas=True,
+    )
+    # Do catálogo o join só precisa do código e da descrição harmonizada.
+    produto = _ler_tabela_empresa(
+        Path(caminho_produto), ["CODIGO_INTERNO_PRODUTO", "DESCRICAO_HARMONIZADA"],
+        COLUNAS_TEXTO_PRODUTO,
+    )
 
     mapa_harmonizada = _mapa_descricao_harmonizada(produto)
 
@@ -455,7 +550,7 @@ def carregar_csv_base_empresa(caminho_movimento, caminho_produto):
 
 
 def carregar_csv_despesas(caminho_controladoria):
-    """Lê ``{empresa}_CONTROLADORIA.csv``: despesas por loja/categoria/competência.
+    """Lê ``{empresa}_CONTROLADORIA.parquet``: despesas por loja/categoria/competência.
 
     Arquivo independente da fonte, sem join com movimento/produto — uma linha
     por lançamento. Categoria vem de DESCRICAO_HARMONIZADA, com fallback para a
@@ -463,13 +558,15 @@ def carregar_csv_despesas(caminho_controladoria):
     produtos. Competência usa MES/ANO (não DATA_VENC, que mistura data e hora
     e varia de formato entre fontes).
     """
-    tipos_texto = {
-        coluna: str for coluna in ("ID_LOJA", "DESCRICAO", "DESCRICAO_HARMONIZADA")
-    }
-    df = _ler_csv_empresa(Path(caminho_controladoria), COLUNAS_CONTROLADORIA_EMPRESA, tipos_texto)
+    df = _ler_tabela_empresa(
+        Path(caminho_controladoria), COLUNAS_CONTROLADORIA_EMPRESA,
+        ("ID_LOJA", "DESCRICAO", "DESCRICAO_HARMONIZADA"),
+    )
 
-    harmonizada = df["DESCRICAO_HARMONIZADA"].astype(str).str.strip()
-    bruta = df["DESCRICAO"].astype(str).str.strip()
+    # `fillna` antes do `astype`: sem ele o nulo do pandas 3 passava pelo teste
+    # de vazio e o lançamento ficava sem categoria em vez de cair para a bruta.
+    harmonizada = df["DESCRICAO_HARMONIZADA"].fillna("").astype(str).str.strip()
+    bruta = df["DESCRICAO"].fillna("").astype(str).str.strip()
     vazio = harmonizada.str.lower().isin(("", "nan", "none", "<na>"))
     categoria = harmonizada.where(~vazio, bruta)
 
@@ -483,16 +580,18 @@ def carregar_csv_despesas(caminho_controladoria):
 
 
 def carregar_csv_precificacao(caminho_precificacao):
-    """Lê ``{empresa}_PRECIFICACAO.csv``: dump do modelo de preço.
+    """Lê ``{empresa}_PRECIFICACAO.parquet``: dump do modelo de preço.
 
-    Vírgula (não `;`). Sem código de produto — o grão visível é
-    família (`descricao`, = DESCRICAO_HARMONIZADA) × fabricante. CNPJ fica
+    Gerado por `precificacao_do_postgres.py` na pasta de trabalho. O grão garantido é família (`descricao`, =
+    DESCRICAO_HARMONIZADA) × fabricante; o dump gerado do Postgres traz também
+    o SKU (`codigo`) e a faixa (`fx`), vazios no CSV antigo. CNPJ fica
     texto para não perder zero à esquerda. Colunas de preço sugerido/atual
     são opcionais: dump "antes de aplicar" chega com elas vazias.
     """
-    tipos_texto = {coluna: str for coluna in ("cnpj", "descricao", "fabricante")}
-    df = _ler_csv_empresa(
-        Path(caminho_precificacao), COLUNAS_PRECIFICACAO_EMPRESA, tipos_texto, sep=",",
+    df = _ler_tabela_empresa(
+        Path(caminho_precificacao), COLUNAS_PRECIFICACAO_EMPRESA,
+        ("cnpj", "descricao", "fabricante", *COLUNAS_PRECIFICACAO_TEXTO_OPCIONAIS),
+        colunas_opcionais=(*COLUNAS_PRECIFICACAO_OPCIONAIS, *COLUNAS_PRECIFICACAO_TEXTO_OPCIONAIS),
     )
     saida = pd.DataFrame({
         "cnpj": df["cnpj"].astype(str).str.strip(),
@@ -509,11 +608,13 @@ def carregar_csv_precificacao(caminho_precificacao):
             saida[coluna] = _normalizar_numero_excel(df[coluna])
         else:
             saida[coluna] = pd.NA
+    for coluna in COLUNAS_PRECIFICACAO_TEXTO_OPCIONAIS:
+        saida[coluna] = df[coluna].fillna("").astype(str).str.strip() if coluna in df.columns else ""
     return saida
 
 
 def montar_estoque_e_vendas(df_base, caminho_produto):
-    """Estoque (a partir do PRODUTO.csv) e vendas (a partir da base já carregada),
+    """Estoque (a partir do PRODUTO) e vendas (a partir da base já carregada),
     no schema que `estoque_cobertura.py` espera — substitui o pipeline Liquidez
     (Dados_Estoque_*/Dados_Vendas_* legados) pelas colunas que a fonte por
     empresa já traz.
@@ -524,13 +625,7 @@ def montar_estoque_e_vendas(df_base, caminho_produto):
     já usa como segunda opção de custo (`Último_custo`, que não existe mais como
     fonte própria, fica 0 e cede a vez).
     """
-    tipos_texto_produto = {
-        coluna: str for coluna in (
-            "ID_LOJA", "CODIGO_INTERNO_PRODUTO", "CODIGO_REFERENCIA_PRODUTO",
-            "DESCRICAO_PRODUTO", "DESCRICAO_HARMONIZADA",
-        )
-    }
-    produto = _ler_csv_empresa(Path(caminho_produto), COLUNAS_PRODUTO_EMPRESA, tipos_texto_produto)
+    produto = _ler_tabela_empresa(Path(caminho_produto), COLUNAS_PRODUTO_EMPRESA, COLUNAS_TEXTO_PRODUTO)
     mapa_harmonizada = _mapa_descricao_harmonizada(produto)
 
     codigo = produto["CODIGO_INTERNO_PRODUTO"].astype(str).str.strip()

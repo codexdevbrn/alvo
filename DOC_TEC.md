@@ -24,7 +24,7 @@ global, escolhido na barra lateral, e vale em todas as telas.
 
 | Rota | Página | O que faz |
 |---|---|---|
-| `/` | `DashboardPage` | receita e quantidade por período, loja, cliente, fabricante e produto; histórico, breakdowns e modal de detalhe de receita. Lê `summary.json` estático ou `GET /api/dashboard/summary/{empresa}` |
+| `/` | `DashboardPage` | receita e quantidade por período, loja, cliente, fabricante e produto; histórico, breakdowns e modal de detalhe de receita. Lê `GET /api/dashboard/summary/{empresa}` |
 | `/login` | `LoginPage` | autenticação do Analisador (SQLite local) |
 | `/config` | `ConfiguracoesPage` | caminhos fonte/trabalho/atualizações, início automático, "manter dados nesta máquina", regeneração e atualização de versão |
 | `/monitor` | `MonitorPage` | visão de todas as empresas a partir dos `resumo_monitor.json`; métrica, janela de meses, busca, ordenação e favoritas |

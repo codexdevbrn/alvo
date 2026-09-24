@@ -39,7 +39,6 @@ NOME_EXECUTAVEL = "Prisma.exe"
 ITENS_PRESERVADOS = (
     "dados_locais",
     "logs",
-    "data",
     "base_de_dados.xlsx",
 )
 

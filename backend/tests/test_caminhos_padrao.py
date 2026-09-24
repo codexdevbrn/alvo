@@ -17,12 +17,15 @@ def _montar_onedrive(
         os.path.join("Prisma", "Atualizações"),
         "Carteira",
     ),
+    margem_price=False,
 ):
     """Cria `OneDrive - <dominio>/01 - Marco + Monitores/Ecossistema-Monitoria/...`."""
     onedrive = raiz / f"OneDrive - {caminhos_padrao.SUFIXO_ONEDRIVE_EMPRESA}"
     base = onedrive / caminhos_padrao.RAIZ_ECOSSISTEMA
     for sub in subpastas:
         (base / sub).mkdir(parents=True, exist_ok=True)
+    if margem_price:
+        (onedrive / caminhos_padrao.RAIZ_PRICE / caminhos_padrao.SUBPASTA_MARGEM_PRICE).mkdir(parents=True, exist_ok=True)
     return onedrive
 
 
@@ -70,10 +73,11 @@ def test_sem_onedrive_nenhum(tmp_path, monkeypatch):
     assert caminhos_padrao.carteira() is None
     assert caminhos_padrao.database_carteira() is None
     assert caminhos_padrao.dossie_carteira() is None
+    assert caminhos_padrao.margem_price() is None
 
 
 def test_caminhos_resolvidos(tmp_path, monkeypatch):
-    onedrive = _montar_onedrive(tmp_path)
+    onedrive = _montar_onedrive(tmp_path, margem_price=True)
     carteira = onedrive / caminhos_padrao.RAIZ_ECOSSISTEMA / "Carteira"
     (carteira / "dossie").mkdir()
     (carteira / "database_dev.xlsx").touch()
@@ -88,6 +92,7 @@ def test_caminhos_resolvidos(tmp_path, monkeypatch):
         base, "Carteira", "database_dev.xlsx",
     )
     assert caminhos_padrao.dossie_carteira() == os.path.join(base, "Carteira", "dossie")
+    assert caminhos_padrao.margem_price() == os.path.join(str(onedrive), "DB", "PRICE", "margem_price")
 
 
 def test_fonte_e_trabalho_nunca_coincidem(tmp_path, monkeypatch):

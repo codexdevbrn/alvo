@@ -93,7 +93,7 @@ type TarefaPrefetch = {
 
 /** Mais específico primeiro: `/` casa com tudo se vier no começo. */
 const ROTA_TAREFA: [string, string][] = [
-  ['/pos-precificacao', 'Pós precificação'],
+  ['/precificacao', 'Pós precificação'],
   ['/diagnostico', 'Diagnóstico'],
   ['/vendedores', 'Vendedores'],
   ['/estoque', 'Estoque'],
@@ -212,8 +212,8 @@ async function rodarFila(empresa: string, motivo: MotivoPrefetch = 'empresa') {
     }},
     { nome: 'Pós precificação', fn: async () => {
         await Promise.all([
-          obterPosPrecificacao(empresaAtual, { loja, usarMesesFechados: true }),
-          obterPosPrecificacao(empresaAtual, { loja, usarMesesFechados: false }),
+          obterPosPrecificacao(empresaAtual, { loja }),
+          obterPosPrecificacao(empresaAtual, { loja, apenasPrecificados: true }),
         ]);
     }},
     { nome: 'Monitoramento', fn: async () => {

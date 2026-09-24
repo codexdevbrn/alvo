@@ -2,6 +2,10 @@
 __pycache__/
 *.pyc
 
+# Credenciais locais (conexão Postgres, etc.)
+.env
+backend/.env
+
 # Exports brutos do ERP (muito grandes para o GitHub — limite de 100 MB por arquivo)
 *.dw_2d
 

@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo, memo, useLayoutEffect, useRef, useCallback, useId } from 'react';
 import { TrendingUp } from 'lucide-react';
 import {
-    AreaChart, Area, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, ReferenceLine,
+    AreaChart, Area, BarChart, Bar, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, ReferenceLine,
 } from 'recharts';
 import { formatCurrency, formatNumber } from '../utils/formatters';
 import { abrevMesAtual, mesAbrevDeRotulo } from '../utils/periodoFechado';
-import { COR_ANO_ANTERIOR, COR_ANO_RECENTE } from '../utils/coresAno';
+import { COR_ANO_ANTERIOR, COR_ANO_RECENTE, COR_DESPESAS } from '../utils/coresAno';
 import type { ChartPoint } from '../types/dashboard';
 
 // ==========================================
@@ -37,6 +37,9 @@ interface HistoryChartProps {
      * sair dourada, não azul. */
     corA?: string;
     corB?: string;
+    /** Overlay opcional (linha tracejada, eixo secundário) — só quando `chartData` tem `despesas` preenchido. */
+    showDespesas?: boolean;
+    corDespesas?: string;
 }
 
 // ==========================================
@@ -46,6 +49,76 @@ interface HistoryChartProps {
 function formatCompactValue(v: number, isCurrency: boolean): string {
     return isCurrency ? formatCurrency(v).replace(',00', '').replace('R$', '').trim() : formatNumber(v);
 }
+
+/** Campos que o recharts efetivamente passa para `LabelList content` neste uso
+ * (posição calculada + valor do ponto); "total" não é declarado no tipo público
+ * do recharts mas é passado em runtime pela lib para labels de Area/Bar. */
+interface LabelRenderProps {
+    x?: number | string;
+    y?: number | string;
+    value?: number | string | Array<number | string> | boolean | null;
+    index?: number;
+    total?: number;
+}
+
+// Duas séries (A e B) no mesmo mês podem ficar próximas em altura e os
+// rótulos (ambos desenhados ~10px acima da linha) colidem. Para evitar isso,
+// olhamos o valor da série "irmã" no mesmo índice (via chartData) e, se a
+// diferença for pequena relativo à escala, afastamos os dois rótulos: o de
+// maior valor sobe mais, o de menor valor desce para abaixo do ponto.
+const renderCustomizedLabel = (
+    props: LabelRenderProps,
+    isCurrency: boolean,
+    chartData: ChartPoint[],
+    otherKey: 'revenueA' | 'revenueB',
+) => {
+    const x = Number(props.x) || 0;
+    const y = Number(props.y) || 0;
+    const value = Number(props.value) || 0;
+    const index = props.index ?? 0;
+    const total = props.total ?? 0;
+
+    if (!value || value <= 0) return null;
+
+    const trueMobile = window.innerWidth <= 768;
+    const skip = trueMobile ? (total > 12 ? 3 : 2) : (total > 20 ? 3 : 2);
+    if (index % skip !== 0) return null;
+
+    let textAnchor: 'inherit' | 'end' | 'start' | 'middle' | undefined = 'middle';
+    let dx = 0;
+    if (index === 0) {
+        textAnchor = 'start';
+        dx = 4;
+    } else if (index === total - 1) {
+        textAnchor = 'end';
+        dx = -10;
+    }
+
+    let dy = -10;
+    const otherValue = chartData?.[index]?.[otherKey];
+    if (typeof otherValue === 'number' && otherValue > 0) {
+        const escala = Math.max(value, otherValue, 1);
+        const diferencaRelativa = Math.abs(value - otherValue) / escala;
+        if (diferencaRelativa < 0.09) {
+            dy = value >= otherValue ? -21 : 15;
+        }
+    }
+
+    return (
+        <text
+            x={x}
+            y={y + dy}
+            dx={dx}
+            fill="#ffffff"
+            fontSize={trueMobile ? 8 : 10}
+            fontWeight={700}
+            textAnchor={textAnchor}
+            style={{ pointerEvents: 'none', opacity: 0.9 }}
+        >
+            {formatCompactValue(value, isCurrency)}
+        </text>
+    );
+};
 
 function formatAxisTick(v: number, isCurrency: boolean): string {
     if (v === 0) return '0';
@@ -287,7 +360,7 @@ function chartDataEqual(a: ChartPoint[], b: ChartPoint[]): boolean {
     if (a.length !== b.length) return false;
     return a.every((p, i) => {
         const q = b[i];
-        return p.name === q.name && p.revenueA === q.revenueA && p.revenueB === q.revenueB;
+        return p.name === q.name && p.revenueA === q.revenueA && p.revenueB === q.revenueB && p.despesas === q.despesas;
     });
 }
 
@@ -302,6 +375,7 @@ function HistoryChartInner({
     chartData, labelA, labelB, showA, showB, isCurrency = true, style,
     singleMonthMode = false, usarMesesFechados = false, mesCorteFechado = null,
     mesAberto = null, isLoading = false, corA = COR_ANO_ANTERIOR, corB = COR_ANO_RECENTE,
+    showDespesas = false, corDespesas = COR_DESPESAS,
 }: HistoryChartProps) {
     const [isMobile, setIsMobile] = useState(window.innerWidth <= 1280);
     // Ids de gradiente únicos por instância: o Dashboard e o modal de detalhe
@@ -421,6 +495,7 @@ function HistoryChartInner({
                 <div style={{ display: 'flex', gap: '1rem', fontSize: '0.7rem', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                     {showA && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: corA }} /> {labelA}</div>}
                     {showB && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: corB }} /> {labelB}</div>}
+                    {showDespesas && <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}><div style={{ width: 8, height: 8, borderRadius: '50%', background: corDespesas }} /> Despesas</div>}
                 </div>
             </div>
             <div
@@ -522,7 +597,9 @@ function HistoryChartInner({
                                     strokeWidth={2}
                                     isAnimationActive={false}
                                     connectNulls={false}
-                                />
+                                >
+                                    <LabelList content={(props) => renderCustomizedLabel(props, isCurrency, chartData, 'revenueB')} />
+                                </Area>
                             )}
                             {showB && (
                                 <Area
@@ -532,6 +609,21 @@ function HistoryChartInner({
                                     stroke={corB}
                                     fill={`url(#${gradB})`}
                                     strokeWidth={2}
+                                    isAnimationActive={false}
+                                    connectNulls={false}
+                                >
+                                    <LabelList content={(props) => renderCustomizedLabel(props, isCurrency, chartData, 'revenueA')} />
+                                </Area>
+                            )}
+                            {showDespesas && (
+                                <Line
+                                    name="Despesas"
+                                    type="monotone"
+                                    dataKey="despesas"
+                                    stroke={corDespesas}
+                                    strokeWidth={2}
+                                    strokeDasharray="4 3"
+                                    dot={false}
                                     isAnimationActive={false}
                                     connectNulls={false}
                                 />
@@ -575,4 +667,6 @@ export const HistoryChart = memo(HistoryChartInner, (prev, next) => (
     && prev.isLoading === next.isLoading
     && prev.corA === next.corA
     && prev.corB === next.corB
+    && prev.showDespesas === next.showDespesas
+    && prev.corDespesas === next.corDespesas
 ));

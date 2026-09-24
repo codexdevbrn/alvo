@@ -84,15 +84,16 @@ def test_summary_corta_cliente_excluido():
             "p": [202601],
         },
         "rows": [
-            [0, 0, 0, 0, 0, 0, 100.0, 1],
-            [0, 0, 1, 0, 0, 0, 50.0, 2],
+            [0, 0, 0, 0, 0, 0, 100.0, 1, 40.0],
+            [0, 0, 1, 0, 0, 0, 50.0, 2, 20.0],
         ],
-        "monthly": [{"name": "jan/26", "rev": 150.0, "cmv": 0, "pid": 202601, "year": 2026}],
+        "monthly": [{"name": "jan/26", "rev": 150.0, "cmv": 60.0, "pid": 202601, "year": 2026}],
         "yoy": {"2026": 150.0},
-        "kpis": {"rev": 150.0, "qty": 3, "avg": 75.0, "cnt": 2, "cmv": 0},
+        "kpis": {"rev": 150.0, "qty": 3, "avg": 75.0, "cnt": 2, "cmv": 60.0},
     }
     saida = aplicar_cortes_no_summary(summary, {"clientes_excluidos": ["Alice"]})
     assert saida["maps"]["c"] == ["Bob"]
     assert saida["kpis"]["rev"] == 50.0
     assert saida["kpis"]["qty"] == 2
+    assert saida["kpis"]["cmv"] == 20.0
     assert len(saida["rows"]) == 1

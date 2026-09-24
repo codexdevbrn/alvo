@@ -190,18 +190,21 @@ export function EstoqueVisaoGeral({ empresa, loja, meses }: Props) {
             title="Capital em estoque"
             value={formatCompacto(resumo.valor_estoque, true)}
             icon={Boxes}
+            valueClassName="estoque-kpi-valor"
           />
           <StatCard
             title="Sem cobertura"
             value={numero(resumo.ruptura)}
             icon={PackageX}
             trend="ruptura, sem estoque e negativo"
+            valueClassName="estoque-kpi-valor"
           />
           <StatCard
             title="Cobertura média"
             value={resumo.cobertura_media == null ? '—' : `${numero(resumo.cobertura_media, 1)} meses`}
             icon={Clock}
             trend="régua: sem cobertura < 0,5 mês · alvo 3 · excesso > 6"
+            valueClassName="estoque-kpi-valor"
           />
         </div>
       </section>

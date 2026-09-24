@@ -10,10 +10,7 @@ import pandas as pd
 import cache_atacado
 import main  # noqa: F401  (garante raiz do projeto no sys.path, como no servidor)
 from engine import analise_funil as af
-
-
-def _escrever_csv(caminho: Path, linhas: list[dict]) -> None:
-    pd.DataFrame(linhas).to_csv(caminho, sep=";", index=False, encoding="utf-8-sig")
+from fonte_parquet_util import escrever_fonte
 
 
 def _linha_movimento(**overrides) -> dict:
@@ -53,10 +50,10 @@ def _linha_produto(**overrides) -> dict:
 def _preparar_fonte(tmp_path: Path) -> tuple[Path, Path]:
     pasta = tmp_path / "fonte" / "Empresa"
     pasta.mkdir(parents=True)
-    caminho_movimento = pasta / "Empresa_MOVIMENTO_ATUAL.csv"
-    caminho_produto = pasta / "Empresa_PRODUTO.csv"
-    _escrever_csv(caminho_movimento, [_linha_movimento()])
-    _escrever_csv(caminho_produto, [_linha_produto()])
+    caminho_movimento = pasta / "Empresa_MOVIMENTO_ATUAL.parquet"
+    caminho_produto = pasta / "Empresa_PRODUTO.parquet"
+    escrever_fonte(caminho_movimento, [_linha_movimento()])
+    escrever_fonte(caminho_produto, [_linha_produto()])
     return caminho_movimento, caminho_produto
 
 
@@ -85,7 +82,7 @@ def test_csv_alterado_invalida_cache(tmp_path):
     # mtime precisa avançar de fato; sistemas de arquivo comuns têm resolução
     # de 1s ou pior.
     novo_mtime = os.path.getmtime(caminho_movimento) + 2
-    _escrever_csv(caminho_movimento, [_linha_movimento(CODIGO_PRODUTO="200", DESCRICAO_PRODUTO="novo")])
+    escrever_fonte(caminho_movimento, [_linha_movimento(CODIGO_PRODUTO="200", DESCRICAO_PRODUTO="novo")])
     os.utime(caminho_movimento, (novo_mtime, novo_mtime))
 
     df2 = cache_atacado.carregar_atacado_df_cacheado(caminho_movimento, caminho_produto, pasta_trabalho)

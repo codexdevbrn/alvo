@@ -328,7 +328,7 @@ export default function MonitorPage() {
 
         {metrica === 'nao_harmonizado' && (
           <p className="monitor-nota">
-            Receita de produtos sem descrição harmonizada (PRODUTO.csv) ÷ receita
+            Receita de produtos sem descrição harmonizada (PRODUTO) ÷ receita
             total do período. A variação é em pontos percentuais, não relativa.
           </p>
         )}

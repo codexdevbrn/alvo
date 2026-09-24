@@ -2,7 +2,7 @@
 
 Dashboard de vendas ("Alvo") + Analisador de Monitoria, unificados em um projeto web só.
 
-- **Dashboard** (`/`) — tela principal, dados vêm de `process_data.py` (lê `base_de_dados.xlsx`, gera `dashboard/public/data/summary.json`).
+- **Dashboard** (`/`) — tela principal, por empresa: busca `GET /api/dashboard/summary/{empresa}` no backend.
 - **Analisador de Monitoria** (`/analisador`, atrás de login) — upload de CSV de vendas, configuração de exclusões/cortes, relatórios do catálogo na tela, export Excel/PDF. Backend em `backend/` (FastAPI) reaproveita o motor de análise do app desktop original.
 
 ## Rodando local
@@ -22,8 +22,6 @@ npm install
 npm run dev
 ```
 O Vite já tem proxy de `/api` para `http://localhost:8000` (`vite.config.ts`).
-
-**Atualizar os dados do dashboard**: `python process_data.py` na raiz (lê `base_de_dados.xlsx`, grava `dashboard/public/data/summary.json`).
 
 ## Análises diárias da carteira com Ollama Cloud
 

@@ -13,7 +13,7 @@ function lerEmpresa(): string {
 }
 
 export interface EscopoAtual {
-  /** '' = base padrão (nenhuma empresa selecionada). */
+  /** '' só no instante transitório antes da 1ª empresa resolver. */
   empresa: string;
   /** Lista vazia = todas as lojas. */
   lojas: string[];

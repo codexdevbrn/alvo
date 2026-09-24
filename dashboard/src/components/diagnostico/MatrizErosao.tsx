@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import type { MatrizErosaoDiagnostico } from '../../api/client';
+import type { CelulaErosao, MatrizErosaoDiagnostico } from '../../api/client';
 import { formatCurrency, formatNumber, formatPercent } from '../../utils/formatters';
 import { TituloDiagnostico } from './TituloDiagnostico';
 
@@ -45,7 +45,10 @@ export function MatrizErosao({ matriz }: Props) {
             destaque={`${formatNumber(clientesDoTopo)} cliente(s)`}
             variante="queda"
           />
-          <p>Redução de receita por cliente e produto, entre os dois últimos meses.</p>
+          <p>
+            Redução de receita por cliente e produto, entre os dois últimos meses. Passe o mouse
+            sobre uma célula pra ver a causa identificada.
+          </p>
         </div>
       </header>
 
@@ -83,7 +86,7 @@ export function MatrizErosao({ matriz }: Props) {
               <span>{cliente.cliente}</span>
               <em>−{formatCurrency(cliente.perda_total ?? 0)}</em>
             </div>
-            {cliente.celulas.map((celula) => {
+            {cliente.celulas.map((celula: CelulaErosao) => {
               const perda = celula.perda_rs;
               const intensidade = perda == null ? 0 : Math.min(Math.abs(perda) / maiorPerda, 1);
               const cor = perda == null
@@ -93,7 +96,7 @@ export function MatrizErosao({ matriz }: Props) {
               const receitaAtual = perda == null || receitaAnterior == null ? null : receitaAnterior - perda;
               const titulo = perda == null
                 ? `${celula.produto}: sem queda`
-                : `${celula.produto}: ${formatCurrency(receitaAnterior ?? 0)} → ${formatCurrency(receitaAtual ?? 0)} · ${formatPercent(celula.variacao_pct ?? 0, 1)}`;
+                : `${celula.produto}: ${formatCurrency(receitaAnterior ?? 0)} → ${formatCurrency(receitaAtual ?? 0)} · ${formatPercent(celula.variacao_pct ?? 0, 1)}${celula.status ? ` · ${celula.status}` : ''}`;
               const texto = perda == null
                 ? '—'
                 : modo === 'valor'

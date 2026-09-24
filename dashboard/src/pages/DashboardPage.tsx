@@ -14,17 +14,17 @@ import { gravarSummaryCache, lerSummaryCache } from '../utils/cacheSummary';
 import { perfIniciar } from '../utils/perfDebug';
 import { DashboardHeader } from '../components/DashboardHeader';
 import { AppShell } from '../components/AppShell';
-import { EVENTO_EMPRESA } from '../utils/empresaSelecionada';
-import { EVENTO_LOJA, lerLojas } from '../utils/lojaSelecionada';
+import { EVENTO_EMPRESA, escolherEmpresaInicial, selecionarEmpresaGlobal } from '../utils/empresaSelecionada';
+import { EVENTO_LOJA, codificarEscopoLojas, lerLojas } from '../utils/lojaSelecionada';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { useMesesFechados } from '../hooks/useMesesFechados';
 import { useVersaoCortesRelatorios } from '../hooks/useVersaoCortesRelatorios';
 import { useGruposClientesFiltro } from '../hooks/useGruposClientesFiltro';
 import { gruposClientesParam } from '../utils/gruposClientesFiltro';
 import { modoParaBooleano } from '../utils/mesesFechados';
-import { obterAguardandoBaseDados, obterSummaryEmpresa } from '../api/client';
+import { listarEmpresasDashboard, obterAguardandoBaseDados, obterAplicarCortesRelatorios, obterMargemPrice, obterResumoDespesas, obterSummaryEmpresa, type PontoDespesaMensal, type PontoMargemPrice } from '../api/client';
 import { formatCurrency, formatNumber } from '../utils/formatters';
-import { COR_ANO_ANTERIOR, COR_ANO_RECENTE, corDoAno } from '../utils/coresAno';
+import { COR_ANO_ANTERIOR, COR_ANO_RECENTE, COR_DESPESAS, corDoAno } from '../utils/coresAno';
 import { abrevMesAtual, descricaoPeriodoPadrao, mesDeRotulo, resolverPeriodoEfetivo, rotuloCorteFechadoParaGrafico } from '../utils/periodoFechado';
 import {
   GRANULARIDADES_DASH,
@@ -38,12 +38,16 @@ import {
   buildTrendChartData,
   rotulosTendencia,
 } from '../utils/chartGranularidade';
+import { margemLinha } from '../types/dashboard';
 import type { AggregateResult, ChartPoint, DashboardData, GranularidadeDash, ProductStats, Row, TrendItem } from '../types/dashboard';
 import '../index.css';
 
 /** Limites de UX: falhas de animação ou proxy nunca podem prender a navegação. */
 const TEMPO_MAX_SPLASH_MS = 10_000;
 const TEMPO_MAX_SUMMARY_EMPRESA_MS = 45_000;
+/** Janela do overlay de despesas no gráfico principal — cobre o histórico
+ *  típico exibido (tendência de até 2 anos), sem puxar a série inteira. */
+const MESES_DESPESAS_DASHBOARD = 24;
 
 function parseGranularidade(raw: string | null): GranularidadeDash {
   if (raw && (GRANULARIDADES_DASH as string[]).includes(raw)) return raw as GranularidadeDash;
@@ -131,13 +135,45 @@ export default function DashboardPage() {
   // State Definitions
   // ==========================================
 
-  // Empresa selecionada ('' = summary.json estático, comportamento padrão).
+  // Empresa selecionada. '' só existe no instante transitório antes do
+  // SidebarEmpresaSelect resolver a 1ª empresa (mock ou primeira da lista).
   // Declarada aqui em cima porque o estado inicial de `data` depende dela.
   const [empresa, setEmpresa] = useState<string>(() => localStorage.getItem('alvo_empresa') || '');
   /** Espelho de `empresa` pro listener do evento da sidebar, que roda com deps []. */
   const empresaRef = useRef(empresa);
   useEffect(() => {
     empresaRef.current = empresa;
+  }, [empresa]);
+
+  // 1ª visita ao site (nada em `alvo_empresa` ainda): resolve a mesma empresa
+  // que o SidebarEmpresaSelect resolveria, sem esperar ele montar. Enquanto
+  // `empresa` for '' o modo `splash-inicial` (abaixo) retorna só a tela de
+  // loading, sem <AppShell> — e é dentro do AppShell que o SidebarEmpresaSelect
+  // vive. Sem este efeito aqui, `loading` nunca vira false e a tela fica
+  // carregando pra sempre nesta máquina.
+  useEffect(() => {
+    if (empresa) return;
+    let cancelado = false;
+    listarEmpresasDashboard()
+      .then((lista) => {
+        if (cancelado) return;
+        const inicial = escolherEmpresaInicial(lista);
+        if (!inicial) {
+          // Backend no ar mas sem nenhuma empresa publicada: sem isto o
+          // loading nunca sai do lugar (mesmo sintoma do bug que este efeito
+          // resolve). O timeout de TEMPO_MAX_SPLASH_MS ainda cobre a splash.
+          setEmpresaError('Nenhuma empresa disponível no backend.');
+          setLoading(false);
+          return;
+        }
+        selecionarEmpresaGlobal(inicial);
+        setEmpresa(inicial);
+      })
+      .catch(() => {
+        setEmpresaError('Não foi possível carregar a lista de empresas. Verifique se o backend está no ar.');
+        setLoading(false);
+      });
+    return () => { cancelado = true; };
   }, [empresa]);
 
   const [data, setData] = useState<DashboardData | null>(() => lerSummaryCache(empresa));
@@ -316,9 +352,9 @@ export default function DashboardPage() {
     localStorage.setItem('alvo_visao_detalhada', String(visaoDetalhada));
   }, [client, mfr, desc, severity, period, modalPeriod, usarMesesFechados, granularidade, visaoDetalhada]);
 
-  // Carrega os dados: summary.json estático (padrão) ou o summary processado
-  // pelo backend para a empresa selecionada (lê Base.csv existente; não regenera
-  // o BI automaticamente). O backend cacheia o summary por mtime do CSV.
+  // Carrega o summary processado pelo backend para a empresa selecionada (lê
+  // Base.csv existente; não regenera o BI automaticamente). O backend cacheia
+  // o summary por mtime do CSV.
   useEffect(() => {
     localStorage.setItem('alvo_empresa', empresa);
 
@@ -326,17 +362,14 @@ export default function DashboardPage() {
     let timeoutEmpresaId: number | undefined;
     let timeoutEmpresaEsgotado = false;
 
-    const carregarEstatico = async (): Promise<DashboardData> => {
-      const res = await fetch('/data/summary.json');
-      if (!res.ok) throw new Error(`Erro ${res.status} ao carregar summary.json`);
-      return res.json();
-    };
-
     const controller = new AbortController();
 
     const chaveCache = gruposParam ? `${empresa}::${gruposParam}` : empresa;
 
     const carregar = async () => {
+      // Instante transitório antes do SidebarEmpresaSelect resolver a 1ª empresa.
+      if (!empresa) return;
+
       setEmpresaError(null);
 
       // Já baixado nesta sessão: volta instantâneo, sem animação nenhuma.
@@ -352,17 +385,13 @@ export default function DashboardPage() {
       if (modoCarregamento === 'splash-inicial') setIntroDone(false);
       if (data !== null) setEmpresaLoading(true);
 
-      try {
-        if (empresa) {
-          timeoutEmpresaId = window.setTimeout(() => {
-            timeoutEmpresaEsgotado = true;
-            controller.abort();
-          }, TEMPO_MAX_SUMMARY_EMPRESA_MS);
-        }
+      timeoutEmpresaId = window.setTimeout(() => {
+        timeoutEmpresaEsgotado = true;
+        controller.abort();
+      }, TEMPO_MAX_SUMMARY_EMPRESA_MS);
 
-        const d = empresa
-          ? await obterSummaryEmpresa(empresa, controller.signal, gruposParam)
-          : await carregarEstatico();
+      try {
+        const d = await obterSummaryEmpresa(empresa, controller.signal, gruposParam);
         if (!cancelado) {
           gravarSummaryCache(chaveCache, d);
           setData(d);
@@ -371,20 +400,12 @@ export default function DashboardPage() {
         if (err instanceof DOMException && err.name === 'AbortError' && !timeoutEmpresaEsgotado) return;
         console.error('Error loading data:', err);
         if (cancelado) return;
-        if (empresa) {
-          const mensagem = timeoutEmpresaEsgotado
-            ? 'A empresa demorou mais de 45 segundos para responder. Exibindo a base padrão.'
-            : err instanceof Error
-              ? err.message
-              : 'Falha ao carregar os dados da empresa.';
-          setEmpresaError(mensagem);
-          if (data === null) {
-            try {
-              const d = await carregarEstatico();
-              if (!cancelado) setData(d);
-            } catch { /* fica na tela de erro amigável abaixo */ }
-          }
-        }
+        const mensagem = timeoutEmpresaEsgotado
+          ? 'A empresa demorou mais de 45 segundos para responder.'
+          : err instanceof Error
+            ? err.message
+            : 'Falha ao carregar os dados da empresa.';
+        setEmpresaError(mensagem);
       } finally {
         if (timeoutEmpresaId !== undefined) window.clearTimeout(timeoutEmpresaId);
         if (!cancelado) {
@@ -406,6 +427,75 @@ export default function DashboardPage() {
   useEffect(() => {
     obterAguardandoBaseDados(false).then(setAguardandoBaseDados).catch(() => { /* mantém false */ });
   }, []);
+
+  // Overlay de despesas no gráfico principal. Falha vira "sem overlay", não
+  // erro de tela: despesas aqui são um extra, o dashboard não depende delas.
+  const [despesasMensal, setDespesasMensal] = useState<PontoDespesaMensal[]>([]);
+  useEffect(() => {
+    if (!empresa) {
+      setDespesasMensal([]);
+      return;
+    }
+    let cancelado = false;
+    const controller = new AbortController();
+    obterResumoDespesas(
+      empresa,
+      { loja: codificarEscopoLojas(lojasEscopo), meses: MESES_DESPESAS_DASHBOARD, usarMesesFechados },
+      controller.signal,
+    )
+      .then((r) => { if (!cancelado) setDespesasMensal(r.serie_mensal); })
+      .catch(() => { if (!cancelado) setDespesasMensal([]); });
+    return () => {
+      cancelado = true;
+      controller.abort();
+    };
+  }, [empresa, lojasEscopo, usarMesesFechados]);
+
+  const despesasPorRotulo = useMemo(
+    () => new Map(despesasMensal.map((p): [string, number] => [p.rotulo.toLowerCase(), p.valor])),
+    [despesasMensal],
+  );
+
+  // Margem média "real" (backend/margem_price.py: soma receita/cmv de todas
+  // as lojas antes de dividir). Igual às despesas, é um extra opcional — sem
+  // parquet pra empresa, a tela cai na aproximação por descrição já calculada
+  // localmente (ver `margemMediaPct` dentro de `aggregate`, abaixo).
+  const [margemPriceSerie, setMargemPriceSerie] = useState<PontoMargemPrice[]>([]);
+  // O parquet soma o CNPJ inteiro, sem aplicar Cortes de Relatórios/exclusões
+  // de cliente ou produto — com cortes ativos ele diverge do que a base
+  // filtrada mostra, então o override fica desligado nesse caso.
+  const [cortesAtivo, setCortesAtivo] = useState(false);
+  useEffect(() => {
+    let cancelado = false;
+    obterAplicarCortesRelatorios(false)
+      .then((v) => { if (!cancelado) setCortesAtivo(v); })
+      .catch(() => { if (!cancelado) setCortesAtivo(false); });
+    return () => { cancelado = true; };
+  }, [versaoCortes]);
+  useEffect(() => {
+    // O parquet soma sempre todas as lojas (ver `margem_price.py`) — com 1
+    // loja específica selecionada, ou com Cortes de Relatórios ativos, o
+    // número não corresponderia ao filtro, então nem busca, e o override
+    // abaixo fica desligado (cai na aproximação local).
+    if (!empresa || lojasEscopo.length > 0 || cortesAtivo) {
+      setMargemPriceSerie([]);
+      return;
+    }
+    let cancelado = false;
+    const controller = new AbortController();
+    obterMargemPrice(empresa, controller.signal)
+      .then((r) => { if (!cancelado) setMargemPriceSerie(r.disponivel ? r.serie_mensal : []); })
+      .catch(() => { if (!cancelado) setMargemPriceSerie([]); });
+    return () => {
+      cancelado = true;
+      controller.abort();
+    };
+  }, [empresa, lojasEscopo, cortesAtivo]);
+
+  const margemPriceByRotulo = useMemo(
+    () => new Map(margemPriceSerie.map((p): [string, { receita: number; cmv: number }] => [p.rotulo, { receita: p.receita, cmv: p.cmv }])),
+    [margemPriceSerie],
+  );
 
   // Empresa da sidebar (localStorage + evento) — limpa filtros ao trocar.
   useEffect(() => {
@@ -541,7 +631,7 @@ export default function DashboardPage() {
         // `includes` linear por consulta constante para cada linha da base.
         baseRows.forEach(r => {
           if (storeSet && !storeSet.has(r[1])) return;
-          const pId = r[0], cId = r[2], revVal = r[6];
+          const pId = r[0], cId = r[2], revVal = margemLinha(r);
           if (!perf[cId]) perf[cId] = { vA: 0, vB: 0 };
           if (refPASet.has(pId)) perf[cId].vA += revVal;
           if (refPBSet.has(pId)) perf[cId].vB += revVal;
@@ -603,28 +693,36 @@ export default function DashboardPage() {
 
     const nodesPorPeriodo: Record<number, NoPeriodo> = {};
     for (const r of populationRows) {
-      const pId = r[0], mId = r[3], dId = r[4], rId = r[5], revVal = r[6];
+      const pId = r[0], mId = r[3], dId = r[4], rId = r[5], revVal = margemLinha(r), qtyVal = r[7] || 0;
       let node = nodesPorPeriodo[pId];
       if (!node) {
-        node = { rev: 0, mfrs: new Set(), descs: new Set(), products: {}, clients: new Set(), cnt: 0 };
+        node = { rev: 0, qty: 0, mfrs: new Set(), descs: new Set(), products: {}, clients: new Set(), cnt: 0, descTotais: {} };
         nodesPorPeriodo[pId] = node;
       }
       node.rev += revVal;
+      node.qty += qtyVal;
       node.cnt++;
       node.mfrs.add(mId);
       node.descs.add(dId);
       node.clients.add(r[2]);
       node.products[rId] = (node.products[rId] || 0) + revVal;
+      // Receita e CMV brutos (não líquidos) por descrição — base da margem
+      // média por produto no hero (média simples entre descrições, não
+      // ponderada pela receita: cada descrição pesa igual).
+      const dt = node.descTotais[dId] || (node.descTotais[dId] = { rev: 0, cmv: 0 });
+      dt.rev += r[6];
+      dt.cmv += r[8];
     }
     perf.marca('agregação por período (nodesPorPeriodo)');
 
     const aggregate = (targetPeriod: number[], forceAverage?: boolean): AggregateResult => {
-      let rev = 0, cnt = 0;
+      let rev = 0, cnt = 0, qty = 0;
       const monthlyNodes: Record<number, NoPeriodo> = {};
       const mfrs_all = new Set<number>();
       const descs_all = new Set<number>();
       const clients_all = new Set<number>();
       const products_all: Record<number, number> = {};
+      const descTotais_all: Record<number, { rev: number; cmv: number }> = {};
       // Contagem média por unidade da granularidade soma o tamanho de cada
       // período; a contagem absoluta é a união. São números diferentes, e é por
       // isso que os dois são acumulados na mesma passada.
@@ -635,6 +733,7 @@ export default function DashboardPage() {
         if (!node) continue;
         monthlyNodes[pId] = node;
         rev += node.rev;
+        qty += node.qty;
         cnt += node.cnt;
         somaMfrs += node.mfrs.size;
         somaDescs += node.descs.size;
@@ -646,6 +745,49 @@ export default function DashboardPage() {
           const rId = Number(chave);
           products_all[rId] = (products_all[rId] || 0) + node.products[rId];
         }
+        for (const chave of Object.keys(node.descTotais)) {
+          const dId = Number(chave);
+          const acc = descTotais_all[dId] || (descTotais_all[dId] = { rev: 0, cmv: 0 });
+          acc.rev += node.descTotais[dId].rev;
+          acc.cmv += node.descTotais[dId].cmv;
+        }
+      }
+
+      // Margem média por descrição de produto: margem % de cada descrição
+      // (lucro bruto ÷ receita bruta dela), depois média simples entre elas —
+      // não a margem do total (que ponderaria descrições grandes). Fallback
+      // para quando a empresa não tem parquet margem_price (abaixo).
+      let somaMargemPct = 0, contMargemPct = 0;
+      for (const dId of Object.keys(descTotais_all)) {
+        const { rev: revDesc, cmv: cmvDesc } = descTotais_all[Number(dId)];
+        if (revDesc > 0) {
+          somaMargemPct += ((revDesc - cmvDesc) / revDesc) * 100;
+          contMargemPct++;
+        }
+      }
+      let margemMediaPct = contMargemPct > 0 ? somaMargemPct / contMargemPct : 0;
+
+      // margem_price é a fórmula validada contra a base real (soma receita/cmv
+      // de todas as lojas antes de dividir — ver backend/margem_price.py).
+      // Soma só os meses deste grupo que têm ponto na série (o parquet pode
+      // não cobrir o histórico inteiro, ex.: começou a ser gerado depois do
+      // 1º mês da base) — a margem geral da empresa deve refletir o real
+      // disponível, em vez de cair pra aproximação por descrição só porque
+      // falta 1 mês. Não pondera "mês sem parquet" como zero: ele simplesmente
+      // não entra na soma.
+      if (margemPriceByRotulo.size > 0) {
+        let recSoma = 0, cmvSoma = 0;
+        for (const pId of targetPeriod) {
+          const rotulo = data.monthly[pId]?.name;
+          const ponto = rotulo ? margemPriceByRotulo.get(rotulo) : undefined;
+          if (ponto) {
+            recSoma += ponto.receita;
+            cmvSoma += ponto.cmv;
+          }
+        }
+        if (recSoma > 0) {
+          margemMediaPct = ((recSoma - cmvSoma) / recSoma) * 100;
+        }
       }
 
       const len = countBucketsInIndices(data, targetPeriod, computeGranularidade) || 1;
@@ -654,13 +796,16 @@ export default function DashboardPage() {
       return {
         rawRev: rev,
         rawCnt: cnt,
+        rawQty: qty,
         rawClientCount: clients_all.size,
         rev: useAvg ? rev / len : rev,
         cnt: useAvg ? cnt / len : cnt,
+        qty: useAvg ? qty / len : qty,
         mfrCount: useAvg ? somaMfrs / len : mfrs_all.size,
         descCount: useAvg ? somaDescs / len : descs_all.size,
         clientCount: useAvg ? somaClients / len : clients_all.size,
         products: products_all,
+        margemMediaPct,
         monthlyNodes,
         len
       };
@@ -703,10 +848,10 @@ export default function DashboardPage() {
       ? trendLabelsChart.labelA
       : (availableYearsChart[1]?.toString() || "Anterior");
     const chartLabelB = isTrendModeChart
-      ? (computeGranularidade === 'Mensal' ? "Receita Mensal"
-        : computeGranularidade === 'Trimestral' ? "Receita Trimestral"
-        : computeGranularidade === 'Semestral' ? "Receita Semestral"
-        : "Receita Anual")
+      ? (computeGranularidade === 'Mensal' ? "Lucro Bruto Mensal"
+        : computeGranularidade === 'Trimestral' ? "Lucro Bruto Trimestral"
+        : computeGranularidade === 'Semestral' ? "Lucro Bruto Semestral"
+        : "Lucro Bruto Anual")
       : (availableYearsChart[0]?.toString() || "Atual");
     const yearLabel = isTrendMode ? (yearsInSelection[0]?.toString() || "") : (availableYears[0]?.toString() || "");
 
@@ -755,7 +900,7 @@ export default function DashboardPage() {
 
     const trendSums: Record<'c' | 'm' | 'd', Record<number, { vA: number, vB: number }>> = { c: {}, m: {}, d: {} };
     populationRows.forEach(r => {
-      const pid = r[0], rev = r[6];
+      const pid = r[0], rev = margemLinha(r);
       const inA = rankASet.has(pid);
       const inB = rankBSet.has(pid);
       if (!inA && !inB) return;
@@ -798,7 +943,7 @@ export default function DashboardPage() {
     if (showProductView) {
       const prodStats: Record<number, { vA: number; vB: number; descRev: Record<number, number> }> = {};
       populationRows.forEach(r => {
-        const rId = r[5], dId = r[4], pid = r[0], rev = r[6];
+        const rId = r[5], dId = r[4], pid = r[0], rev = margemLinha(r);
         if (!prodStats[rId]) prodStats[rId] = { vA: 0, vB: 0, descRev: {} };
         if (pASet.has(pid)) prodStats[rId].vA += rev;
         if (pBSet.has(pid)) prodStats[rId].vB += rev;
@@ -914,7 +1059,7 @@ export default function DashboardPage() {
           const yearB = isTrend ? (years[0] || '') : (availableYears[0] || '');
           const lA = isTrend ? "Baseline" : (availableYears[1]?.toString() || "Anterior");
           const lB = isTrend
-            ? (historyType === 'revenue' ? `Receita ${yearB}` : (historyType === 'mfr' ? `Volume ${yearB}` : `Clientes ${yearB}`))
+            ? (historyType === 'revenue' ? `Lucro Bruto ${yearB}` : (historyType === 'mfr' ? `Volume ${yearB}` : `Clientes ${yearB}`))
             : yearB.toString();
 
           return {
@@ -932,11 +1077,56 @@ export default function DashboardPage() {
       filterOptions: { clientOpts, mfrOpts, descOpts },
       noDataMessage: populationRows.length === 0 ? "Nenhum dado encontrado para os filtros selecionados." : null
     };
-  }, [data, baseRows, computeFilters, historyType, computeUsarMesesFechados, computeGranularidade, visaoDetalhada, loading, introDone]);
+  }, [data, baseRows, computeFilters, historyType, computeUsarMesesFechados, computeGranularidade, visaoDetalhada, loading, introDone, margemPriceByRotulo]);
 
   // ==========================================
   // Render
   // ==========================================
+
+  // Mescla despesas no chartData por rótulo de mês ("jan/25", mesmo formato
+  // nos dois lados). Mês sem lançamento de despesa fica `null` — a `Line` do
+  // HistoryChart usa `connectNulls={false}`, então o traço simplesmente pula.
+  const chartDataComDespesas = useMemo(() => {
+    const base: ChartPoint[] | undefined = processed.stats?.chartData;
+    if (!base || despesasPorRotulo.size === 0) return base ?? [];
+    return base.map((p: ChartPoint) => ({
+      ...p,
+      despesas: despesasPorRotulo.get(p.name.toLowerCase()) ?? null,
+    }));
+  }, [processed.stats?.chartData, despesasPorRotulo]);
+  const showDespesas = despesasPorRotulo.size > 0 && chartDataComDespesas.some((p: ChartPoint) => p.despesas != null);
+
+  // Mesma soma por rótulo de mês, mas para os KPIs (statsA/statsB), não para
+  // o gráfico: os meses que entram em cada período vêm de `monthlyNodes`,
+  // já filtrado pelo mesmo cálculo que gerou revA/revB no MetricsGrid.
+  const despesasAB = useMemo(() => {
+    if (!data || despesasPorRotulo.size === 0) return null;
+    const somaPorPeriodo = (monthlyNodes: Record<number, unknown> | undefined) => {
+      if (!monthlyNodes) return null;
+      let soma = 0;
+      let algumaCorrespondencia = false;
+      for (const chave of Object.keys(monthlyNodes)) {
+        const nome = data.monthly[Number(chave)]?.name;
+        if (!nome) continue;
+        const valor = despesasPorRotulo.get(nome.toLowerCase());
+        if (valor != null) {
+          soma += valor;
+          algumaCorrespondencia = true;
+        }
+      }
+      return algumaCorrespondencia ? soma : null;
+    };
+    const rawA = somaPorPeriodo(processed.stats?.statsA?.monthlyNodes);
+    const rawB = somaPorPeriodo(processed.stats?.statsB?.monthlyNodes);
+    if (rawA == null || rawB == null) return null;
+    const singleYearMode = !!processed.stats?.singleYearMode;
+    const lenA = processed.stats?.lenA || 1;
+    const lenB = processed.stats?.lenB || 1;
+    return {
+      despesasA: singleYearMode ? rawA : rawA / lenA,
+      despesasB: singleYearMode ? rawB : rawB / lenB,
+    };
+  }, [data, despesasPorRotulo, processed.stats]);
 
   // Primeira entrada no site: prisma em tela cheia, sem sidebar.
   if (modoCarregamento === 'splash-inicial' && (loading || !introDone)) {
@@ -968,8 +1158,8 @@ export default function DashboardPage() {
     </div>
   ) : null;
 
-  // Sem dados (summary estático indisponível e/ou empresa com erro): mantém o
-  // shell com Configurações na sidebar para o usuário poder corrigir.
+  // Sem dados (empresa com erro): mantém o shell com Configurações na sidebar
+  // para o usuário poder corrigir.
   if (!data) {
     return (
       <AppShell>
@@ -1082,6 +1272,8 @@ export default function DashboardPage() {
             stats={processed.stats}
             mesAberto={!usarMesesFechados && period.length === 0}
             onRevenueClick={() => { setHistoryType('revenue'); setModalPeriod(period); }}
+            despesasA={despesasAB?.despesasA}
+            despesasB={despesasAB?.despesasB}
           />
 
           <div className="chart-grid">
@@ -1089,7 +1281,7 @@ export default function DashboardPage() {
                 automático está valendo: com seleção manual de período os cards
                 usam exatamente o que foi marcado. */}
             <HistoryChart
-              chartData={processed.stats?.chartData || []}
+              chartData={chartDataComDespesas}
               labelA={processed.stats?.chartLabelA || ""}
               labelB={processed.stats?.chartLabelB || ""}
               showA={!!processed.stats?.chartHasA}
@@ -1097,6 +1289,8 @@ export default function DashboardPage() {
               singleMonthMode={!!processed.stats?.singleMonthMode}
               corA={processed.stats?.chartCorA}
               corB={processed.stats?.chartCorB}
+              showDespesas={showDespesas}
+              corDespesas={COR_DESPESAS}
               usarMesesFechados={usarMesesFechados && period.length === 0}
               mesCorteFechado={usarMesesFechados && period.length === 0
                 ? rotuloCorteFechadoParaGrafico(granularidade)
