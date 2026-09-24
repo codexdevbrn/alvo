@@ -1711,9 +1711,35 @@ export type ItemAPrecificar = {
   perdido_dia: number | null;
 };
 
+/** Descrição × fabricante — o grão em que o PRICE precifica. Soma os SKUs
+ *  sinalizados do par; `provas` conta quantos SKUs têm cada uma. */
+export type ParAPrecificar = {
+  descricao: string;
+  fabricante: string;
+  curva: 'A' | 'B' | 'C';
+  skus: number;
+  skus_total: number;
+  provas: Partial<Record<ProvaPrecificar, number>>;
+  part_receita: number | null;
+  part_fabricante: number | null;
+  receita_base: number | null;
+  margem_base: number | null;
+  margem_recente: number | null;
+  alvo: number | null;
+  dia_alvo: string | null;
+  referencia: number | null;
+  gap: number | null;
+  var_custo: number | null;
+  var_preco: number | null;
+  var_qtd: number | null;
+  reajuste: number | null;
+  perdido_dia: number | null;
+};
+
 export type FabricanteAPrecificar = {
   nome: string;
   perdido_dia: number | null;
+  pares: number;
   skus: number;
   part_receita: number | null;
 };
@@ -1728,6 +1754,7 @@ export type APrecificarResposta = {
     dias_recente: number;
   } | null;
   resumo: {
+    pares: number;
     skus: number;
     curva_a: number;
     fabricantes: number;
@@ -1738,11 +1765,19 @@ export type APrecificarResposta = {
     com_alvo: number;
   };
   fabricantes: FabricanteAPrecificar[];
-  itens: ItemAPrecificar[];
-  total_itens: number;
+  pares: ParAPrecificar[];
+  total_pares: number;
 };
 
-export type SemanaPrecoCusto = { semana: string; preco: number | null; custo: number | null; qtd: number | null };
+export type SemanaMargem = { semana: string; margem: number | null; receita: number | null; qtd: number | null };
+
+export type DetalheParAPrecificar = {
+  descricao: string;
+  fabricante: string;
+  semanas: SemanaMargem[];
+  skus: ItemAPrecificar[];
+  total_skus: number;
+};
 
 export async function obterAPrecificar(empresa: string, signal?: AbortSignal): Promise<APrecificarResposta> {
   const res = await chamar(`/api/precificacao/${encodeURIComponent(empresa)}/a-precificar`, {
@@ -1752,13 +1787,14 @@ export async function obterAPrecificar(empresa: string, signal?: AbortSignal): P
   return tratarResposta(res);
 }
 
-export async function obterItemAPrecificar(
+export async function obterParAPrecificar(
   empresa: string,
-  codigo: string,
+  par: { descricao: string; fabricante: string },
   signal?: AbortSignal,
-): Promise<{ codigo: string; semanas: SemanaPrecoCusto[] }> {
+): Promise<DetalheParAPrecificar> {
+  const query = new URLSearchParams({ descricao: par.descricao, fabricante: par.fabricante });
   const res = await chamar(
-    `/api/precificacao/${encodeURIComponent(empresa)}/a-precificar/item?codigo=${encodeURIComponent(codigo)}`,
+    `/api/precificacao/${encodeURIComponent(empresa)}/a-precificar/par?${query}`,
     { headers: authHeaders(), signal },
   );
   return tratarResposta(res);

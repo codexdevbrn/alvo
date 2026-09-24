@@ -233,36 +233,141 @@ def _linha(codigo: str, r: pd.Series) -> dict[str, Any]:
     }
 
 
+SEM_DESCRICAO = "Sem descrição"
+SEM_FABRICANTE = "Não informado"
+LIMITE_SKUS_PAR = 15
+
+
+def _chaves_par(df: pd.DataFrame) -> tuple[pd.Series, pd.Series]:
+    """Descrição × fabricante — o grão em que o PRICE precifica."""
+    return df["descricao"].replace("", SEM_DESCRICAO), df["fabricante"].replace("", SEM_FABRICANTE)
+
+
+def _media_ponderada(valores: pd.Series, pesos: pd.Series) -> float | None:
+    ok = valores.notna() & pesos.notna() & (pesos > 0)
+    if not bool(ok.any()):
+        return None
+    return float((valores[ok] * pesos[ok]).sum() / pesos[ok].sum())
+
+
+def _pares(sel: pd.DataFrame, skus: pd.DataFrame, contexto: dict[str, Any]) -> pd.DataFrame:
+    """Uma linha por descrição × fabricante, somando os SKUs sinalizados dele.
+
+    Margem sai das somas de receita e CMV (nunca média de margens). Custo, preço
+    e reajuste são médias dos SKUs ponderadas pela receita recente: preço
+    unitário de SKUs diferentes somado não quer dizer nada, a variação de cada
+    um quer.
+    """
+    total_b = contexto["receita_total_base"]
+    dias_b = max(contexto["dias_base"], 1)
+    dias_r = max(contexto["dias_recente"], 1)
+    d_sel, f_sel = _chaves_par(sel)
+    d_all, f_all = _chaves_par(skus)
+    vende = (skus["receita_b"] + skus["receita_r"]) > 0
+    total_par = vende.groupby([d_all, f_all]).sum()
+    receita_fab = skus["receita_b"].groupby(f_all).sum()
+
+    linhas = []
+    for (descricao, fabricante), g in sel.groupby([d_sel, f_sel], sort=False):
+        rec_b, rec_r = float(g["receita_b"].sum()), float(g["receita_r"].sum())
+        margem_b = (rec_b - g["cmv_b"].sum()) / rec_b * 100 if rec_b > 0 else np.nan
+        margem_r = (rec_r - g["cmv_r"].sum()) / rec_r * 100 if rec_r > 0 else np.nan
+        referencia = _media_ponderada(g["referencia"], g["receita_r"])
+        qtd_dia_b = g["qtd_b"].sum() / dias_b
+        qtd_dia_r = g["qtd_r"].sum() / dias_r
+        com_alvo = g.loc[g["alvo"].notna()]
+        fab_b = float(receita_fab.get(fabricante, 0.0))
+        linhas.append({
+            "descricao": descricao,
+            "fabricante": fabricante,
+            "curva": min(g["curva"]),
+            "skus": int(len(g)),
+            "skus_total": int(total_par.get((descricao, fabricante), len(g))),
+            "provas": {p: int(g[f"p_{p}"].sum()) for p in PROVAS},
+            "part_receita": rec_b / total_b * 100 if total_b > 0 else np.nan,
+            "part_fabricante": rec_b / fab_b * 100 if fab_b > 0 else np.nan,
+            "receita_base": rec_b,
+            "margem_base": margem_b,
+            "margem_recente": margem_r,
+            "alvo": _media_ponderada(com_alvo["alvo"], com_alvo["receita_r"]),
+            "dia_alvo": com_alvo["dia_alvo"].max() if not com_alvo.empty else pd.NaT,
+            "referencia": referencia,
+            "gap": margem_r - referencia if referencia is not None else np.nan,
+            "var_custo": _media_ponderada(g["var_custo"], g["receita_r"]),
+            "var_preco": _media_ponderada(g["var_preco"], g["receita_r"]),
+            "var_qtd": (qtd_dia_r / qtd_dia_b - 1) * 100 if qtd_dia_b > 0 else np.nan,
+            "reajuste": _media_ponderada(g["reajuste"], g["receita_r"]),
+            "perdido_dia": float(g["perdido_dia"].sum()),
+            "score": float(g["score"].sum()),
+        })
+    if not linhas:
+        return pd.DataFrame()
+    return pd.DataFrame(linhas).sort_values("score", ascending=False).reset_index(drop=True)
+
+
+def _linha_par(r: pd.Series) -> dict[str, Any]:
+    return {
+        "descricao": r["descricao"],
+        "fabricante": r["fabricante"],
+        "curva": r["curva"],
+        "skus": int(r["skus"]),
+        "skus_total": int(r["skus_total"]),
+        "provas": {p: int(n) for p, n in r["provas"].items() if n},
+        "part_receita": _num(r["part_receita"], 3),
+        "part_fabricante": _num(r["part_fabricante"], 2),
+        "receita_base": _num(r["receita_base"]),
+        "margem_base": _num(r["margem_base"]),
+        "margem_recente": _num(r["margem_recente"]),
+        "alvo": _num(r["alvo"]),
+        "dia_alvo": None if pd.isna(r["dia_alvo"]) else pd.Timestamp(r["dia_alvo"]).date().isoformat(),
+        "referencia": _num(r["referencia"]),
+        "gap": _num(r["gap"]),
+        "var_custo": _num(r["var_custo"]),
+        "var_preco": _num(r["var_preco"]),
+        "var_qtd": _num(r["var_qtd"]),
+        "reajuste": _num(r["reajuste"]),
+        "perdido_dia": _num(r["perdido_dia"]),
+    }
+
+
+def _selecionados(skus: pd.DataFrame) -> pd.DataFrame:
+    return skus.loc[skus["a_precificar"]].sort_values("score", ascending=False)
+
+
 def montar_a_precificar(skus: pd.DataFrame, contexto: dict[str, Any]) -> dict[str, Any]:
-    """Resposta da tela: indicadores, fabricantes e a lista ordenada."""
+    """Resposta da tela: indicadores, fabricantes e a lista por descrição × fabricante."""
     if skus.empty:
         return {
             "janela": None,
-            "resumo": {"skus": 0, "curva_a": 0, "fabricantes": 0, "receita_em_jogo": 0.0,
+            "resumo": {"pares": 0, "skus": 0, "curva_a": 0, "fabricantes": 0, "receita_em_jogo": 0.0,
                        "part_receita": None, "perdido_dia": 0.0, "custo_sem_repasse": 0,
                        "com_alvo": 0},
             "fabricantes": [],
-            "itens": [],
-            "total_itens": 0,
+            "pares": [],
+            "total_pares": 0,
         }
-    sel = skus.loc[skus["a_precificar"]].sort_values("score", ascending=False)
+    sel = _selecionados(skus)
     total_b = contexto["receita_total_base"]
+    pares = _pares(sel, skus, contexto)
 
-    fab = (
-        sel.assign(fabricante=sel["fabricante"].replace("", "Não informado"))
-        .groupby("fabricante")
-        .agg(perdido_dia=("perdido_dia", "sum"), skus=("perdido_dia", "size"), receita=("receita_b", "sum"))
-        .sort_values("perdido_dia", ascending=False)
-    )
-    fabricantes = [
-        {
-            "nome": nome,
-            "perdido_dia": _num(r["perdido_dia"]),
-            "skus": int(r["skus"]),
-            "part_receita": _num(r["receita"] / total_b * 100, 2) if total_b > 0 else None,
-        }
-        for nome, r in fab.iterrows()
-    ]
+    fabricantes = []
+    if not pares.empty:
+        fab = (
+            pares.groupby("fabricante")
+            .agg(perdido_dia=("perdido_dia", "sum"), pares=("perdido_dia", "size"),
+                 skus=("skus", "sum"), receita=("receita_base", "sum"))
+            .sort_values("perdido_dia", ascending=False)
+        )
+        fabricantes = [
+            {
+                "nome": nome,
+                "perdido_dia": _num(r["perdido_dia"]),
+                "pares": int(r["pares"]),
+                "skus": int(r["skus"]),
+                "part_receita": _num(r["receita"] / total_b * 100, 2) if total_b > 0 else None,
+            }
+            for nome, r in fab.iterrows()
+        ]
 
     receita_em_jogo = float(sel["receita_b"].sum())
     return {
@@ -274,9 +379,10 @@ def montar_a_precificar(skus: pd.DataFrame, contexto: dict[str, Any]) -> dict[st
             "dias_recente": contexto["dias_recente"],
         },
         "resumo": {
+            "pares": int(len(pares)),
             "skus": int(len(sel)),
-            "curva_a": int((sel["curva"] == "A").sum()),
-            "fabricantes": int(len(fab)),
+            "curva_a": int((pares["curva"] == "A").sum()) if not pares.empty else 0,
+            "fabricantes": len(fabricantes),
             "receita_em_jogo": _num(receita_em_jogo),
             "part_receita": _num(receita_em_jogo / total_b * 100, 2) if total_b > 0 else None,
             "perdido_dia": _num(sel["perdido_dia"].sum()),
@@ -284,28 +390,45 @@ def montar_a_precificar(skus: pd.DataFrame, contexto: dict[str, Any]) -> dict[st
             "com_alvo": int(sel["alvo"].notna().sum()),
         },
         "fabricantes": fabricantes,
-        # A lista é longa (milhares na IBAD); a tela mostra as primeiras e a
-        # ordem já põe o que importa no topo.
-        "itens": [_linha(codigo, r) for codigo, r in sel.head(LIMITE_LINHAS).iterrows()],
-        "total_itens": int(len(sel)),
+        # A ordem já põe o que importa no topo; a busca da tela filtra estes.
+        "pares": [_linha_par(r) for _i, r in pares.head(LIMITE_LINHAS).iterrows()],
+        "total_pares": int(len(pares)),
     }
 
 
-def serie_semanal(mov: pd.DataFrame, codigo: str) -> list[dict[str, Any]]:
-    """Preço e custo unitários por semana (segunda a domingo) do SKU."""
-    df = mov.loc[mov["codigo"] == codigo]
+def detalhe_par(mov: pd.DataFrame, skus: pd.DataFrame, descricao: str, fabricante: str) -> dict[str, Any]:
+    """Painel do item: margem por semana do par (todos os SKUs) e os SKUs sinalizados."""
+    d_all, f_all = _chaves_par(skus)
+    do_par = skus.loc[(d_all == descricao) & (f_all == fabricante)]
+    sel = _selecionados(do_par)
+    return {
+        "descricao": descricao,
+        "fabricante": fabricante,
+        "semanas": serie_semanal(mov, set(do_par.index)),
+        "skus": [_linha(codigo, r) for codigo, r in sel.head(LIMITE_SKUS_PAR).iterrows()],
+        "total_skus": int(len(sel)),
+    }
+
+
+def serie_semanal(mov: pd.DataFrame, codigos: set[str]) -> list[dict[str, Any]]:
+    """Margem, receita e quantidade por semana (segunda a domingo) de um conjunto de SKUs.
+
+    Margem, e não preço × custo: num par há SKUs de preços muito diferentes, e o
+    preço médio mexeria só com a troca do mix.
+    """
+    df = mov.loc[mov["codigo"].isin(codigos)]
     if df.empty:
         return []
     inicio = df["dia"].max() - pd.Timedelta(weeks=SEMANAS_ITEM)
     df = df.loc[df["dia"] > inicio]
     semana = df["dia"] - pd.to_timedelta(df["dia"].dt.weekday, unit="D")
     tot = df.groupby(semana)[["receita", "cmv", "qtd"]].sum()
-    tot = tot.loc[tot["qtd"] > 0]
+    tot = tot.loc[tot["receita"] > 0]
     return [
         {
             "semana": dia.date().isoformat(),
-            "preco": _num(r["receita"] / r["qtd"]),
-            "custo": _num(r["cmv"] / r["qtd"]),
+            "margem": _num((r["receita"] - r["cmv"]) / r["receita"] * 100),
+            "receita": _num(r["receita"]),
             "qtd": _num(r["qtd"], 3),
         }
         for dia, r in tot.iterrows()

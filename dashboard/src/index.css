@@ -10461,3 +10461,26 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 }
 
 .aprec-dl dd.is-alta { color: var(--success); }
+
+/* Descrição × fabricante é o que se lê primeiro; o SKU fica na linha de baixo. */
+.aprec-tabela .prec-nome { font-size: 0.8rem; }
+.aprec-tabela .prec-nome small { font-size: 0.66rem; }
+
+.aprec-fabricante {
+  color: var(--text-primary);
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.aprec-painel-fabricante {
+  margin: 0;
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.aprec-prova-lista small { color: var(--text-muted); }
+
+.aprec-skus li { grid-template-columns: auto 1fr auto; }
+.aprec-skus span { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.aprec-skus .is-queda { color: var(--danger); }

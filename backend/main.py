@@ -3350,12 +3350,14 @@ def obter_a_precificar(empresa: str, usuario: str = Depends(exigir_login)):
     return resultado
 
 
-@app.get("/api/precificacao/{empresa}/a-precificar/item")
-def obter_item_a_precificar(empresa: str, codigo: str, usuario: str = Depends(exigir_login)):
-    """Preço × custo por semana de um SKU, para o painel do item."""
+@app.get("/api/precificacao/{empresa}/a-precificar/par")
+def obter_par_a_precificar(
+    empresa: str, descricao: str, fabricante: str, usuario: str = Depends(exigir_login),
+):
+    """Painel do item: margem por semana da descrição × fabricante e os SKUs sinalizados."""
     empresa = _validar_nome_empresa(empresa)
-    mov, _skus, _contexto = _base_a_precificar(empresa)
-    return {"codigo": codigo, "semanas": a_precificar.serie_semanal(mov, codigo.strip())}
+    mov, skus, _contexto = _base_a_precificar(empresa)
+    return a_precificar.detalhe_par(mov, skus, descricao, fabricante)
 
 
 _CACHE_MARGEM_PRICE_MAX = 16

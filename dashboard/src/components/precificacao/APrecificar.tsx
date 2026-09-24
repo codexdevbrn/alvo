@@ -1,13 +1,23 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Loader2, Search, Tags } from 'lucide-react';
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import {
+  CartesianGrid,
+  Line,
+  LineChart,
+  ReferenceLine,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import {
   obterAPrecificar,
-  obterItemAPrecificar,
+  obterParAPrecificar,
   type APrecificarResposta,
-  type ItemAPrecificar,
+  type DetalheParAPrecificar,
+  type ParAPrecificar,
   type ProvaPrecificar,
-  type SemanaPrecoCusto,
+  type SemanaMargem,
 } from '../../api/client';
 import { formatCurrency, formatPercent } from '../../utils/formatters';
 
@@ -53,13 +63,18 @@ function normalizar(texto: string): string {
   return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }
 
+function chavePar(par: { descricao: string; fabricante: string }): string {
+  return `${par.descricao}\u0000${par.fabricante}`;
+}
+
 /** O backend responde 404 com esta frase quando a empresa não tem o parquet do PRICE. */
 function ehSemMovimentoPrice(erro: string | null): boolean {
   return !!erro && erro.toLowerCase().includes('ainda não tem movimento do price');
 }
 
-/** Tela Precificação: quais SKUs precisam de preço novo, a prova de cada um e
- *  quanto pesam na receita. Regras e janelas em `backend/a_precificar.py`. */
+/** Aba "A precificar": quais produtos (descrição × fabricante, o grão em que o
+ *  PRICE precifica) precisam de preço novo, a prova de cada um e quanto pesam na
+ *  receita. SKU é detalhe, no painel. Regras em `backend/a_precificar.py`. */
 export function APrecificar({ empresa }: Props) {
   const [dados, setDados] = useState<APrecificarResposta | null>(null);
   const [resultado, setResultado] = useState<{ chave: string; erro: string | null } | null>(null);
@@ -81,23 +96,23 @@ export function APrecificar({ empresa }: Props) {
       })
       .catch((e: unknown) => {
         if (controle.signal.aborted) return;
-        setResultado({ chave, erro: e instanceof Error ? e.message : 'Falha ao carregar os itens a precificar.' });
+        setResultado({ chave, erro: e instanceof Error ? e.message : 'Falha ao carregar os produtos a precificar.' });
       });
     return () => controle.abort();
   }, [chave, empresa]);
 
-  const itens = useMemo(() => {
+  const pares = useMemo(() => {
     if (!dados) return [];
     const termo = normalizar(busca.trim());
-    return dados.itens.filter((item) => {
-      if (fabricante && item.fabricante !== fabricante) return false;
+    return dados.pares.filter((par) => {
+      if (fabricante && par.fabricante !== fabricante) return false;
       if (!termo) return true;
-      return normalizar(`${item.codigo} ${item.descricao} ${item.fabricante}`).includes(termo);
+      return normalizar(`${par.descricao} ${par.fabricante}`).includes(termo);
     });
   }, [dados, fabricante, busca]);
 
   // Sem clique, o painel mostra o primeiro da lista — o que mais pesa no filtro.
-  const itemAtivo = itens.find((item) => item.codigo === selecionado) ?? itens[0] ?? null;
+  const parAtivo = pares.find((par) => chavePar(par) === selecionado) ?? pares[0] ?? null;
 
   if (erro && ehSemMovimentoPrice(erro)) {
     return (
@@ -116,7 +131,7 @@ export function APrecificar({ empresa }: Props) {
       <div className="glass-card glass-card-flat estoque-vazio">
         <AlertTriangle size={24} aria-hidden="true" />
         <div>
-          <strong>Não foi possível carregar os itens a precificar</strong>
+          <strong>Não foi possível carregar os produtos a precificar</strong>
           <p>{erro}</p>
         </div>
       </div>
@@ -129,7 +144,7 @@ export function APrecificar({ empresa }: Props) {
         <Loader2 size={24} className="dashboard-filter-spinner" aria-hidden="true" />
         <div>
           <strong>Procurando o que precificar…</strong>
-          <p>Comparando os últimos 30 dias com os 90 anteriores, SKU a SKU.</p>
+          <p>Comparando os últimos 30 dias com os 90 anteriores, produto a produto.</p>
         </div>
       </div>
     );
@@ -148,9 +163,9 @@ export function APrecificar({ empresa }: Props) {
     <div className="prec-hist" aria-busy={carregando}>
       <div className="prec-indicadores">
         <Indicador
-          rotulo="SKUs a precificar"
-          valor={resumo.skus.toLocaleString('pt-BR')}
-          detalhe={`${resumo.curva_a.toLocaleString('pt-BR')} curva A · ${resumo.fabricantes.toLocaleString('pt-BR')} fabricantes`}
+          rotulo="Produtos a precificar"
+          valor={resumo.pares.toLocaleString('pt-BR')}
+          detalhe={`${resumo.curva_a.toLocaleString('pt-BR')} curva A · ${resumo.fabricantes.toLocaleString('pt-BR')} fabricantes · ${resumo.skus.toLocaleString('pt-BR')} SKUs`}
           acento="var(--accent)"
         />
         <Indicador
@@ -179,7 +194,7 @@ export function APrecificar({ empresa }: Props) {
             <div>
               <h2>Onde está o dinheiro: fabricantes</h2>
               <p className="prec-mudo">
-                Lucro por dia que os SKUs sinalizados deixam na mesa e quanto pesam na receita. Clique para filtrar.
+                Lucro por dia que os produtos sinalizados deixam na mesa e quanto pesam na receita. Clique para filtrar.
               </p>
             </div>
             {fabricante && (
@@ -208,7 +223,7 @@ export function APrecificar({ empresa }: Props) {
                   <i style={{ width: `${maxPerdido > 0 ? ((f.perdido_dia ?? 0) / maxPerdido) * 100 : 0}%` }} />
                 </span>
                 <small>
-                  {f.skus} SKU{f.skus === 1 ? '' : 's'} · {pct(f.part_receita, 2)} da receita
+                  {f.pares} produto{f.pares === 1 ? '' : 's'} · {pct(f.part_receita, 2)} da receita
                 </small>
               </button>
             ))}
@@ -223,7 +238,7 @@ export function APrecificar({ empresa }: Props) {
               <h2>{fabricante ? `A precificar · ${fabricante}` : 'A precificar'}</h2>
               <p className="prec-mudo">
                 {janela
-                  ? `Margem, custo e volume de ${dataBr(janela.inicio_base)} a ${dataBr(janela.fim)}: os últimos 30 dias contra os 90 anteriores.`
+                  ? `Por descrição e fabricante, de ${dataBr(janela.inicio_base)} a ${dataBr(janela.fim)}: os últimos 30 dias contra os 90 anteriores.`
                   : 'Sem movimento no período.'}
               </p>
             </div>
@@ -233,21 +248,25 @@ export function APrecificar({ empresa }: Props) {
                 type="search"
                 value={busca}
                 onChange={(e) => setBusca(e.target.value)}
-                placeholder="Código, descrição ou fabricante"
-                aria-label="Buscar SKU"
+                placeholder="Descrição ou fabricante"
+                aria-label="Buscar produto"
               />
             </label>
           </div>
-          <TabelaAPrecificar itens={itens} selecionado={itemAtivo?.codigo ?? null} onClicar={setSelecionado} />
+          <TabelaPares
+            pares={pares}
+            selecionado={parAtivo ? chavePar(parAtivo) : null}
+            onClicar={(par) => setSelecionado(chavePar(par))}
+          />
           <p className="prec-mudo prec-rodape">
-            Ordem = lucro por dia perdido até a referência × peso da curva (A 1 · B 0,6 · C 0,3) × quantidade de provas.
-            Referência = alvo da última precificação do SKU; sem precificação, a margem dos 90 dias.
-            {dados.total_itens > dados.itens.length &&
-              ` Mostrando os ${dados.itens.length.toLocaleString('pt-BR')} primeiros de ${dados.total_itens.toLocaleString('pt-BR')}.`}
+            Ordem = lucro por dia perdido até a referência × peso da curva (A 1 · B 0,6 · C 0,3) × quantidade de provas,
+            somados nos SKUs do produto. Referência = alvo da última precificação; sem precificação, a margem dos 90 dias.
+            {dados.total_pares > dados.pares.length &&
+              ` Mostrando os ${dados.pares.length.toLocaleString('pt-BR')} primeiros de ${dados.total_pares.toLocaleString('pt-BR')}.`}
           </p>
         </section>
 
-        <PainelItem empresa={empresa} item={itemAtivo} />
+        <PainelPar empresa={empresa} par={parAtivo} />
       </div>
     </div>
   );
@@ -263,70 +282,70 @@ function Indicador({ rotulo, valor, detalhe, acento }: { rotulo: string; valor: 
   );
 }
 
-function BolasProvas({ provas }: { provas: ProvaPrecificar[] }) {
-  const rotulo = PROVAS.filter((p) => provas.includes(p.id)).map((p) => p.rotulo).join(', ');
+function BolasProvas({ provas }: { provas: Partial<Record<ProvaPrecificar, number>> }) {
+  const rotulo = PROVAS.filter((p) => provas[p.id]).map((p) => `${p.rotulo} (${provas[p.id]})`).join(', ');
   return (
     <span className="aprec-provas" title={rotulo} aria-label={rotulo}>
       {PROVAS.map((p) => (
-        <i key={p.id} className={provas.includes(p.id) ? `is-${p.id}` : undefined} />
+        <i key={p.id} className={provas[p.id] ? `is-${p.id}` : undefined} />
       ))}
     </span>
   );
 }
 
-function TabelaAPrecificar({
-  itens,
+function TabelaPares({
+  pares,
   selecionado,
   onClicar,
 }: {
-  itens: ItemAPrecificar[];
+  pares: ParAPrecificar[];
   selecionado: string | null;
-  onClicar: (codigo: string) => void;
+  onClicar: (par: ParAPrecificar) => void;
 }) {
-  if (itens.length === 0) return <p className="prec-vazio">Nenhum SKU a precificar neste filtro.</p>;
+  if (pares.length === 0) return <p className="prec-vazio">Nenhum produto a precificar neste filtro.</p>;
   return (
     <div className="prec-tabela-rolagem">
-      <table className="prec-tabela">
+      <table className="prec-tabela aprec-tabela">
         <thead>
           <tr>
-            <th className="r">#</th>
-            <th>SKU</th>
+            <th>Descrição</th>
+            <th>Fabricante</th>
             <th>Curva</th>
             <th>Provas</th>
             <th className="r">Part. receita</th>
             <th className="r">Margem 90d → 30d</th>
             <th className="r">Gap</th>
-            <th className="r">Custo × preço</th>
             <th className="r">Qtd / dia</th>
             <th className="r">Perdido / dia</th>
           </tr>
         </thead>
         <tbody>
-          {itens.map((item, indice) => (
+          {pares.map((par) => (
             <tr
-              key={item.codigo}
-              className={selecionado === item.codigo ? 'is-selecionada' : undefined}
-              onClick={() => onClicar(item.codigo)}
+              key={chavePar(par)}
+              className={selecionado === chavePar(par) ? 'is-selecionada' : undefined}
+              onClick={() => onClicar(par)}
             >
-              <td className="r prec-mudo">{indice + 1}</td>
               <td>
                 <span className="prec-nome">
-                  {item.codigo}
-                  <small>{item.descricao} · {item.fabricante}</small>
+                  {par.descricao}
+                  <small>
+                    {par.skus === par.skus_total ? `${par.skus} SKU${par.skus === 1 ? '' : 's'}` : `${par.skus} de ${par.skus_total} SKUs`}
+                  </small>
                 </span>
               </td>
-              <td><span className={`aprec-curva is-${item.curva}`}>{item.curva}</span></td>
-              <td><BolasProvas provas={item.provas} /></td>
-              <td className="r">{pct(item.part_receita, 2)}</td>
+              <td className="aprec-fabricante">{par.fabricante}</td>
+              <td><span className={`aprec-curva is-${par.curva}`}>{par.curva}</span></td>
+              <td><BolasProvas provas={par.provas} /></td>
+              <td className="r">{pct(par.part_receita, 2)}</td>
               <td className="r">
-                {pct(item.margem_base)}<span className="prec-seta">→</span>{pct(item.margem_recente)}
+                {pct(par.margem_base)}<span className="prec-seta">→</span>{pct(par.margem_recente)}
               </td>
-              <td className={`r${(item.gap ?? 0) < 0 ? ' is-queda' : ''}`}>{sinal(item.gap, 'pp')}</td>
-              <td className="r">{sinal(item.var_custo)} × {sinal(item.var_preco)}</td>
-              <td className={`r${(item.var_qtd ?? 0) < 0 ? ' is-queda' : ' is-alta'}`}>
-                {item.var_qtd == null ? '—' : `${item.var_qtd < 0 ? '▼' : '▲'} ${pct(Math.abs(item.var_qtd))}`}
+              <td className={`r${(par.gap ?? 0) < 0 ? ' is-queda' : ''}`}>{sinal(par.gap, 'pp')}</td>
+              <td className={`r${(par.var_qtd ?? 0) < 0 ? ' is-queda' : ' is-alta'}`}>
+                {par.var_qtd == null ? '—' : `${par.var_qtd < 0 ? '▼' : '▲'} ${pct(Math.abs(par.var_qtd))}`}
               </td>
-              <td className="r is-queda">− {moeda(item.perdido_dia)}</td>
+              <td className="r is-queda">− {moeda(par.perdido_dia)}</td>
             </tr>
           ))}
         </tbody>
@@ -335,72 +354,74 @@ function TabelaAPrecificar({
   );
 }
 
-function textoProva(prova: ProvaPrecificar, item: ItemAPrecificar): string {
+function textoProva(prova: ProvaPrecificar, par: ParAPrecificar): string {
   switch (prova) {
     case 'margem':
-      return `margem ${pct(item.margem_base)} → ${pct(item.margem_recente)} nos últimos 30 dias`;
+      return `margem ${pct(par.margem_base)} → ${pct(par.margem_recente)} nos últimos 30 dias`;
     case 'custo':
-      return `custo ${sinal(item.var_custo)}, preço ${sinal(item.var_preco)}`;
+      return `custo ${sinal(par.var_custo)}, preço ${sinal(par.var_preco)}`;
     case 'volume':
-      return `qtd/dia ${sinal(item.var_qtd)} contra os 90 dias anteriores`;
+      return `qtd/dia ${sinal(par.var_qtd)} contra os 90 dias anteriores`;
     case 'alvo':
-      return `margem ${pct(item.margem_recente)} contra alvo de ${pct(item.alvo)} (${dataBr(item.dia_alvo)})`;
+      return `margem ${pct(par.margem_recente)} contra alvo de ${pct(par.alvo)} (${dataBr(par.dia_alvo)})`;
   }
 }
 
-function PainelItem({ empresa, item }: { empresa: string; item: ItemAPrecificar | null }) {
-  const chave = item ? `${empresa}|${item.codigo}` : null;
-  const [resultado, setResultado] = useState<{ chave: string; semanas: SemanaPrecoCusto[]; erro: string | null } | null>(null);
+function PainelPar({ empresa, par }: { empresa: string; par: ParAPrecificar | null }) {
+  const chave = par ? `${empresa}|${chavePar(par)}` : null;
+  const [resultado, setResultado] = useState<{ chave: string; detalhe: DetalheParAPrecificar | null; erro: string | null } | null>(null);
   const atual = resultado && resultado.chave === chave ? resultado : null;
-  const codigo = item?.codigo ?? null;
+  const descricao = par?.descricao ?? null;
+  const fabricante = par?.fabricante ?? null;
 
   useEffect(() => {
-    if (chave == null || codigo == null) return;
+    if (chave == null || descricao == null || fabricante == null) return;
     const controle = new AbortController();
-    obterItemAPrecificar(empresa, codigo, controle.signal)
-      .then((resposta) => setResultado({ chave, semanas: resposta.semanas, erro: null }))
+    obterParAPrecificar(empresa, { descricao, fabricante }, controle.signal)
+      .then((detalhe) => setResultado({ chave, detalhe, erro: null }))
       .catch((e: unknown) => {
         if (controle.signal.aborted) return;
-        setResultado({ chave, semanas: [], erro: e instanceof Error ? e.message : 'Falha ao carregar a série.' });
+        setResultado({ chave, detalhe: null, erro: e instanceof Error ? e.message : 'Falha ao carregar o produto.' });
       });
     return () => controle.abort();
-  }, [chave, empresa, codigo]);
+  }, [chave, empresa, descricao, fabricante]);
 
-  if (!item) {
+  if (!par) {
     return (
       <aside className="glass-card glass-card-flat prec-painel">
-        <p className="prec-painel-vazio">Nenhum SKU a precificar neste filtro.</p>
+        <p className="prec-painel-vazio">Nenhum produto a precificar neste filtro.</p>
       </aside>
     );
   }
 
-  const ganho = item.perdido_dia;
+  const detalhe = atual?.detalhe ?? null;
   return (
-    <aside className="glass-card glass-card-flat prec-painel" aria-label={`Detalhe de ${item.codigo}`}>
+    <aside className="glass-card glass-card-flat prec-painel" aria-label={`Detalhe de ${par.descricao} · ${par.fabricante}`}>
       <div>
-        <span className="prec-rotulo">{item.fabricante} · curva {item.curva}</span>
-        <h3>{item.codigo}</h3>
-        <p className="prec-mudo">{item.descricao}</p>
+        <span className="prec-rotulo">Curva {par.curva}</span>
+        <h3>{par.descricao}</h3>
+        <p className="aprec-painel-fabricante">{par.fabricante}</p>
       </div>
 
       <div>
-        <span className="prec-rotulo">Preço × custo por semana</span>
+        <span className="prec-rotulo">Margem por semana</span>
         {atual == null ? (
           <p className="prec-vazio"><Loader2 size={14} className="dashboard-filter-spinner" aria-hidden="true" /> Carregando…</p>
         ) : atual.erro ? (
           <p className="prec-vazio">{atual.erro}</p>
         ) : (
-          <GraficoPrecoCusto semanas={atual.semanas} />
+          <GraficoMargem semanas={detalhe?.semanas ?? []} referencia={par.referencia} />
         )}
       </div>
 
       <div>
         <span className="prec-rotulo">Provas</span>
         <ul className="aprec-prova-lista">
-          {PROVAS.filter((p) => item.provas.includes(p.id)).map((p) => (
+          {PROVAS.filter((p) => par.provas[p.id]).map((p) => (
             <li key={p.id}>
               <span className={`aprec-tag is-${p.id}`}>{p.rotulo}</span>
-              {textoProva(p.id, item)}
+              {textoProva(p.id, par)}
+              <small> · {par.provas[p.id]} de {par.skus} SKU{par.skus === 1 ? '' : 's'}</small>
             </li>
           ))}
         </ul>
@@ -409,29 +430,44 @@ function PainelItem({ empresa, item }: { empresa: string; item: ItemAPrecificar 
       <div>
         <span className="prec-rotulo">Peso na receita</span>
         <dl className="aprec-dl">
-          <div><dt>Receita 90 dias</dt><dd>{moeda(item.receita_base)}</dd></div>
-          <div><dt>Da empresa</dt><dd>{pct(item.part_receita, 2)}</dd></div>
-          <div><dt>Do fabricante {item.fabricante}</dt><dd>{pct(item.part_fabricante)}</dd></div>
+          <div><dt>Receita 90 dias</dt><dd>{moeda(par.receita_base)}</dd></div>
+          <div><dt>Da empresa</dt><dd>{pct(par.part_receita, 2)}</dd></div>
+          <div><dt>Do fabricante {par.fabricante}</dt><dd>{pct(par.part_fabricante)}</dd></div>
         </dl>
       </div>
 
       <div>
         <span className="prec-rotulo">
-          {item.alvo != null ? `Se precificar no alvo (${pct(item.referencia)})` : `Se voltar à margem de antes (${pct(item.referencia)})`}
+          {par.alvo != null ? `Se precificar no alvo (${pct(par.referencia)})` : `Se voltar à margem de antes (${pct(par.referencia)})`}
         </span>
         <dl className="aprec-dl">
-          <div><dt>Preço atual</dt><dd>{moeda(item.preco_atual)}</dd></div>
-          <div><dt>Preço sugerido</dt><dd><strong>{moeda(item.preco_sugerido)}</strong></dd></div>
-          <div><dt>Reajuste</dt><dd>{sinal(item.reajuste)}</dd></div>
-          <div><dt>Lucro/dia a mais</dt><dd className="is-alta">▲ {moeda(ganho)}</dd></div>
+          <div><dt>Reajuste médio</dt><dd>{sinal(par.reajuste)}</dd></div>
+          <div><dt>Lucro/dia a mais</dt><dd className="is-alta">▲ {moeda(par.perdido_dia)}</dd></div>
         </dl>
         <p className="prec-mudo">Mesma quantidade dos últimos 30 dias; o reajuste pode mexer no volume.</p>
       </div>
+
+      {detalhe && detalhe.skus.length > 0 && (
+        <div>
+          <span className="prec-rotulo">
+            SKUs sinalizados{detalhe.total_skus > detalhe.skus.length ? ` (${detalhe.skus.length} de ${detalhe.total_skus})` : ''}
+          </span>
+          <ul className="prec-skus aprec-skus">
+            {detalhe.skus.map((sku) => (
+              <li key={sku.codigo} title={`${sku.descricao} · preço ${moeda(sku.preco_atual)} → ${moeda(sku.preco_sugerido)}`}>
+                <code>{sku.codigo}</code>
+                <span>{sinal(sku.reajuste)}</span>
+                <b className="is-queda">− {moeda(sku.perdido_dia)}</b>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </aside>
   );
 }
 
-function GraficoPrecoCusto({ semanas }: { semanas: SemanaPrecoCusto[] }) {
+function GraficoMargem({ semanas, referencia }: { semanas: SemanaMargem[]; referencia: number | null }) {
   if (semanas.length === 0) return <p className="prec-vazio">Sem vendas nas últimas semanas.</p>;
   const pontos = semanas.map((s) => ({ ...s, rotulo: dataCurta(s.semana) }));
   return (
@@ -448,29 +484,31 @@ function GraficoPrecoCusto({ semanas }: { semanas: SemanaPrecoCusto[] }) {
             minTickGap={16}
           />
           <YAxis hide domain={['auto', 'auto']} />
+          {referencia != null && (
+            <ReferenceLine y={referencia} stroke="var(--text-muted)" strokeDasharray="4 4" />
+          )}
           <Tooltip
             content={({ active, payload, label }) => {
               if (!active || !payload?.length) return null;
-              const ponto = payload[0].payload as SemanaPrecoCusto;
+              const ponto = payload[0].payload as SemanaMargem;
               return (
                 <div className="vendedores-chart-tooltip">
                   <strong>Semana de {label}</strong>
                   <dl>
-                    <div><dt>Preço</dt><dd>{moeda(ponto.preco)}</dd></div>
-                    <div><dt>Custo</dt><dd>{moeda(ponto.custo)}</dd></div>
+                    <div><dt>Margem</dt><dd>{pct(ponto.margem)}</dd></div>
+                    <div><dt>Receita</dt><dd>{moeda(ponto.receita)}</dd></div>
                     <div><dt>Qtd</dt><dd>{ponto.qtd?.toLocaleString('pt-BR') ?? '—'}</dd></div>
                   </dl>
                 </div>
               );
             }}
           />
-          <Line type="monotone" dataKey="preco" stroke="var(--accent)" strokeWidth={2} dot={false} isAnimationActive={false} />
-          <Line type="monotone" dataKey="custo" stroke="var(--danger)" strokeWidth={2} dot={false} isAnimationActive={false} />
+          <Line type="monotone" dataKey="margem" stroke="var(--accent)" strokeWidth={2} dot={false} isAnimationActive={false} />
         </LineChart>
       </ResponsiveContainer>
       <div className="prec-legenda">
-        <span><i style={{ background: 'var(--accent)' }} />preço</span>
-        <span><i style={{ background: 'var(--danger)' }} />custo</span>
+        <span><i style={{ background: 'var(--accent)' }} />margem</span>
+        {referencia != null && <span><i style={{ background: 'var(--text-muted)' }} />referência {pct(referencia)}</span>}
       </div>
     </>
   );

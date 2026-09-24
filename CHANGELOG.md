@@ -8,8 +8,9 @@ funcionalidades vive em `DOC_TEC.md`, não aqui.
 
 ### Adicionado
 
-- **Precificação ganha a aba "A precificar"**: os SKUs que precisam de preço novo, com a prova de
-  cada um. Compara os últimos 30 dias com os 90 anteriores no movimento do
+- **Precificação ganha a aba "A precificar"**: os produtos (descrição ×
+  fabricante, como o PRICE precifica) que precisam de preço novo, com a prova
+  de cada um; os SKUs ficam no painel do item. Compara os últimos 30 dias com os 90 anteriores no movimento do
   PRICE (todas as lojas): margem que caiu, custo subindo sem repasse no preço,
   volume em queda e margem abaixo do alvo da última precificação. Mostra quanto
   lucro por dia fica na mesa até a referência, os fabricantes onde ele se
