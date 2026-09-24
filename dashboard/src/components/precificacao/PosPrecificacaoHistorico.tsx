@@ -462,18 +462,24 @@ function LinhaDoTempo({
     const span = Math.max(fim - inicio, 1);
     const posicao = (ms: number) => ((ms - inicio) / span) * 100;
 
-    // Empilha etiquetas próximas em andares; volta ao térreo quando há folga.
-    let ultimaPorAndar: number[] = [];
+    // Etiqueta por importância, não por ordem de data: a escolhida, depois as do
+    // período, depois as maiores. Cada uma pega o primeiro andar com folga dos
+    // dois lados; sem folga em nenhum, fica só o ponto (detalhe no title). Antes
+    // o quarto vizinho voltava ao térreo por cima do primeiro — com as ~20
+    // rodadas da Lupi as etiquetas viravam "30 04 nov".
+    const porAndar: number[][] = Array.from({ length: ANDARES }, () => []);
+    const andarDe = new Map<string, number | null>();
+    const prioridade = (r: RodadaLinhaTempo) =>
+      (escolhidas.includes(r.dia) ? 2e9 : 0) + (r.no_periodo ? 1e9 : 0) + r.skus;
+    for (const rodada of [...rodadas].sort((a, b) => prioridade(b) - prioridade(a))) {
+      const x = posicao(paraMs(rodada.dia));
+      const andar = porAndar.findIndex((ocupados) => ocupados.every((o) => Math.abs(x - o) >= DISTANCIA_MINIMA_PCT));
+      if (andar >= 0) porAndar[andar].push(x);
+      andarDe.set(rodada.dia, andar >= 0 ? andar : null);
+    }
     const marcos = [...rodadas]
       .sort((a, b) => a.dia.localeCompare(b.dia))
-      .map((rodada) => {
-        const x = posicao(paraMs(rodada.dia));
-        let andar = ultimaPorAndar.findIndex((ultima) => x - ultima >= DISTANCIA_MINIMA_PCT);
-        if (andar < 0) andar = ultimaPorAndar.length < ANDARES ? ultimaPorAndar.length : 0;
-        if (andar === 0) ultimaPorAndar = [];
-        ultimaPorAndar[andar] = x;
-        return { rodada, x, andar };
-      });
+      .map((rodada) => ({ rodada, x: posicao(paraMs(rodada.dia)), andar: andarDe.get(rodada.dia) ?? null }));
 
     const meses: { x: number; rotulo: string }[] = [];
     const data = new Date(inicio);
@@ -494,9 +500,9 @@ function LinhaDoTempo({
     }
 
     const semDado = inicioMovimento ? Math.max(0, posicao(paraMs(inicioMovimento))) : 0;
-    const andares = Math.max(...marcos.map((m) => m.andar)) + 1;
+    const andares = Math.max(0, ...marcos.map((m) => m.andar ?? 0)) + 1;
     return { marcos, meses, semDado, andares };
-  }, [rodadas, inicioMovimento, fimMovimento]);
+  }, [rodadas, escolhidas, inicioMovimento, fimMovimento]);
 
   if (!layout) return <p className="prec-vazio">Nenhuma rodada de precificação registrada.</p>;
 
@@ -523,7 +529,9 @@ function LinhaDoTempo({
           escolhida ? 'is-escolhida' : '',
           apagada ? 'is-apagada' : '',
           x < 6 ? 'is-borda-esq' : x > 94 ? 'is-borda-dir' : '',
+          andar == null ? 'is-so-ponto' : '',
         ].filter(Boolean).join(' ');
+        const resumo = `${dataCurta(rodada.dia)} · ${rodada.skus.toLocaleString('pt-BR')} SKUs · ${rodada.pares.toLocaleString('pt-BR')} fam.`;
         const ponto = ['prec-lt-ponto', !rodada.mensuravel ? 'is-sem-medida' : '', apagada ? 'is-apagada' : '']
           .filter(Boolean).join(' ');
         return (
@@ -531,17 +539,22 @@ function LinhaDoTempo({
             key={rodada.dia}
             type="button"
             className={classes}
-            style={{ left: `${x}%`, ['--prec-haste' as string]: `${HASTE_BASE_PX + andar * HASTE_ANDAR_PX}px` }}
+            style={{ left: `${x}%`, ['--prec-haste' as string]: `${HASTE_BASE_PX + (andar ?? 0) * HASTE_ANDAR_PX}px` }}
             disabled={!rodada.no_periodo}
             aria-pressed={escolhida}
-            title={rodada.no_periodo ? undefined : 'Fora do período selecionado'}
+            aria-label={resumo}
+            title={rodada.no_periodo ? (andar == null ? resumo : undefined) : `${resumo} · fora do período selecionado`}
             onClick={() => onAlternar(rodada.dia)}
           >
-            <span className="prec-lt-etiqueta">
-              <b>{dataCurta(rodada.dia)}</b>
-              <small>{rodada.skus.toLocaleString('pt-BR')} SKUs · {rodada.pares.toLocaleString('pt-BR')} fam.</small>
-            </span>
-            <span className="prec-lt-haste" />
+            {andar != null && (
+              <>
+                <span className="prec-lt-etiqueta">
+                  <b>{dataCurta(rodada.dia)}</b>
+                  <small>{rodada.skus.toLocaleString('pt-BR')} SKUs · {rodada.pares.toLocaleString('pt-BR')} fam.</small>
+                </span>
+                <span className="prec-lt-haste" />
+              </>
+            )}
             <span className={ponto} />
           </button>
         );

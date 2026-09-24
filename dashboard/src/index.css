@@ -10484,3 +10484,15 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 .aprec-skus li { grid-template-columns: auto 1fr auto; }
 .aprec-skus span { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .aprec-skus .is-queda { color: var(--danger); }
+
+/* Rodada sem espaço para etiqueta: só o ponto, que cresce no hover (o detalhe
+   vem no title). */
+.prec-lt-marco.is-so-ponto .prec-lt-ponto { transition: transform 0.15s; }
+.prec-lt-marco.is-so-ponto:not(:disabled):hover .prec-lt-ponto { transform: scale(1.5); }
+.prec-lt-marco.is-so-ponto.is-escolhida .prec-lt-ponto { box-shadow: 0 0 0 3px var(--accent-soft); }
+
+/* A precificar: descrição e fabricante longos não empurram as colunas de número
+   para fora do card. */
+.aprec-tabela .prec-nome { max-width: 13rem; overflow: hidden; text-overflow: ellipsis; }
+.aprec-fabricante { max-width: 9rem; overflow: hidden; text-overflow: ellipsis; }
+.aprec-tabela th, .aprec-tabela td { padding-left: 0.4rem; padding-right: 0.4rem; }
