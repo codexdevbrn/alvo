@@ -289,7 +289,7 @@ Precificação (Postgres do PRICE) e margem por transação (`DB/PRICE/margem_pr
 
 - O nome da pasta no DW é o da fonte e o `ID_LOJA` é o do movimento — casa sem tradução.
 - Loja que o DW traz sem CNPJ (a Cativo exporta só os nomes das lojas) é completada por `{trabalho}/base_empresas_complemento.json` (empresa → {loja: CNPJ}), aplicado a cada execução. O complemento só preenche vazio e acrescenta loja que o DW não lista; CNPJ que o DW já traz não é sobrescrito.
-- O lote de precificação usa a base primeiro; `precificacao_cnpj.json` virou **reserva** de nível empresa.
+- O lote de precificação e a margem por transação (`margem_price.resolver_cnpjs`) usam a base primeiro; `precificacao_cnpj.json` virou **reserva** de nível empresa. O mapa manual trazia só a matriz de várias empresas: com a base, a margem de 15 empresas passou a somar todas as lojas e 8 ganharam margem (36 no total, set/2026).
 - A inferência por código de produto (`sugerir_cnpj_precificacao.py`) conferiu com a base nas 28 empresas em que as duas existiam; ficou como ferramenta de conferência.
 
 ### Harmonização de nomes de cliente (`clientes_harm.json`)

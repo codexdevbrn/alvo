@@ -193,3 +193,28 @@ def test_margem_geral_pondera_todo_o_recorte():
 
 def test_margem_geral_vazio_devolve_none():
     assert mp.margem_geral(pd.DataFrame(columns=["receita", "cmv"])) is None
+
+
+def test_cnpjs_vem_da_base_oficial_antes_do_mapa_manual(tmp_path):
+    """O mapa manual tinha só a matriz de várias empresas; a base do DW tem
+    todas as lojas, e a margem precisa somar todas."""
+    import json
+
+    import pandas as pd
+
+    import base_empresas as be
+    import margem_price as mp
+
+    be.gravar_base(pd.DataFrame([
+        {"empresa": "Altese", "id_loja": "matriz", "cnpj": "31263577000110",
+         "nome": "", "cep": "", "tipo_tributacao": "", "data_att": ""},
+        {"empresa": "Altese", "id_loja": "filial", "cnpj": "31263577000209",
+         "nome": "", "cep": "", "tipo_tributacao": "", "data_att": ""},
+    ]), tmp_path)
+    (tmp_path / mp.NOME_MAPA_CNPJ).write_text(
+        json.dumps({"Altese": ["31263577000110"], "Cativo": ["05154197000137"]}), encoding="utf-8",
+    )
+    assert mp.resolver_cnpjs("Altese", tmp_path) == ["31263577000110", "31263577000209"]
+    # Empresa fora da base continua achando o CNPJ no mapa manual.
+    assert mp.resolver_cnpjs("Cativo", tmp_path) == ["05154197000137"]
+    assert mp.resolver_cnpjs("Nenhuma", tmp_path) == []

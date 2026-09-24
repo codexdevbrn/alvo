@@ -9,12 +9,13 @@ de TODAS as lojas da empresa primeiro, `margem = (receita-cmv)/receita` só
 depois. Nunca a média das margens por loja nem por código isolado — as duas
 divergem do valor real por não ponderar pelo volume de cada loja/código.
 
-Empresa -> CNPJs usa o mesmo mapa que `precificacao_do_postgres.py` já grava
-em `<trabalho>/precificacao_cnpj.json`: uma pasta pode ter várias lojas (matriz
-e filiais, às vezes com raiz de CNPJ diferente), e casar por nome erra — o
-comentário daquele lote já documenta (`LUPI` casa com dois CNPJs distintos).
-A fonte da verdade sobre "quem é quem" é uma só; duplicá-la aqui divergiria
-com o tempo.
+Empresa -> CNPJs vem da base oficial `<trabalho>/base_empresas.parquet`
+(`base_empresas`, montada do `_EMPRESA.dw_2d` do DW, loja a loja), com o
+`precificacao_cnpj.json` de reserva para empresa que o DW não cobre — a mesma
+ordem do lote de precificação. Uma pasta pode ter várias lojas (matriz e
+filiais, às vezes com raiz de CNPJ diferente): o mapa antigo trazia só a matriz
+de várias empresas, e a margem somava uma loja só. Com a base, 15 empresas
+passaram a somar todas as lojas e 8 ganharam margem (set/2026).
 
 Serve hoje a Pós-Precificação (`para_movimento_precificacao` renomeia as
 colunas pro formato que `precificacao.montar_pos_precificacao` já espera, sem
@@ -30,6 +31,8 @@ import json
 from pathlib import Path
 
 import pandas as pd
+
+import base_empresas
 
 NOME_MAPA_CNPJ = "precificacao_cnpj.json"
 
@@ -73,7 +76,12 @@ def carregar_mapa_cnpj(trabalho: Path) -> dict[str, list[str]]:
 
 
 def resolver_cnpjs(empresa: str, trabalho: Path) -> list[str]:
-    return carregar_mapa_cnpj(trabalho).get(empresa, [])
+    """CNPJs das lojas da empresa: base oficial do DW primeiro, mapa manual depois."""
+    try:
+        base = base_empresas.cnpjs_por_empresa(base_empresas.carregar_base(trabalho))
+    except Exception:  # noqa: BLE001 — base ilegível não pode derrubar a tela
+        base = {}
+    return base.get(empresa) or carregar_mapa_cnpj(trabalho).get(empresa, [])
 
 
 def _caminho_parquet(pasta_margem: Path, cnpj: str) -> Path:
@@ -109,7 +117,7 @@ def carregar_bruto(empresa: str, trabalho: Path, pasta_margem: Path) -> pd.DataF
     """
     cnpjs = resolver_cnpjs(empresa, trabalho)
     if not cnpjs:
-        raise ErroMargemPrice(f"Empresa '{empresa}' sem CNPJ mapeado em {NOME_MAPA_CNPJ}.")
+        raise ErroMargemPrice(f"Empresa '{empresa}' sem CNPJ na base de empresas nem em {NOME_MAPA_CNPJ}.")
     pasta = Path(pasta_margem)
     partes = []
     for cnpj in cnpjs:

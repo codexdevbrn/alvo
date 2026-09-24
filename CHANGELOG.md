@@ -4,6 +4,17 @@ Formato: uma seção por versão publicada, mais recente no topo. Histórico é
 incremental — entradas antigas nunca são apagadas. O estado atual das telas e
 funcionalidades vive em `DOC_TEC.md`, não aqui.
 
+## 1.7.18 — 2026-09-24
+
+### Corrigido
+
+- **Margem por transação somava só a matriz** em 15 empresas (Altese, Autosul,
+  DLemos, Lupi, Pecita, Vitorinos e outras): o mapa de CNPJ tinha uma loja só.
+  Agora ela usa a base oficial do DW, com todas as lojas, e 8 empresas passam a
+  ter margem (36 no total).
+- Pós-precificação: carregamento e seleção sem estado zerado dentro de efeito
+  (lint `set-state-in-effect`); comportamento igual.
+
 ## 1.7.17 — 2026-09-24
 
 ### Alterado

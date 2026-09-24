@@ -140,11 +140,11 @@ function variacaoMomCampo(serie: PontoSeriePrecificacao[], chave: 'margem' | 'lu
 
 export function PosPrecificacaoVisao({ empresa, loja, modoGrafico }: Props) {
   const [resposta, setResposta] = useState<{ escopo: string; dados: PosPrecificacaoResposta } | null>(null);
-  const [carregando, setCarregando] = useState(true);
-  const [erro, setErro] = useState<string | null>(null);
+  /** Último pedido respondido (com ou sem erro), carimbado com a chave dele. */
+  const [resultado, setResultado] = useState<{ chave: string; erro: string | null } | null>(null);
   const [aba, setAba] = useState<AbaLista>('produtos');
-  const [busca, setBusca] = useState('');
-  const [selecao, setSelecao] = useState<string | null>(null);
+  const [buscaEstado, setBuscaEstado] = useState<{ aba: AbaLista; valor: string }>({ aba: 'produtos', valor: '' });
+  const [selecaoEstado, setSelecaoEstado] = useState<{ chave: string; valor: string | null }>({ chave: '', valor: null });
   /** Rodada escolhida no topo (`TopoPosPrecificacaoRodadaSelect`), guardada
    *  por empresa: o primeiro pedido depois de trocar de empresa não pode levar
    *  uma data que só existe no dump da anterior, o que voltaria vazio. */
@@ -156,35 +156,39 @@ export function PosPrecificacaoVisao({ empresa, loja, modoGrafico }: Props) {
    *  propósito: trocar de rodada mantém a tela montada, porque o recálculo leva
    *  alguns segundos e o seletor não pode sumir de baixo do cursor. */
   const escopo = `${empresa}|${loja ?? ''}|${itensEscopo}`;
+  /** Identifica o pedido em voo. "Carregando" e "erro" são derivados dela, em vez
+   *  de estado zerado dentro do efeito: enquanto a resposta desta chave não chega,
+   *  a tela continua mostrando a anterior (troca de rodada). */
+  const chave = `${escopo}|${rodada ?? ''}`;
+  const carregando = resultado?.chave !== chave;
+  const erro = carregando ? null : resultado?.erro ?? null;
 
   useEffect(() => {
     let vivo = true;
-    setCarregando(true);
-    setErro(null);
-    setSelecao(null);
     void obterPosPrecificacao(empresa, { loja, rodada, apenasPrecificados })
       .then((dados) => {
+        if (!vivo) return;
         // O escopo pedido viaja junto: comparar com o que o backend devolve
         // dependeria de ele reescrever a string de loja do mesmo jeito.
-        if (vivo) setResposta({ escopo, dados });
+        setResposta({ escopo, dados });
+        setResultado({ chave, erro: null });
       })
       .catch((falha) => {
         if (!vivo) return;
         setResposta(null);
-        setErro(falha instanceof Error ? falha.message : 'Falha ao carregar a precificação.');
-      })
-      .finally(() => {
-        if (vivo) setCarregando(false);
+        setResultado({ chave, erro: falha instanceof Error ? falha.message : 'Falha ao carregar a precificação.' });
       });
     return () => {
       vivo = false;
     };
-  }, [empresa, loja, rodada, apenasPrecificados, escopo]);
+  }, [empresa, loja, rodada, apenasPrecificados, escopo, chave]);
 
-  useEffect(() => {
-    setSelecao(null);
-    setBusca('');
-  }, [aba]);
+  // Seleção vale para a chave e a aba em que foi feita; busca, para a aba.
+  // Trocar qualquer uma delas "zera" sem efeito nenhum: o valor antigo só deixa de casar.
+  const selecao = selecaoEstado.chave === `${chave}|${aba}` ? selecaoEstado.valor : null;
+  const setSelecao = (valor: string | null) => setSelecaoEstado({ chave: `${chave}|${aba}`, valor });
+  const busca = buscaEstado.aba === aba ? buscaEstado.valor : '';
+  const setBusca = (valor: string) => setBuscaEstado({ aba, valor });
 
   /** Resultado do escopo atual. Durante a troca de empresa a resposta anterior
    *  ainda está em `resposta`, e usá-la mostraria número de outra empresa. */
@@ -198,7 +202,10 @@ export function PosPrecificacaoVisao({ empresa, loja, modoGrafico }: Props) {
     publicarRodadas(empresa, { rodadas, ativa: rodadaAtiva, ocupado: recarregando });
   }, [empresa, rodadas, rodadaAtiva, recarregando]);
 
-  const itens = aba === 'produtos' ? (dados?.produtos ?? []) : (dados?.fabricantes ?? []);
+  const itens = useMemo(
+    () => (aba === 'produtos' ? (dados?.produtos ?? []) : (dados?.fabricantes ?? [])),
+    [aba, dados],
+  );
   const itensDestaque = useMemo(
     () => [...itens].sort((a, b) => (ultimoLucroDia(b.serie_mensal) ?? -1) - (ultimoLucroDia(a.serie_mensal) ?? -1)),
     [itens],
