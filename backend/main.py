@@ -3,6 +3,7 @@ Backend do Analisador de Monitoria (versão web) — reaproveita o motor
 analise_funil.py do app desktop original via FastAPI.
 """
 
+import hashlib
 import json
 import gzip
 import logging
@@ -644,10 +645,19 @@ def _ler_catalogo_centralizado() -> list[dict]:
 
 
 def _gravar_catalogo_centralizado(catalogo: list[dict]) -> None:
+    texto = json.dumps(catalogo, ensure_ascii=False, indent=2)
+    try:
+        with open(CAMINHO_BANCO_CENTRALIZADO_TAGS, "r", encoding="utf-8") as arquivo:
+            if arquivo.read() == texto:
+                # Salvar tags de uma empresa regravava o catálogo igual; no
+                # OneDrive isso é upload e troca de mtime à toa.
+                return
+    except OSError:
+        pass
     try:
         os.makedirs(os.path.dirname(CAMINHO_BANCO_CENTRALIZADO_TAGS), exist_ok=True)
         with open(CAMINHO_BANCO_CENTRALIZADO_TAGS, "w", encoding="utf-8") as arquivo:
-            json.dump(catalogo, arquivo, ensure_ascii=False, indent=2)
+            arquivo.write(texto)
     except OSError as exc:
         raise HTTPException(status_code=400, detail=f"Não foi possível gravar catálogo centralizado: {exc}")
 
@@ -2704,14 +2714,20 @@ def _assinatura_arquivo(caminho: Path) -> tuple[int, int]:
     return stat.st_mtime_ns, stat.st_size
 
 
-def _assinatura_arquivo_opcional(caminho) -> tuple[int, int]:
-    """Como `_assinatura_arquivo`, mas para arquivo que pode não existir ainda
-    (tags/catálogo criados só no primeiro salvamento)."""
+def _assinatura_conteudo_opcional(caminho) -> tuple[int, str]:
+    """Tamanho + hash do conteúdo, para arquivo pequeno que pode não existir ainda
+    (tags e catálogo de tags, criados só no primeiro salvamento).
+
+    Conteúdo, e não mtime: o `Bancos/tags.json` centralizado era regravado igual
+    a cada salvamento de tags de qualquer empresa, e cada regravação trocava a
+    chave do painel de Clientes — o arquivo que o lote da manhã preparava nunca
+    era reencontrado (IBAD: 7,5 s no lugar de < 1 s, set/2026).
+    """
     try:
-        stat = os.stat(caminho)
+        conteudo = Path(caminho).read_bytes()
     except OSError:
-        return (0, 0)
-    return stat.st_mtime_ns, stat.st_size
+        return (0, "")
+    return len(conteudo), hashlib.sha1(conteudo).hexdigest()[:16]
 
 
 def _caminho_produto_empresa(empresa: str) -> tuple[Path, Path]:
@@ -3253,12 +3269,29 @@ def obter_historico_precificacao(
     """
     empresa = _validar_nome_empresa(empresa)
     _validar_filtros_historico(periodo, nivel)
+    # Só a abertura da aba vai para o disco (sem rodada, faixa nem busca): é o
+    # que o lote da manhã prepara. Filtro clicado recalcula em cima dos eventos
+    # em RAM, que custam ~1,5 s só na primeira vez.
+    chave_disco = None
+    if not (rodadas or faixas or (busca or "").strip()):
+        fonte, assinatura_mgp = _fonte_movimento_pos_precificacao(empresa, None)
+        try:
+            assinatura_dump = _assinatura_arquivo(_caminho_precificacao_empresa(empresa))
+        except OSError:
+            assinatura_dump = None
+        if fonte == "margem_price" and assinatura_dump is not None:
+            chave_disco = ("historico", assinatura_mgp, assinatura_dump, periodo, nivel, bool(todos))
+            em_disco = _tela_do_disco(empresa, "precificacao-historico", chave_disco)
+            if em_disco is not None:
+                return em_disco
     eventos, serie = _base_historico_precificacao(empresa)
     resultado = hist_prec.montar_historico(
         eventos, serie, periodo_dias=periodo, rodadas=_lista_parametro(rodadas),
         faixas=_lista_parametro(faixas), nivel=nivel, todos=todos, busca=busca,
     )
     resultado["empresa"] = empresa
+    if chave_disco is not None:
+        _tela_para_disco(empresa, "precificacao-historico", chave_disco, resultado)
     return resultado
 
 
@@ -3332,9 +3365,24 @@ def obter_a_precificar(empresa: str, usuario: str = Depends(exigir_login)):
     """SKUs que precisam de preço novo, com as provas e o lucro perdido por dia
     (regras em `a_precificar.py`). Todas as lojas: o movimento é o do PRICE."""
     empresa = _validar_nome_empresa(empresa)
+    # Disco antes de tudo: com o que o lote da manhã deixou, a aba abre sem ler
+    # o movimento do PRICE (~2 s) nem recalcular os pares (~2 s).
+    fonte, assinatura_mgp = _fonte_movimento_pos_precificacao(empresa, None)
+    chave_disco = None
+    if fonte == "margem_price":
+        try:
+            assinatura_dump = _assinatura_arquivo(_caminho_precificacao_empresa(empresa))
+        except (HTTPException, OSError):
+            assinatura_dump = None
+        chave_disco = ("a-precificar", assinatura_mgp, assinatura_dump)
+        em_disco = _tela_do_disco(empresa, "a-precificar", chave_disco)
+        if em_disco is not None:
+            return em_disco
     _mov, skus, contexto = _base_a_precificar(empresa)
     resultado = a_precificar.montar_a_precificar(skus, contexto)
     resultado["empresa"] = empresa
+    if chave_disco is not None:
+        _tela_para_disco(empresa, "a-precificar", chave_disco, resultado)
     return resultado
 
 
@@ -3598,8 +3646,8 @@ def obter_painel_clientes(
     chave = (
         empresa, loja_norm or "", modo_periodo, assinatura, date.today(),
         _assinatura_cortes_escopo(empresa, loja_norm, grupos_norm),
-        _assinatura_arquivo_opcional(_caminho_tags_clientes(empresa)),
-        _assinatura_arquivo_opcional(CAMINHO_BANCO_CENTRALIZADO_TAGS),
+        _assinatura_conteudo_opcional(_caminho_tags_clientes(empresa)),
+        _assinatura_conteudo_opcional(CAMINHO_BANCO_CENTRALIZADO_TAGS),
     )
     with _cache_painel_clientes_lock:
         cacheado = _cache_painel_clientes.get(chave)

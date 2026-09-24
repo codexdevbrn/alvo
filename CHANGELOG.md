@@ -13,9 +13,18 @@ funcionalidades vive em `DOC_TEC.md`, não aqui.
   IBAD de ~6 s para 1,6 s; todas as telas que calculam na hora ganham isso. O
   resultado é idêntico ao anterior (conferido nas 41 empresas), e o arquivo
   `_cache_atacado.parquet` da pasta de trabalho deixou de ser usado.
+- **Precificação pronta de manhã**: as abas A precificar e Pós-precificação
+  passam a ser preparadas pelo lote e abrem em < 0,1 s (antes 3–4 s e 1,5 s).
 
 ### Corrigido
 
+- **Cache de Clientes preparado de manhã não era usado**: o catálogo de tags
+  centralizado era regravado igual a cada salvamento, e isso mudava a chave do
+  cache. A IBAD abria Clientes em 7,5 s com o arquivo pronto ao lado; agora
+  0,03 s.
+- **Lote da manhã/tarde**: duas passadas ao mesmo tempo faziam a segunda falhar
+  ("Falha de configuracao", 13:00 de 24/09). Agora ela é pulada, e falha real
+  diz em que etapa foi.
 - Venda sem código de produto herdava a descrição de uma linha qualquer do
   catálogo também sem código (Autosul, Golfinho, Mega: 188 linhas); agora fica
   com a descrição do próprio movimento.

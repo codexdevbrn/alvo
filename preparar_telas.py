@@ -47,7 +47,8 @@ MODOS_PERIODO = ("fechados", "completo", "mesmo_periodo")
 MESES_VENDA_MEDIA = 6          # PADRAO de dashboard/src/utils/vendaMedia.ts
 LIMITE_COBERTURA = 1200        # EstoquePage / EstoqueEscopo
 
-#: (nome, rota, parâmetros). Só o que tem cache em disco — o resto é leve.
+#: (nome, rota, parâmetros). Só o que tem cache em disco — o resto é leve
+#: (Dashboard, Despesas, Monitoramento e tags saem em < 0,4 s mesmo a frio).
 TELAS = (
     *[(f"Clientes ({m})", "/api/clientes/{e}/painel", {"modo_periodo": m}) for m in MODOS_PERIODO],
     *[(f"Diagnóstico ({m})", "/api/diagnostico/{e}", {"modo_periodo": m}) for m in MODOS_PERIODO],
@@ -63,6 +64,10 @@ TELAS = (
           **({} if f else {"usar_mes_fechado": "false"})})
         for f in (True, False)
     ],
+    # Abertura das duas abas da Precificação; empresa sem movimento do PRICE ou
+    # sem dump responde 404, que aqui não é falha.
+    ("Precificação: a precificar", "/api/precificacao/{e}/a-precificar", {}),
+    ("Precificação: pós", "/api/precificacao/{e}/historico", {"periodo": 180, "nivel": "familia"}),
 )
 
 
