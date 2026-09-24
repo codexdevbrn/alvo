@@ -9,7 +9,8 @@ import {
   obterRankingVendedores,
   obterResumoEstoque,
   obterResumoDespesas,
-  obterPosPrecificacao,
+  obterAPrecificar,
+  obterHistoricoPrecificacao,
   obterMonitorEmpresas,
   obterSummaryEmpresa,
   obterBaseClientes,
@@ -93,7 +94,8 @@ type TarefaPrefetch = {
 
 /** Mais específico primeiro: `/` casa com tudo se vier no começo. */
 const ROTA_TAREFA: [string, string][] = [
-  ['/precificacao', 'Pós precificação'],
+  ['/pos-precificacao', 'Pós-precificação'],
+  ['/precificacao', 'Precificação'],
   ['/diagnostico', 'Diagnóstico'],
   ['/vendedores', 'Vendedores'],
   ['/estoque', 'Estoque'],
@@ -210,11 +212,15 @@ async function rodarFila(empresa: string, motivo: MotivoPrefetch = 'empresa') {
           obterResumoDespesas(empresaAtual, { loja, meses: 12, usarMesesFechados: false }),
         ]);
     }},
-    { nome: 'Pós precificação', fn: async () => {
-        await Promise.all([
-          obterPosPrecificacao(empresaAtual, { loja }),
-          obterPosPrecificacao(empresaAtual, { loja, apenasPrecificados: true }),
-        ]);
+    // As duas telas leem o movimento do PRICE, que soma as lojas: a loja não
+    // entra no pedido. Aqui só se aquece o cache do servidor.
+    { nome: 'Precificação', fn: async () => {
+        await obterAPrecificar(empresaAtual);
+    }},
+    { nome: 'Pós-precificação', fn: async () => {
+        await obterHistoricoPrecificacao(empresaAtual, {
+          periodo: 180, rodadas: [], faixas: [], nivel: 'familia', todos: false, busca: '',
+        });
     }},
     { nome: 'Monitoramento', fn: async () => {
         await obterMonitorEmpresas({ meses: 6, metrica: 'receita' });

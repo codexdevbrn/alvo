@@ -18,7 +18,8 @@ const ROTA_ETAPA: Record<string, string> = {
   Vendedores: '/vendedores',
   Estoque: '/estoque',
   Despesas: '/despesas',
-  'Pós precificação': '/precificacao?aba=pos',
+  Precificação: '/precificacao',
+  'Pós-precificação': '/pos-precificacao',
   Monitoramento: '/monitor',
 };
 

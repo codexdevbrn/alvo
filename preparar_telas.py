@@ -63,8 +63,6 @@ TELAS = (
           **({} if f else {"usar_mes_fechado": "false"})})
         for f in (True, False)
     ],
-    ("Pós-precificação", "/api/precificacao/{e}", {}),
-    ("Pós-precificação (só precificados)", "/api/precificacao/{e}", {"apenas_precificados": "true"}),
 )
 
 

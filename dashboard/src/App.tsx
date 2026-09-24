@@ -1,5 +1,5 @@
 import { Suspense, lazy } from 'react';
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { AppShell } from './components/AppShell';
 import DashboardPage from './pages/DashboardPage';
@@ -20,6 +20,7 @@ const EstoquePage = lazy(() => import('./pages/EstoquePage'));
 const DiagnosticoPage = lazy(() => import('./pages/DiagnosticoPage'));
 const DespesasPage = lazy(() => import('./pages/DespesasPage'));
 const PrecificacaoPage = lazy(() => import('./pages/PrecificacaoPage'));
+const PosPrecificacaoPage = lazy(() => import('./pages/PosPrecificacaoPage'));
 const AssistenteIAPage = lazy(() => import('./pages/AssistenteIAPage'));
 const MercadologicoPage = lazy(() => import('./pages/MercadologicoPage'));
 
@@ -62,9 +63,8 @@ export default function App() {
             <Route path="/estoque" element={<EstoquePage />} />
             <Route path="/diagnostico" element={<DiagnosticoPage />} />
             <Route path="/despesas" element={<DespesasPage />} />
-            {/* Pós precificação virou aba da Precificação; o link antigo continua valendo. */}
-            <Route path="/pos-precificacao" element={<Navigate to="/precificacao?aba=pos" replace />} />
             <Route path="/precificacao" element={<PrecificacaoPage />} />
+            <Route path="/pos-precificacao" element={<PosPrecificacaoPage />} />
             <Route path="/assistente" element={<AssistenteIAPage />} />
             <Route path="/mercadologico" element={<MercadologicoPage />} />
           </Routes>

@@ -44,6 +44,7 @@ import cache_atacado
 import cache_telas
 import consulta_parquet
 import margem_price as mgp
+import a_precificar
 import historico_precificacao as hist_prec
 import versao
 from alertas_clientes import avaliar_alertas_clientes, normalizar_regras_alerta
@@ -3293,6 +3294,68 @@ def obter_item_historico_precificacao(
         eventos, serie, nivel=nivel, nome=nome, periodo_dias=periodo,
         rodadas=_lista_parametro(rodadas), faixas=_lista_parametro(faixas),
     )
+
+
+# Tela Precificação (a precificar). O dump é opcional aqui: sem ele não há alvo,
+# e a referência de cada SKU passa a ser a margem da janela base.
+_CACHE_A_PRECIFICAR_MAX = 3
+_cache_a_precificar: OrderedDict[tuple, tuple[pd.DataFrame, pd.DataFrame, dict]] = OrderedDict()
+_cache_a_precificar_lock = threading.Lock()
+
+
+def _base_a_precificar(empresa: str) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
+    fonte, assinatura_mgp = _fonte_movimento_pos_precificacao(empresa, None)
+    if fonte != "margem_price":
+        raise HTTPException(
+            status_code=404,
+            detail=f"A empresa '{empresa}' ainda não tem movimento do PRICE (margem por transação).",
+        )
+    try:
+        caminho_dump = _caminho_precificacao_empresa(empresa)
+        assinatura_dump = _assinatura_arquivo(caminho_dump)
+    except (HTTPException, OSError):
+        caminho_dump, assinatura_dump = None, None
+    data_corte = af.data_corte_padrao()
+    chave = (empresa, assinatura_mgp, assinatura_dump, data_corte)
+    with _cache_a_precificar_lock:
+        cacheado = _cache_a_precificar.get(chave)
+        if cacheado is not None:
+            _cache_a_precificar.move_to_end(chave)
+            return cacheado
+    dump = _carregar_precificacao_df(empresa) if caminho_dump is not None else None
+    pasta_trabalho = Path(_exigir_caminho_trabalho())
+    try:
+        bruto = mgp.carregar_bruto(empresa, pasta_trabalho, caminhos_padrao.margem_price())
+        mov = a_precificar.preparar_movimento(bruto, data_corte)
+        skus, contexto = a_precificar.calcular_skus(mov, a_precificar.alvos_vigentes(dump))
+    except (mgp.ErroMargemPrice, a_precificar.ErroAPrecificar) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    resultado = (mov, skus, contexto)
+    with _cache_a_precificar_lock:
+        _cache_a_precificar[chave] = resultado
+        _cache_a_precificar.move_to_end(chave)
+        while len(_cache_a_precificar) > _CACHE_A_PRECIFICAR_MAX:
+            _cache_a_precificar.popitem(last=False)
+    return resultado
+
+
+@app.get("/api/precificacao/{empresa}/a-precificar")
+def obter_a_precificar(empresa: str, usuario: str = Depends(exigir_login)):
+    """SKUs que precisam de preço novo, com as provas e o lucro perdido por dia
+    (regras em `a_precificar.py`). Todas as lojas: o movimento é o do PRICE."""
+    empresa = _validar_nome_empresa(empresa)
+    _mov, skus, contexto = _base_a_precificar(empresa)
+    resultado = a_precificar.montar_a_precificar(skus, contexto)
+    resultado["empresa"] = empresa
+    return resultado
+
+
+@app.get("/api/precificacao/{empresa}/a-precificar/item")
+def obter_item_a_precificar(empresa: str, codigo: str, usuario: str = Depends(exigir_login)):
+    """Preço × custo por semana de um SKU, para o painel do item."""
+    empresa = _validar_nome_empresa(empresa)
+    mov, _skus, _contexto = _base_a_precificar(empresa)
+    return {"codigo": codigo, "semanas": a_precificar.serie_semanal(mov, codigo.strip())}
 
 
 _CACHE_MARGEM_PRICE_MAX = 16

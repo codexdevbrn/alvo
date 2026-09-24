@@ -4,6 +4,25 @@ Formato: uma seção por versão publicada, mais recente no topo. Histórico é
 incremental — entradas antigas nunca são apagadas. O estado atual das telas e
 funcionalidades vive em `DOC_TEC.md`, não aqui.
 
+## 1.7.19 — 2026-09-24
+
+### Adicionado
+
+- **Tela Precificação**: os SKUs que precisam de preço novo, com a prova de
+  cada um. Compara os últimos 30 dias com os 90 anteriores no movimento do
+  PRICE (todas as lojas): margem que caiu, custo subindo sem repasse no preço,
+  volume em queda e margem abaixo do alvo da última precificação. Mostra quanto
+  lucro por dia fica na mesa até a referência, os fabricantes onde ele se
+  concentra (clique filtra a lista) e, para cada SKU, preço × custo por semana,
+  peso na receita e o preço que leva ao alvo.
+
+### Alterado
+
+- **Pós-precificação volta a ser uma tela própria**, no desenho
+  "Precificações": rodadas na linha do tempo, evolução mensal, o que foi
+  precificado por família, fabricante, par, SKU ou rodada, e o painel do item.
+  A visão antiga, de uma rodada por vez com seletores no topo, saiu.
+
 ## 1.7.18 — 2026-09-24
 
 ### Corrigido

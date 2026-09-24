@@ -23,6 +23,7 @@ import {
   Bot,
   Scissors,
   Tags,
+  BadgePercent,
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getToken, clearToken, obterStatusAtualizacao, type StatusAtualizacao } from '../api/client';
@@ -35,10 +36,6 @@ import { TopoVendaMediaSelect } from './TopoVendaMediaSelect';
 import { TopoDespesasPeriodoSelect } from './TopoDespesasPeriodoSelect';
 import { TopoCortesToggle } from './TopoCortesToggle';
 import { TopoGruposClientesFiltro } from './TopoGruposClientesFiltro';
-import { abaPrecificacao } from '../utils/abaPrecificacao';
-import { TopoPosPrecificacaoModoToggle } from './TopoPosPrecificacaoModoToggle';
-import { TopoPosPrecificacaoItensToggle } from './TopoPosPrecificacaoItensToggle';
-import { TopoPosPrecificacaoRodadaSelect } from './TopoPosPrecificacaoRodadaSelect';
 import { EncaixeTopoContext } from './encaixeTopo';
 import { useEscopoAtual } from '../hooks/useEscopoAtual';
 
@@ -131,8 +128,10 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   const emDiagnostico = location.pathname.startsWith('/diagnostico');
   const emDespesas = location.pathname.startsWith('/despesas');
   const emPrecificacao = location.pathname.startsWith('/precificacao');
-  // Pós precificação é a aba padrão da Precificação (`abaPrecificacao`).
-  const emPosPrecificacao = emPrecificacao && abaPrecificacao(location.search) === 'pos';
+  const emPosPrecificacao = location.pathname.startsWith('/pos-precificacao');
+  // As duas telas leem o movimento do PRICE, que já soma as lojas, e têm os
+  // próprios filtros de período: nenhum controle de escopo do topo vale nelas.
+  const emTelaPrice = emPrecificacao || emPosPrecificacao;
   const emAssistente = location.pathname.startsWith('/assistente');
   const emConfig = location.pathname.startsWith('/config');
   const emMercadologico = location.pathname.startsWith('/mercadologico');
@@ -314,6 +313,13 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
               onClick={() => navigate('/precificacao')}
             />
             <NavItem
+              icon={<BadgePercent size={17} />}
+              label="Pós-precificação"
+              collapsed={colapsado}
+              ativo={emPosPrecificacao}
+              onClick={() => navigate('/pos-precificacao')}
+            />
+            <NavItem
               icon={<Bot size={17} />}
               label="Assistente IA"
               collapsed={colapsado}
@@ -390,22 +396,17 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
               {emEstoque && <TopoVendaMediaSelect />}
               {emDespesas && <TopoDespesasPeriodoSelect />}
               <div ref={setEncaixeTopo} className="app-shell-topo-encaixe" />
-              {emPosPrecificacao && <TopoPosPrecificacaoRodadaSelect />}
-              {emPosPrecificacao && <TopoPosPrecificacaoItensToggle />}
-              {emPosPrecificacao && <TopoPosPrecificacaoModoToggle />}
-              {!emAssistente && !emCortes && !emPosPrecificacao && !emPrecificacao && (
+              {!emAssistente && !emCortes && !emTelaPrice && (
                 <SidebarMesesFechadosToggle desabilitarMesmoPeriodo={emDashboard || emEstoque || emDespesas} />
               )}
               {/* Instante transitório antes da 1ª empresa resolver (ver
                   SidebarEmpresaSelect): nenhuma tela aplica corte algum ainda.
                   Escondido aqui em vez de só desabilitado — ligado sem efeito
                   é pior que ausente. */}
-              {!!empresaEscopo && !emDespesas && !emAssistente && !emCortes && !emPosPrecificacao && !emPrecificacao && <TopoCortesToggle />}
-              {!!empresaEscopo && !emDespesas && !emAssistente && !emCortes && !emPosPrecificacao && !emPrecificacao && <TopoGruposClientesFiltro />}
+              {!!empresaEscopo && !emDespesas && !emAssistente && !emCortes && !emTelaPrice && <TopoCortesToggle />}
+              {!!empresaEscopo && !emDespesas && !emAssistente && !emCortes && !emTelaPrice && <TopoGruposClientesFiltro />}
               <SidebarEmpresaSelect />
-              {/* As outras abas da Precificação leem o parquet do PRICE, que já
-                  soma as lojas; a Pós precificação filtra o movimento por loja. */}
-              {(!emPrecificacao || emPosPrecificacao) && <SidebarLojaSelect />}
+              {!emTelaPrice && <SidebarLojaSelect />}
             </div>
           </div>
         )}

@@ -1544,31 +1544,6 @@ export type PosPrecificacaoResposta = {
   fabricantes: ItemPosPrecificacao[];
 };
 
-export async function obterPosPrecificacao(
-  empresa: string,
-  parametros: { loja?: string | null; rodada?: string | null; apenasPrecificados?: boolean } = {},
-  signal?: AbortSignal,
-): Promise<PosPrecificacaoResposta> {
-  const query = new URLSearchParams();
-  if (parametros.loja) query.set('loja', parametros.loja);
-  if (parametros.apenasPrecificados) query.set('apenas_precificados', 'true');
-  // Sem `rodada` o backend calcula a mais recente do arquivo.
-  if (parametros.rodada) query.set('rodada', parametros.rodada);
-  const qs = query.toString() ? `?${query}` : '';
-  const url = `/api/precificacao/${encodeURIComponent(empresa)}${qs}`;
-  if (signal?.aborted) {
-    throw new DOMException('Aborted', 'AbortError');
-  }
-  // v15: sem `apenas_precificados` a resposta é a loja inteira (menos o balde
-  // "NÃO HARMONIZADO", como no PRICE), cada item traz `precificado` e a
-  // variação antes/depois é por dia. O cache vive em localStorage e sobrevive
-  // ao F5 — sem bump, a chave antiga devolveria a resposta de antes.
-  return comCache(`pos_precificacao_v15_${empresa}_${qs}`, async () => {
-    const res = await chamar(url, { headers: authHeaders() });
-    return tratarResposta(res);
-  });
-}
-
 // ---------------------------------------------------------------------------
 // Precificação — aba Pós-precificação (histórico por SKU, sem prender a rodada)
 // ---------------------------------------------------------------------------
@@ -1698,6 +1673,92 @@ export async function obterItemHistoricoPrecificacao(
 ): Promise<ItemHistoricoPrecificacao> {
   const res = await chamar(
     `/api/precificacao/${encodeURIComponent(empresa)}/historico/item?${queryFiltros(filtros, { nivel: filtros.nivel, nome: filtros.nome })}`,
+    { headers: authHeaders(), signal },
+  );
+  return tratarResposta(res);
+}
+
+// ---------------------------------------------------------------------------
+// Precificação: SKUs a precificar (backend/a_precificar.py)
+// ---------------------------------------------------------------------------
+
+export type ProvaPrecificar = 'margem' | 'custo' | 'volume' | 'alvo';
+
+export type ItemAPrecificar = {
+  codigo: string;
+  descricao: string;
+  fabricante: string;
+  curva: 'A' | 'B' | 'C';
+  provas: ProvaPrecificar[];
+  part_receita: number | null;
+  part_fabricante: number | null;
+  receita_base: number | null;
+  margem_base: number | null;
+  margem_recente: number | null;
+  alvo: number | null;
+  dia_alvo: string | null;
+  /** Alvo vigente, ou a margem da base quando o SKU nunca foi precificado. */
+  referencia: number | null;
+  gap: number | null;
+  var_custo: number | null;
+  var_preco: number | null;
+  var_qtd: number | null;
+  qtd_dia_recente: number | null;
+  preco_atual: number | null;
+  custo_atual: number | null;
+  preco_sugerido: number | null;
+  reajuste: number | null;
+  perdido_dia: number | null;
+};
+
+export type FabricanteAPrecificar = {
+  nome: string;
+  perdido_dia: number | null;
+  skus: number;
+  part_receita: number | null;
+};
+
+export type APrecificarResposta = {
+  empresa: string;
+  janela: {
+    inicio_base: string;
+    inicio_recente: string;
+    fim: string;
+    dias_base: number;
+    dias_recente: number;
+  } | null;
+  resumo: {
+    skus: number;
+    curva_a: number;
+    fabricantes: number;
+    receita_em_jogo: number | null;
+    part_receita: number | null;
+    perdido_dia: number | null;
+    custo_sem_repasse: number;
+    com_alvo: number;
+  };
+  fabricantes: FabricanteAPrecificar[];
+  itens: ItemAPrecificar[];
+  total_itens: number;
+};
+
+export type SemanaPrecoCusto = { semana: string; preco: number | null; custo: number | null; qtd: number | null };
+
+export async function obterAPrecificar(empresa: string, signal?: AbortSignal): Promise<APrecificarResposta> {
+  const res = await chamar(`/api/precificacao/${encodeURIComponent(empresa)}/a-precificar`, {
+    headers: authHeaders(),
+    signal,
+  });
+  return tratarResposta(res);
+}
+
+export async function obterItemAPrecificar(
+  empresa: string,
+  codigo: string,
+  signal?: AbortSignal,
+): Promise<{ codigo: string; semanas: SemanaPrecoCusto[] }> {
+  const res = await chamar(
+    `/api/precificacao/${encodeURIComponent(empresa)}/a-precificar/item?codigo=${encodeURIComponent(codigo)}`,
     { headers: authHeaders(), signal },
   );
   return tratarResposta(res);
