@@ -6,6 +6,20 @@ funcionalidades vive em `DOC_TEC.md`, não aqui.
 
 ## 1.7.19 — 2026-09-24
 
+### Desempenho
+
+- **Base da empresa carrega 3 a 4 vezes mais rápido**: leitura, junção com o
+  catálogo e limpeza passaram para uma consulta direta nos arquivos da fonte.
+  IBAD de ~6 s para 1,6 s; todas as telas que calculam na hora ganham isso. O
+  resultado é idêntico ao anterior (conferido nas 41 empresas), e o arquivo
+  `_cache_atacado.parquet` da pasta de trabalho deixou de ser usado.
+
+### Corrigido
+
+- Venda sem código de produto herdava a descrição de uma linha qualquer do
+  catálogo também sem código (Autosul, Golfinho, Mega: 188 linhas); agora fica
+  com a descrição do próprio movimento.
+
 ### Adicionado
 
 - **Precificação ganha a aba "A precificar"**: os produtos (descrição ×

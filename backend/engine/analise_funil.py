@@ -469,6 +469,10 @@ def _mapa_descricao_harmonizada(produto: pd.DataFrame) -> pd.Series:
     # trazendo a harmonizada.
     harmonizada = produto["DESCRICAO_HARMONIZADA"].fillna("").astype(str).str.strip()
     vazio = harmonizada.str.lower().isin(("", "nan", "none", "<na>"))
+    # Código vazio não é chave: a Mega tem no catálogo uma linha de código só
+    # com espaços ("Coxim Motor"), e ela não pode virar a descrição das vendas
+    # que chegam sem código. Mesma regra do join em `base_duckdb`.
+    vazio |= codigo.isna() | (codigo == "")
     validos = pd.DataFrame({"codigo": codigo, "harmonizada": harmonizada})[~vazio]
     return validos.drop_duplicates(subset=["codigo"], keep="first").set_index("codigo")["harmonizada"]
 
@@ -497,9 +501,8 @@ def data_corte_padrao():
 def cortar_ate(df, data_corte):
     """Tira as linhas com `Data_Venda_Diaria` depois de `data_corte`.
 
-    Linha sem data diária fica (base mensal antiga não tem o campo). Roda
-    depois do cache em disco (`cache_atacado`), nunca antes: o cache é chaveado
-    pela fonte, e um corte gravado nele congelaria a data até a fonte mudar.
+    Linha sem data diária fica (base mensal antiga não tem o campo). Caminho
+    pandas; o `base_duckdb` aplica a mesma regra dentro da consulta.
     """
     if df is None or df.empty or "Data_Venda_Diaria" not in df.columns:
         return df

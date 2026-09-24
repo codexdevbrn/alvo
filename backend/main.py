@@ -40,7 +40,7 @@ import dados_no_disco
 import db
 import inicio_automatico
 import harmonizar_clientes
-import cache_atacado
+import base_duckdb
 import cache_telas
 import consulta_parquet
 import margem_price as mgp
@@ -1192,19 +1192,6 @@ def _data_ultimo_movimento_bi(pasta_fonte: str) -> Optional[date]:
         return None
 
 
-def _carregar_atacado_df(pasta_fonte: str, pasta_trabalho: str) -> pd.DataFrame:
-    """Lê MOVIMENTO_ATUAL + PRODUTO da empresa direto da fonte.
-
-    Os arquivos já chegam prontos para leitura. Este fluxo só lê, junta e mapeia
-    colunas em memória — nunca cria Base.csv, harm.xlsx ou qualquer outro
-    arquivo na fonte. O parse em si é cacheado em parquet na pasta de trabalho
-    (`cache_atacado`): troca de empresa e reinício do backend esvaziam o cache
-    em RAM de 1 slot (`_cache_base_empresa`), e sem o parquet cada troca pagaria
-    o CSV inteiro de novo."""
-    caminho_movimento, caminho_produto, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
-    return cache_atacado.carregar_atacado_df_cacheado(caminho_movimento, caminho_produto, Path(pasta_trabalho))
-
-
 def _garantir_summary_dashboard_arquivo(
     empresa: str,
     pasta_fonte: str,
@@ -1449,8 +1436,9 @@ def _carregar_base_empresa_sem_trava(empresa: str) -> tuple[pd.DataFrame, int]:
         return em_cache["df"], em_cache["linhas_vazias"]
 
     try:
-        df_bruto = af.cortar_ate(_carregar_atacado_df(pasta_fonte, pasta_trabalho), data_corte)
-        df, linhas_vazias = af.validar_e_limpar(df_bruto, receita_em_texto_br=False)
+        # Leitura, join, corte D-1 e limpeza numa consulta DuckDB (`base_duckdb`);
+        # esquema fora do padrão cai no caminho pandas de antes.
+        df, linhas_vazias = base_duckdb.carregar_base_empresa(caminho_movimento, caminho_produto, data_corte)
     except ErroNormalizacao as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     except af.ErroCarregamentoCSV as exc:

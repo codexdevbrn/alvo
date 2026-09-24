@@ -10,7 +10,7 @@ espera — foi o que provocou o erro de timeout de 45s relatado no Dashboard.
 
 Não grava mais nenhum arquivo intermediário na pasta de trabalho (nem Base.csv,
 nem Liquidez_*.csv): o app lê MOVIMENTO_ATUAL + PRODUTO (parquet) da fonte direto
-em memória (ver `main._carregar_atacado_df`).
+em memória (ver `base_duckdb.carregar_base_empresa`).
 
 Uso:
     python normalizar_todas_empresas.py
@@ -40,7 +40,7 @@ if str(_BACKEND) not in sys.path:
 
 import caminhos_padrao  # noqa: E402
 import harmonizar_clientes  # noqa: E402
-import cache_atacado  # noqa: E402
+import base_duckdb  # noqa: E402
 import consulta_parquet  # noqa: E402
 from dashboard_summary import gerar_e_gravar_summary_dashboard  # noqa: E402
 from monitor_empresas import obter_resumo_monitor  # noqa: E402
@@ -101,17 +101,12 @@ def _gerar_summary(fonte_emp: Path, trab_emp: Path) -> Path:
 
     Mesmo caminho que o app usa em runtime, o que garante que o arquivo pré-gerado
     aqui é idêntico ao que ele produziria sozinho: o único jeito de o lote não
-    virar uma segunda implementação que divirja com o tempo. O join bruto passa
-    pelo mesmo cache parquet do runtime (`cache_atacado`): o CSV do dia muda, então
-    o lote sempre reparseia, mas grava o parquet fresco de quebra — o primeiro
-    acesso do dia a essa empresa no app já lê parquet em vez de CSV.
+    virar uma segunda implementação que divirja com o tempo: base pelo mesmo
+    `base_duckdb` do runtime, com o mesmo corte D-1.
     """
     caminho_movimento, caminho_produto, _estoque, _vendas = resolver_arquivos_dados(fonte_emp)
     data_corte = af.data_corte_padrao()
-    df_bruto = cache_atacado.carregar_atacado_df_cacheado(caminho_movimento, caminho_produto, trab_emp)
-    # Mesmo corte D-1 do app, aplicado depois do cache pelo mesmo motivo.
-    df_bruto = af.cortar_ate(df_bruto, data_corte)
-    df, _linhas_vazias = af.validar_e_limpar(df_bruto, receita_em_texto_br=False)
+    df, _linhas_vazias = base_duckdb.carregar_base_empresa(caminho_movimento, caminho_produto, data_corte)
     try:
         ultimo = consulta_parquet.ultimo_movimento(caminho_movimento)
         ultimo = min(ultimo, data_corte) if ultimo else None

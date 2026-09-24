@@ -14,7 +14,7 @@ import pyarrow.parquet as pq
 import pytest
 
 import main  # noqa: F401  (insere a raiz do projeto no sys.path)
-import cache_atacado
+import base_duckdb
 from engine import analise_funil as af
 from fonte_parquet_util import escrever_fonte
 from normalizar_base import (
@@ -207,15 +207,14 @@ def test_estoque_le_o_catalogo_inteiro(tmp_path):
     assert por_codigo.loc["0100", "descricao"] == "Produto Harmonizado"
 
 
-def test_cache_da_pasta_de_trabalho_funciona(tmp_path):
+def test_base_pelo_duckdb_igual_ao_pandas_e_sem_escrita(tmp_path):
     pasta = _empresa(tmp_path, "fonte")
-    trabalho = tmp_path / "trabalho"
     movimento, produto, _e, _v = resolver_arquivos_dados(pasta)
+    corte = pd.Timestamp("2100-01-01").date()
 
-    primeiro = cache_atacado.carregar_atacado_df_cacheado(movimento, produto, trabalho)
-    assert (trabalho / cache_atacado.NOME_CACHE_PARQUET).is_file()
-    segundo = cache_atacado.carregar_atacado_df_cacheado(movimento, produto, trabalho)
-    pd.testing.assert_frame_equal(segundo, primeiro)
+    novo, _ = base_duckdb.carregar_duckdb(movimento, produto, corte)
+    velho, _ = base_duckdb.carregar_pandas(movimento, produto, corte)
+    pd.testing.assert_frame_equal(novo, velho.reset_index(drop=True))
     # A fonte continua intocada: só os dois arquivos que já estavam lá.
     assert sorted(p.name for p in pasta.iterdir()) == [
         "fonte_MOVIMENTO_ATUAL.parquet", "fonte_PRODUTO.parquet",
