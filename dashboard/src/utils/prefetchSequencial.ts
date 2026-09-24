@@ -94,7 +94,6 @@ type TarefaPrefetch = {
 
 /** Mais específico primeiro: `/` casa com tudo se vier no começo. */
 const ROTA_TAREFA: [string, string][] = [
-  ['/pos-precificacao', 'Pós-precificação'],
   ['/precificacao', 'Precificação'],
   ['/diagnostico', 'Diagnóstico'],
   ['/vendedores', 'Vendedores'],

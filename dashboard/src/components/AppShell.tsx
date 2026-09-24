@@ -23,7 +23,6 @@ import {
   Bot,
   Scissors,
   Tags,
-  BadgePercent,
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getToken, clearToken, obterStatusAtualizacao, type StatusAtualizacao } from '../api/client';
@@ -128,10 +127,9 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   const emDiagnostico = location.pathname.startsWith('/diagnostico');
   const emDespesas = location.pathname.startsWith('/despesas');
   const emPrecificacao = location.pathname.startsWith('/precificacao');
-  const emPosPrecificacao = location.pathname.startsWith('/pos-precificacao');
-  // As duas telas leem o movimento do PRICE, que já soma as lojas, e têm os
-  // próprios filtros de período: nenhum controle de escopo do topo vale nelas.
-  const emTelaPrice = emPrecificacao || emPosPrecificacao;
+  // As abas da Precificação leem o movimento do PRICE, que já soma as lojas, e
+  // têm os próprios filtros de período: nenhum controle de escopo do topo vale nelas.
+  const emTelaPrice = emPrecificacao;
   const emAssistente = location.pathname.startsWith('/assistente');
   const emConfig = location.pathname.startsWith('/config');
   const emMercadologico = location.pathname.startsWith('/mercadologico');
@@ -311,13 +309,6 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
               collapsed={colapsado}
               ativo={emPrecificacao}
               onClick={() => navigate('/precificacao')}
-            />
-            <NavItem
-              icon={<BadgePercent size={17} />}
-              label="Pós-precificação"
-              collapsed={colapsado}
-              ativo={emPosPrecificacao}
-              onClick={() => navigate('/pos-precificacao')}
             />
             <NavItem
               icon={<Bot size={17} />}
