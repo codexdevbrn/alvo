@@ -37,6 +37,10 @@ const PERIODOS: { dias: number; rotulo: string }[] = [
   { dias: 365, rotulo: '12 meses' },
 ];
 
+const ROTULO_PERIODO: Record<number, string> = Object.fromEntries(
+  PERIODOS.map((item) => [item.dias, `últimos ${item.rotulo}`]),
+);
+
 const NIVEIS: { id: NivelHistorico; rotulo: string }[] = [
   { id: 'familia', rotulo: 'Família' },
   { id: 'fabricante', rotulo: 'Fabricante' },
@@ -279,12 +283,14 @@ export function PosPrecificacaoHistorico({ empresa }: Props) {
           escolhidas={rodadas}
           inicioMovimento={dados.inicio_movimento}
           fimMovimento={dados.fim_movimento}
+          periodoDias={periodo}
           onAlternar={(dia) => setRodadas((atual) => alternar(atual, dia))}
         />
         <div className="prec-legenda">
           <span><i className="prec-lt-ponto" />medível</span>
           <span><i className="prec-lt-ponto is-sem-medida" />sem venda antes (não medível)</span>
-          <span><i className="prec-lt-ponto is-apagada" />fora do filtro</span>
+          <span><i className="prec-lt-ponto is-apagada" />fora do período ou do filtro</span>
+          <span><i className="prec-legenda-periodo" />período escolhido</span>
           {rodadas.length > 0 && (
             <button type="button" className="prec-mudo" onClick={() => setRodadas([])}>
               limpar rodadas ({rodadas.length})
@@ -446,12 +452,14 @@ function LinhaDoTempo({
   escolhidas,
   inicioMovimento,
   fimMovimento,
+  periodoDias,
   onAlternar,
 }: {
   rodadas: RodadaLinhaTempo[];
   escolhidas: string[];
   inicioMovimento: string | null;
   fimMovimento: string | null;
+  periodoDias: number;
   onAlternar: (dia: string) => void;
 }) {
   const layout = useMemo(() => {
@@ -481,28 +489,36 @@ function LinhaDoTempo({
       .sort((a, b) => a.dia.localeCompare(b.dia))
       .map((rodada) => ({ rodada, x: posicao(paraMs(rodada.dia)), andar: andarDe.get(rodada.dia) ?? null }));
 
+    // Mês sempre com ano ("set/25", "set/26"): a linha costuma cobrir mais de
+    // 12 meses, e "set" duas vezes no eixo não dizia qual era qual.
     const meses: { x: number; rotulo: string }[] = [];
+    const anos: { x: number; rotulo: string }[] = [];
     const data = new Date(inicio);
     const cursor = new Date(Date.UTC(data.getUTCFullYear(), data.getUTCMonth() + 1, 1));
     const total = Math.round(span / (30 * 86_400_000));
     const passo = total > 14 ? 3 : total > 7 ? 2 : 1;
     let contador = 0;
     while (cursor.getTime() <= fim) {
+      const mes = cursor.getUTCMonth();
+      const x = posicao(cursor.getTime());
+      if (mes === 0) anos.push({ x, rotulo: String(cursor.getUTCFullYear()) });
       if (contador % passo === 0) {
-        const mes = cursor.getUTCMonth();
-        meses.push({
-          x: posicao(cursor.getTime()),
-          rotulo: mes === 0 ? `jan/${String(cursor.getUTCFullYear()).slice(2)}` : MESES_ABREV[mes],
-        });
+        meses.push({ x, rotulo: `${MESES_ABREV[mes]}/${String(cursor.getUTCFullYear()).slice(2)}` });
       }
       contador += 1;
       cursor.setUTCMonth(cursor.getUTCMonth() + 1);
     }
 
+    // Faixa do período escolhido: termina no último movimento e volta
+    // `periodoDias` — a mesma régua que o backend usa para `no_periodo`.
+    const fimPeriodo = fimMovimento ? paraMs(fimMovimento) : fim;
+    const inicioPeriodo = Math.max(inicio, fimPeriodo - periodoDias * 86_400_000);
+    const periodo = { x0: posicao(inicioPeriodo), x1: posicao(fimPeriodo) };
+
     const semDado = inicioMovimento ? Math.max(0, posicao(paraMs(inicioMovimento))) : 0;
     const andares = Math.max(0, ...marcos.map((m) => m.andar ?? 0)) + 1;
-    return { marcos, meses, semDado, andares };
-  }, [rodadas, escolhidas, inicioMovimento, fimMovimento]);
+    return { marcos, meses, anos, semDado, andares, periodo };
+  }, [rodadas, escolhidas, inicioMovimento, fimMovimento, periodoDias]);
 
   if (!layout) return <p className="prec-vazio">Nenhuma rodada de precificação registrada.</p>;
 
@@ -515,6 +531,15 @@ function LinhaDoTempo({
           {layout.semDado > 12 && <span>sem movimento</span>}
         </div>
       )}
+      <div
+        className="prec-lt-periodo"
+        style={{ left: `${layout.periodo.x0}%`, width: `${Math.max(layout.periodo.x1 - layout.periodo.x0, 0.5)}%` }}
+      >
+        <span>{ROTULO_PERIODO[periodoDias] ?? `${periodoDias} dias`}</span>
+      </div>
+      {layout.anos.map((ano) => (
+        <div key={ano.rotulo} className="prec-lt-ano" style={{ left: `${ano.x}%` }} title={`início de ${ano.rotulo}`} />
+      ))}
       <div className="prec-lt-trilho" />
       {layout.meses.map((mes) => (
         <span key={`${mes.x}-${mes.rotulo}`} className="prec-lt-mes" style={{ left: `${mes.x}%` }}>

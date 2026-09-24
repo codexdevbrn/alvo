@@ -10028,7 +10028,10 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 }
 
 .prec-lt-ponto.is-sem-medida { background: var(--bg-card); border: 2px solid var(--accent); }
-.prec-lt-ponto.is-apagada { background: var(--surface-4); }
+/* Fora do período ou do filtro: cinza inteiro, também no contorno — o ponto
+   vazado dourado lia como "sem venda antes". */
+.prec-lt-ponto.is-apagada { background: var(--surface-4); border-color: var(--surface-4); }
+.prec-lt-ponto.is-sem-medida.is-apagada { background: var(--bg-card); }
 
 .prec-legenda .prec-lt-ponto {
   display: inline-block;
@@ -10496,3 +10499,48 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 .aprec-tabela .prec-nome { max-width: 13rem; overflow: hidden; text-overflow: ellipsis; }
 .aprec-fabricante { max-width: 9rem; overflow: hidden; text-overflow: ellipsis; }
 .aprec-tabela th, .aprec-tabela td { padding-left: 0.4rem; padding-right: 0.4rem; }
+
+/* Período escolhido (90/180/365 dias) desenhado na linha do tempo: faixa ouro
+   bem leve atrás dos marcos, com o rótulo no canto. */
+.prec-lt-periodo {
+  position: absolute;
+  top: 0;
+  bottom: 34px;
+  background: var(--accent-soft);
+  border-left: 1px dashed var(--accent);
+  border-radius: 0 var(--raio-controle) 0 0;
+  pointer-events: none;
+}
+
+.prec-lt-periodo span {
+  position: absolute;
+  right: 0.5rem;
+  bottom: 0.35rem;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  white-space: nowrap;
+}
+
+/* Virada de ano: separador vertical em toda a altura (o ano já vem no mês). */
+.prec-lt-ano {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px solid var(--border-strong);
+  pointer-events: none;
+}
+
+.prec-lt-marco.is-apagada .prec-lt-etiqueta { opacity: 0.6; }
+
+.prec-legenda-periodo {
+  display: inline-block;
+  width: 14px;
+  height: 8px;
+  margin-right: 0.35rem;
+  vertical-align: middle;
+  border-radius: 2px;
+  border-left: 1px dashed var(--accent);
+  background: var(--accent-soft);
+}
