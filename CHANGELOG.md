@@ -4,6 +4,23 @@ Formato: uma seção por versão publicada, mais recente no topo. Histórico é
 incremental — entradas antigas nunca são apagadas. O estado atual das telas e
 funcionalidades vive em `DOC_TEC.md`, não aqui.
 
+## 1.7.20 — 2026-09-25
+
+### Novo
+
+- **GPS na tela A precificar**: as métricas da aba Dispersão do GPS (Power BI),
+  com o mesmo cálculo, para os 36 produtos da tabela 2D. Mostra o perfil da
+  empresa (Taxa de Retorno dos 3 últimos meses fechados), para onde o GPS
+  manda cada produto (subir, descer ou manter) e quanto lucro por dia está em
+  cada direção. O ajuste é a distância até a posição correta na faixa do
+  perfil, limitado a um degrau por rodada, e vira uma de 7 recomendações
+  cruzando com as provas do A precificar (Reajustar, Subir em etapas,
+  Oportunidade, Divergência, Reduzir, Segurar preço, Manter). Clicar numa
+  recomendação filtra a lista.
+- **A precificar por produto**: a lista agora é por descrição; clicar no
+  produto abre os fabricantes dele embaixo da linha. O painel mostra o produto
+  inteiro ou o fabricante escolhido, com a régua do GPS.
+
 ## 1.7.19 — 2026-09-24
 
 ### Desempenho

@@ -10488,6 +10488,294 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
 .aprec-skus span { color: var(--text-secondary); font-variant-numeric: tabular-nums; }
 .aprec-skus .is-queda { color: var(--danger); }
 
+/* ---------------------------------------------------------------------------
+   A precificar · GPS (GpsAPrecificar.tsx). Só as 36 descrições da tabela 2D.
+   Cores por direção: ouro sobe, vermelho/laranja desce, cinza fica — a mesma
+   leitura na barra, nas linhas, no badge e no painel.
+   --------------------------------------------------------------------------- */
+
+.aprec-gps {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  gap: 1rem;
+}
+
+@media (max-width: 1100px) {
+  .aprec-gps { grid-template-columns: minmax(0, 1fr); }
+}
+
+.aprec-gps-rotulo { color: var(--accent); }
+
+.aprec-gps-perfil { border-color: var(--accent); }
+
+.aprec-gps-contas {
+  display: flex;
+  gap: 1.1rem;
+  flex-wrap: wrap;
+  font-size: 0.72rem;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.aprec-gps-contas b {
+  display: block;
+  color: var(--text-primary);
+  font-size: 1rem;
+}
+
+.aprec-gps-escala {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 3px;
+}
+
+/* Duas linhas fixas por quadrado (faixa e nome), sem quebra: rótulo que
+   quebrava num quadrado e não no vizinho deixava a escala torta. */
+.aprec-gps-escala span {
+  display: grid;
+  gap: 1px;
+  align-content: center;
+  min-width: 0;
+  padding: 0.35rem 0.2rem;
+  border-radius: 6px;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  text-align: center;
+  line-height: 1.2;
+}
+
+.aprec-gps-escala b,
+.aprec-gps-escala small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.aprec-gps-escala b { font-size: 0.64rem; font-weight: 600; }
+.aprec-gps-escala small { font-size: 0.6rem; }
+
+.aprec-gps-escala span.is-ativo {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.aprec-gps-escala span.is-ativo b,
+.aprec-gps-escala span.is-ativo small { font-weight: 700; }
+
+.aprec-gps-topo {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.aprec-gps-total {
+  color: var(--text-secondary);
+  font-size: 0.74rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.aprec-gps-barra {
+  display: flex;
+  gap: 2px;
+  height: 10px;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface-3);
+}
+
+.aprec-gps-barra i { display: block; height: 100%; }
+
+.aprec-gps-barra .is-reajustar, .aprec-gps-linha .is-reajustar { background: var(--accent); }
+.aprec-gps-barra .is-etapas, .aprec-gps-linha .is-etapas { background: var(--viz-seq-3); }
+.aprec-gps-barra .is-oportunidade, .aprec-gps-linha .is-oportunidade { background: var(--viz-seq-1); }
+.aprec-gps-barra .is-divergencia, .aprec-gps-linha .is-divergencia { background: var(--alert-warm); }
+.aprec-gps-barra .is-reduzir, .aprec-gps-linha .is-reduzir { background: var(--danger); }
+.aprec-gps-barra .is-segurar, .aprec-gps-linha .is-segurar { background: var(--warning); }
+.aprec-gps-barra .is-manter, .aprec-gps-linha .is-manter { background: var(--surface-4); }
+
+.aprec-gps-colunas {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+@media (max-width: 900px) {
+  .aprec-gps-colunas { grid-template-columns: minmax(0, 1fr); }
+}
+
+.aprec-gps-coluna { display: grid; gap: 2px; align-content: start; }
+
+.aprec-gps-coluna-topo {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding-bottom: 0.3rem;
+  margin-bottom: 0.2rem;
+  border-bottom: 1px solid var(--border);
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.aprec-gps-coluna-topo b { font-size: 0.8rem; }
+.aprec-gps-coluna-topo strong { color: var(--text-primary); }
+.aprec-gps-coluna-topo .is-subir { color: var(--accent); }
+.aprec-gps-coluna-topo .is-descer { color: var(--danger); }
+.aprec-gps-coluna-topo .is-manter { color: var(--text-secondary); }
+
+.aprec-gps-linha {
+  display: grid;
+  grid-template-columns: 10px minmax(0, 1fr) 1.6rem 4.8rem;
+  gap: 0.5rem;
+  align-items: center;
+  padding: 0.3rem 0.45rem;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  text-align: left;
+  cursor: pointer;
+}
+
+.aprec-gps-linha:hover:not(:disabled) { background: var(--surface-2); }
+.aprec-gps-linha:disabled { cursor: default; opacity: 0.5; }
+.aprec-gps-linha.is-ativo { border-color: var(--accent); background: var(--accent-soft); color: var(--text-primary); }
+.aprec-gps-linha:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.aprec-gps-linha i { width: 10px; height: 10px; border-radius: 2px; }
+.aprec-gps-linha span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.aprec-gps-linha em { font-style: normal; color: var(--text-muted); text-align: right; }
+.aprec-gps-linha strong { text-align: right; font-weight: 600; color: var(--text-primary); }
+
+/* Tabela: as colunas do GPS ficam num fundo próprio. */
+.aprec-tabela th.aprec-gps-th { color: var(--accent); background: var(--surface-1); }
+.aprec-tabela td.aprec-gps-td { background: var(--surface-1); }
+.aprec-tabela tbody tr.is-selecionada td.aprec-gps-td { background: var(--accent-soft); }
+.aprec-gps-fora { color: var(--text-muted); font-style: italic; }
+
+.aprec-gps-voltar {
+  padding: 0.3rem 0.7rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.aprec-gps-voltar:hover { background: var(--surface-2); color: var(--text-primary); }
+
+.aprec-gps-celula { display: grid; gap: 2px; justify-items: start; }
+.aprec-gps-celula small { font-size: 0.66rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.aprec-gps-celula b { font-weight: 600; color: var(--text-primary); }
+.aprec-gps-celula b.is-alta { color: var(--success); }
+.aprec-gps-celula b.is-queda { color: var(--danger); }
+
+.aprec-gps-cortado {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.aprec-gps-badge {
+  display: inline-block;
+  padding: 1px 0.5rem;
+  border-radius: var(--raio-pill);
+  font-size: 0.64rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.aprec-gps-badge.is-reajustar { background: var(--accent); color: var(--accent-contrast); }
+.aprec-gps-badge.is-etapas { background: var(--accent-soft); color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.aprec-gps-badge.is-oportunidade { background: var(--accent-secondary-soft); color: var(--accent-secondary-bright); }
+.aprec-gps-badge.is-divergencia { background: var(--surface-3); color: var(--text-primary); box-shadow: inset 0 0 0 1px var(--alert-warm); }
+.aprec-gps-badge.is-reduzir { background: var(--danger-bg); color: var(--danger); }
+.aprec-gps-badge.is-segurar { background: var(--warning-bg); color: var(--warning); }
+.aprec-gps-badge.is-manter { background: var(--surface-3); color: var(--text-muted); }
+
+.aprec-gps-painel {
+  display: grid;
+  gap: 0.35rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid var(--accent);
+}
+
+.aprec-gps-regua { position: relative; height: 46px; margin: 0.35rem 0.4rem 0.2rem; }
+
+.aprec-gps-regua-trilho {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 18px;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-3);
+}
+
+.aprec-gps-regua-faixa {
+  position: absolute;
+  top: 15px;
+  height: 12px;
+  border-radius: 3px;
+  background: var(--accent-secondary-bright);
+  opacity: 0.75;
+}
+
+.aprec-gps-regua-passo {
+  position: absolute;
+  top: 20px;
+  height: 2px;
+  background: var(--accent);
+}
+
+.aprec-gps-regua-ponto {
+  position: absolute;
+  top: 14px;
+  width: 14px;
+  height: 14px;
+  margin-left: -7px;
+  border-radius: 50%;
+  border: 2px solid var(--bg-card);
+}
+
+.aprec-gps-regua-ponto.is-hoje { background: var(--danger); }
+.aprec-gps-regua-ponto.is-depois { background: var(--accent); }
+
+.aprec-gps-regua small {
+  position: absolute;
+  top: 32px;
+  transform: translateX(-50%);
+  font-size: 0.62rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.aprec-gps-regua small.is-cima { top: 0; }
+
+.aprec-gps-decisao {
+  display: grid;
+  gap: 0.3rem;
+  justify-items: start;
+  margin-top: 0.35rem;
+  padding: 0.7rem 0.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--raio-controle);
+  background: var(--surface-2);
+}
+
+.aprec-gps-decisao.is-subir { border-color: var(--accent); }
+.aprec-gps-decisao.is-descer { border-color: var(--warning); }
+.aprec-gps-decisao strong { font-size: 0.82rem; color: var(--text-primary); font-variant-numeric: tabular-nums; }
+.aprec-gps-decisao span { font-size: 0.7rem; color: var(--text-secondary); }
+
 /* Rodada sem espaço para etiqueta: só o ponto, que cresce no hover (o detalhe
    vem no title). */
 .prec-lt-marco.is-so-ponto .prec-lt-ponto { transition: transform 0.15s; }
@@ -10498,6 +10786,50 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
    para fora do card. */
 .aprec-tabela .prec-nome { max-width: 13rem; overflow: hidden; text-overflow: ellipsis; }
 .aprec-fabricante { max-width: 9rem; overflow: hidden; text-overflow: ellipsis; }
+/* Lista por produto: a linha do produto abre os fabricantes embaixo. */
+.aprec-tabela .prec-nome small { overflow: hidden; text-overflow: ellipsis; }
+
+.aprec-produto-nome {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.3rem;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.aprec-produto-nome:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.aprec-seta {
+  display: inline-grid;
+  place-items: center;
+  margin-top: 1px;
+  color: var(--text-muted);
+}
+
+.aprec-tabela tr.aprec-produto.is-aberto td { border-bottom-color: transparent; }
+.aprec-tabela tr.aprec-produto.is-aberto .aprec-seta { color: var(--accent); }
+
+.aprec-tabela tr.aprec-filho td {
+  background: var(--surface-1);
+  font-size: 0.72rem;
+}
+
+.aprec-tabela tr.aprec-filho td:first-child { box-shadow: inset 2px 0 0 var(--accent); }
+.aprec-tabela tr.aprec-filho:hover td { background: var(--surface-2); }
+.aprec-tabela tbody tr.aprec-filho.is-selecionada td { background: var(--accent-soft); }
+
+.aprec-filho-nome {
+  display: block;
+  padding-left: 1.4rem;
+  font-weight: 600;
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+}
 .aprec-tabela th, .aprec-tabela td { padding-left: 0.4rem; padding-right: 0.4rem; }
 
 /* Período escolhido (90/180/365 dias) desenhado na linha do tempo: faixa ouro

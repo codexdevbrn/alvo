@@ -46,6 +46,8 @@ import cache_telas
 import consulta_parquet
 import margem_price as mgp
 import a_precificar
+import gps_dispersao
+import gps_logica
 import historico_precificacao as hist_prec
 import versao
 from alertas_clientes import avaliar_alertas_clientes, normalizar_regras_alerta
@@ -3351,6 +3353,12 @@ def _base_a_precificar(empresa: str) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
         skus, contexto = a_precificar.calcular_skus(mov, a_precificar.alvos_vigentes(dump))
     except (mgp.ErroMargemPrice, a_precificar.ErroAPrecificar) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if contexto:
+        # O GPS mede contra a receita inteira da janela, inclusive o que o
+        # `preparar_movimento` deixa fora por não ter segmento.
+        contexto["gps_agregado"] = gps_dispersao.agregar_descricoes(
+            bruto, contexto["inicio_base"], contexto["fim"],
+        )
     resultado = (mov, skus, contexto)
     with _cache_a_precificar_lock:
         _cache_a_precificar[chave] = resultado
@@ -3360,10 +3368,85 @@ def _base_a_precificar(empresa: str) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     return resultado
 
 
+def _arquivos_perfil_gps(empresa: str) -> tuple[Path, Optional[Path]] | None:
+    """Movimento e Controladoria da fonte, de onde sai a Taxa de Retorno do GPS."""
+    try:
+        pasta_fonte, _pasta_trabalho = _pastas_empresa(empresa)
+        caminho_movimento, _produto, _estoque, _vendas = resolver_arquivos_dados(Path(pasta_fonte))
+    except (HTTPException, ErroNormalizacao):
+        return None
+    return Path(caminho_movimento), resolver_caminho_controladoria(Path(pasta_fonte))
+
+
+def _hoje_gps() -> date:
+    # Dia seguinte ao corte D-1: respeita o PRISMA_DATA_CORTE dos testes e do lote.
+    return date.fromordinal(af.data_corte_padrao().toordinal() + 1)
+
+
+def _assinatura_gps(empresa: str) -> tuple:
+    """O que muda o GPS além do movimento do PRICE: fonte, meses do perfil e a tabela 2D."""
+    arquivos = _arquivos_perfil_gps(empresa)
+    assinaturas: list = []
+    if arquivos is not None:
+        for caminho in arquivos:
+            try:
+                assinaturas.append(_assinatura_arquivo(caminho) if caminho is not None else None)
+            except OSError:
+                assinaturas.append(None)
+    # hashlib, não hash(): a chave vai para o disco e precisa ser a mesma em outro processo.
+    tabela = hashlib.sha1(repr(sorted(gps_logica.PRODUTOS.items())).encode("utf-8")).hexdigest()[:12]
+    return ("gps", tuple(gps_dispersao.meses_fechados(_hoje_gps())), tuple(assinaturas), tabela)
+
+
+_cache_perfil_gps: OrderedDict[tuple, Optional[dict]] = OrderedDict()
+_cache_perfil_gps_lock = threading.Lock()
+
+
+def _perfil_gps(empresa: str) -> tuple[Optional[dict], Optional[str]]:
+    """(taxa de retorno e perfil, motivo quando não dá para calcular)."""
+    arquivos = _arquivos_perfil_gps(empresa)
+    if arquivos is None:
+        return None, "A empresa não tem o movimento na pasta fonte."
+    caminho_movimento, caminho_controladoria = arquivos
+    if caminho_controladoria is None:
+        return None, "A empresa não tem Controladoria: sem despesas, o GPS não calcula a Taxa de Retorno."
+    chave = (empresa, _assinatura_gps(empresa))
+    with _cache_perfil_gps_lock:
+        if chave in _cache_perfil_gps:
+            _cache_perfil_gps.move_to_end(chave)
+            return _cache_perfil_gps[chave], None
+    try:
+        perfil = gps_dispersao.taxa_retorno(caminho_movimento, caminho_controladoria, _hoje_gps())
+    except Exception as exc:  # noqa: BLE001 — parquet ilegível não pode derrubar a tela
+        logger.warning("GPS: falha ao calcular a Taxa de Retorno de %s: %s", empresa, exc)
+        return None, "Não foi possível ler movimento e Controladoria para a Taxa de Retorno."
+    if perfil is None:
+        return None, "Sem venda nos 3 últimos meses fechados: sem Taxa de Retorno."
+    _guardar_lru(_cache_perfil_gps, _cache_perfil_gps_lock, chave, perfil, 16)
+    return perfil, None
+
+
+def _gps_a_precificar(empresa: str, contexto: dict) -> dict:
+    agregado = (contexto or {}).get("gps_agregado")
+    if agregado is None:
+        return {"motivo": "Sem movimento do PRICE no período."}
+    perfil, motivo = _perfil_gps(empresa)
+    if perfil is None:
+        return {"motivo": motivo}
+    calculado = gps_dispersao.calcular(agregado, perfil["perfil"])
+    return {
+        **calculado,
+        "perfil": perfil,
+        "receita_total": agregado["receita_total"],
+        "receita_descricoes": float(agregado["por_descricao"]["receita"].sum()),
+    }
+
+
 @app.get("/api/precificacao/{empresa}/a-precificar")
 def obter_a_precificar(empresa: str, usuario: str = Depends(exigir_login)):
     """SKUs que precisam de preço novo, com as provas e o lucro perdido por dia
-    (regras em `a_precificar.py`). Todas as lojas: o movimento é o do PRICE."""
+    (regras em `a_precificar.py`), e a recomendação do GPS para as 36 descrições
+    da tabela 2D (`gps_dispersao.py`). Todas as lojas: o movimento é o do PRICE."""
     empresa = _validar_nome_empresa(empresa)
     # Disco antes de tudo: com o que o lote da manhã deixou, a aba abre sem ler
     # o movimento do PRICE (~2 s) nem recalcular os pares (~2 s).
@@ -3374,12 +3457,12 @@ def obter_a_precificar(empresa: str, usuario: str = Depends(exigir_login)):
             assinatura_dump = _assinatura_arquivo(_caminho_precificacao_empresa(empresa))
         except (HTTPException, OSError):
             assinatura_dump = None
-        chave_disco = ("a-precificar", assinatura_mgp, assinatura_dump)
+        chave_disco = ("a-precificar", assinatura_mgp, assinatura_dump, _assinatura_gps(empresa))
         em_disco = _tela_do_disco(empresa, "a-precificar", chave_disco)
         if em_disco is not None:
             return em_disco
     _mov, skus, contexto = _base_a_precificar(empresa)
-    resultado = a_precificar.montar_a_precificar(skus, contexto)
+    resultado = a_precificar.montar_a_precificar(skus, contexto, _gps_a_precificar(empresa, contexto))
     resultado["empresa"] = empresa
     if chave_disco is not None:
         _tela_para_disco(empresa, "a-precificar", chave_disco, resultado)
@@ -3388,9 +3471,10 @@ def obter_a_precificar(empresa: str, usuario: str = Depends(exigir_login)):
 
 @app.get("/api/precificacao/{empresa}/a-precificar/par")
 def obter_par_a_precificar(
-    empresa: str, descricao: str, fabricante: str, usuario: str = Depends(exigir_login),
+    empresa: str, descricao: str, fabricante: Optional[str] = None, usuario: str = Depends(exigir_login),
 ):
-    """Painel do item: margem por semana da descrição × fabricante e os SKUs sinalizados."""
+    """Painel do item: margem por semana e os SKUs sinalizados — do produto
+    (descrição, sem `fabricante`) ou da descrição × fabricante."""
     empresa = _validar_nome_empresa(empresa)
     mov, skus, _contexto = _base_a_precificar(empresa)
     return a_precificar.detalhe_par(mov, skus, descricao, fabricante)

@@ -35,6 +35,8 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+import gps_dispersao
+
 DIAS_RECENTE = 30
 DIAS_BASE = 90
 QUEDA_MARGEM_PP = 2.0
@@ -250,8 +252,13 @@ def _media_ponderada(valores: pd.Series, pesos: pd.Series) -> float | None:
     return float((valores[ok] * pesos[ok]).sum() / pesos[ok].sum())
 
 
-def _pares(sel: pd.DataFrame, skus: pd.DataFrame, contexto: dict[str, Any]) -> pd.DataFrame:
+def _pares(
+    sel: pd.DataFrame, skus: pd.DataFrame, contexto: dict[str, Any], por_fabricante: bool = True,
+) -> pd.DataFrame:
     """Uma linha por descrição × fabricante, somando os SKUs sinalizados dele.
+
+    Com `por_fabricante=False`, uma linha por descrição (o produto, grão em que o
+    GPS mede), juntando os fabricantes.
 
     Margem sai das somas de receita e CMV (nunca média de margens). Custo, preço
     e reajuste são médias dos SKUs ponderadas pela receita recente: preço
@@ -263,6 +270,9 @@ def _pares(sel: pd.DataFrame, skus: pd.DataFrame, contexto: dict[str, Any]) -> p
     dias_r = max(contexto["dias_recente"], 1)
     d_sel, f_sel = _chaves_par(sel)
     d_all, f_all = _chaves_par(skus)
+    if not por_fabricante:
+        f_sel = pd.Series("", index=sel.index)
+        f_all = pd.Series("", index=skus.index)
     vende = (skus["receita_b"] + skus["receita_r"]) > 0
     total_par = vende.groupby([d_all, f_all]).sum()
     receita_fab = skus["receita_b"].groupby(f_all).sum()
@@ -276,7 +286,7 @@ def _pares(sel: pd.DataFrame, skus: pd.DataFrame, contexto: dict[str, Any]) -> p
         qtd_dia_b = g["qtd_b"].sum() / dias_b
         qtd_dia_r = g["qtd_r"].sum() / dias_r
         com_alvo = g.loc[g["alvo"].notna()]
-        fab_b = float(receita_fab.get(fabricante, 0.0))
+        fab_b = float(receita_fab.get(fabricante, 0.0)) if por_fabricante else 0.0
         linhas.append({
             "descricao": descricao,
             "fabricante": fabricante,
@@ -327,6 +337,8 @@ def _linha_par(r: pd.Series) -> dict[str, Any]:
         "var_qtd": _num(r["var_qtd"]),
         "reajuste": _num(r["reajuste"]),
         "perdido_dia": _num(r["perdido_dia"]),
+        "sinalizado": bool(r.get("sinalizado", True)),
+        "gps": r.get("gps"),
     }
 
 
@@ -334,21 +346,168 @@ def _selecionados(skus: pd.DataFrame) -> pd.DataFrame:
     return skus.loc[skus["a_precificar"]].sort_values("score", ascending=False)
 
 
-def montar_a_precificar(skus: pd.DataFrame, contexto: dict[str, Any]) -> dict[str, Any]:
-    """Resposta da tela: indicadores, fabricantes e a lista por descrição × fabricante."""
+def _so_gps(
+    sel: pd.DataFrame, skus: pd.DataFrame, contexto: dict[str, Any], nomes, por_fabricante: bool,
+) -> pd.DataFrame:
+    """Linhas das descrições do GPS que o A precificar não sinalizou.
+
+    Entram na tela só pela recomendação do GPS (Oportunidade, Reduzir…): sem
+    prova e sem lucro perdido, porque as regras do A precificar não as pegaram.
+    Por produto, é a descrição sem nenhum SKU sinalizado; por fabricante, o par.
+    """
+    d_sel, f_sel = _chaves_par(sel)
+    d_all, f_all = _chaves_par(skus)
+    if por_fabricante:
+        ja = set(zip(d_sel, f_sel))
+        fora = [chave not in ja for chave in zip(d_all, f_all)]
+    else:
+        ja = set(d_sel)
+        fora = [d not in ja for d in d_all]
+    fora = pd.Series(fora, index=skus.index, dtype=bool)
+    candidatos = skus.loc[skus["descricao"].isin(nomes) & (skus["receita_r"] > 0) & fora]
+    extra = _pares(candidatos, skus, contexto, por_fabricante=por_fabricante)
+    if extra.empty:
+        return extra
+    extra["provas"] = [{} for _ in range(len(extra))]
+    extra["perdido_dia"] = 0.0
+    extra["score"] = 0.0
+    extra["reajuste"] = np.nan
+    return extra.sort_values("receita_base", ascending=False).reset_index(drop=True)
+
+
+def _gps_do_par(r: pd.Series, descricao_gps: dict[str, Any], sinalizado: bool) -> dict[str, Any]:
+    sem_repasse = (
+        r["var_custo"] - r["var_preco"]
+        if pd.notna(r["var_custo"]) and pd.notna(r["var_preco"]) else None
+    )
+    aplicado = descricao_gps["aplicado"]
+    recomendacao = gps_dispersao.recomendar(aplicado, r["var_qtd"], sem_repasse, sinalizado)
+    agora = gps_dispersao.ajuste_agora(recomendacao, aplicado)
+    margem = r["margem_recente"]
+    faixa = descricao_gps["faixa"]
+    return {
+        "classe": descricao_gps["classe"],
+        "participacao": _num(descricao_gps["participacao"], 3),
+        "dispersao": _num(descricao_gps["dispersao"]),
+        "perfil_item": descricao_gps["perfil_item"],
+        "faixa": [_num(faixa[0]), _num(faixa[1])],
+        "regra": descricao_gps["regra"],
+        "limite_alvo": _num(descricao_gps["limite_alvo"]),
+        "distancia": _num(descricao_gps["distancia"]),
+        "teto": _num(descricao_gps["teto"]),
+        "aplicado": _num(aplicado),
+        "recomendacao": recomendacao,
+        "ajuste_agora": _num(agora),
+        "margem_alvo": _num(margem + agora) if pd.notna(margem) else None,
+    }
+
+
+def _anexar_gps(linhas: pd.DataFrame, gps: dict[str, Any] | None, sinalizado: bool) -> pd.DataFrame:
+    """GPS da descrição cruzado com as provas de cada linha (produto ou fabricante)."""
+    if linhas.empty:
+        return linhas
+    linhas = linhas.copy()
+    descricoes = (gps or {}).get("descricoes") or {}
+    linhas["sinalizado"] = sinalizado
+    linhas["gps"] = [
+        _gps_do_par(r, descricoes[r["descricao"]], sinalizado) if r["descricao"] in descricoes else None
+        for _i, r in linhas.iterrows()
+    ]
+    return linhas
+
+
+def _linha_produto(r: pd.Series, fabricantes: list[dict[str, Any]]) -> dict[str, Any]:
+    linha = _linha_par(r)
+    del linha["fabricante"], linha["part_fabricante"]
+    linha["fabricantes"] = fabricantes
+    return linha
+
+
+def _bloco_gps(gps: dict[str, Any] | None, produtos: pd.DataFrame, extra: pd.DataFrame,
+               receita_total_janela: float | None) -> dict[str, Any]:
+    """Perfil da empresa e quantos produtos (descrições) caem em cada recomendação."""
+    if gps is None or not gps.get("descricoes"):
+        motivo = (gps or {}).get("motivo") or "Nenhuma das 36 descrições do GPS vendeu no período."
+        return {"disponivel": False, "motivo": motivo}
+    perfil = gps["perfil"]
+    contagem: dict[str, list[float]] = {}
+    for df in (produtos, extra):
+        if "gps" not in df.columns:
+            continue
+        for g, perdido in zip(df["gps"], df["perdido_dia"]):
+            if g:
+                contagem.setdefault(g["recomendacao"], []).append(float(perdido))
+    receita_gps = gps.get("receita_descricoes")
+    return {
+        "disponivel": True,
+        "perfil": {
+            "meses": perfil["meses"],
+            "margem": _num(perfil["margem"]),
+            "despesas": _num(perfil["despesas"]),
+            "taxa_retorno": _num(perfil["taxa_retorno"]),
+            "perfil": perfil["perfil"],
+            "rotulo": perfil["rotulo"],
+        },
+        "margem_geral": _num(gps["margem_geral"]),
+        "descricoes": len(gps["descricoes"]),
+        "cobertura_receita": (
+            _num(receita_gps / receita_total_janela * 100, 1)
+            if receita_gps is not None and receita_total_janela else None
+        ),
+        "recomendacoes": [
+            {
+                "id": rid, "rotulo": rotulo, "direcao": direcao,
+                "produtos": len(contagem.get(rid, [])),
+                "perdido_dia": _num(sum(contagem.get(rid, []))),
+            }
+            for rid, rotulo, direcao in gps_dispersao.RECOMENDACOES
+        ],
+        "produtos_fora": int(produtos["gps"].isna().sum()) if "gps" in produtos.columns else 0,
+    }
+
+
+def montar_a_precificar(
+    skus: pd.DataFrame, contexto: dict[str, Any], gps: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Resposta da tela: indicadores, fabricantes e a lista por produto (descrição).
+
+    Cada produto traz os fabricantes (descrição × fabricante, o grão em que o
+    PRICE precifica) para a tela abrir embaixo da linha. Com `gps` (perfil +
+    métricas das 36 descrições, de `gps_dispersao`), produto e fabricantes dessas
+    descrições ganham a recomendação do GPS — medida pela descrição —, e os
+    produtos que só o GPS aponta vêm depois dos sinalizados, com `sinalizado = False`.
+    """
     if skus.empty:
         return {
             "janela": None,
-            "resumo": {"pares": 0, "skus": 0, "curva_a": 0, "fabricantes": 0, "receita_em_jogo": 0.0,
-                       "part_receita": None, "perdido_dia": 0.0, "custo_sem_repasse": 0,
-                       "com_alvo": 0},
+            "resumo": {"produtos": 0, "pares": 0, "skus": 0, "curva_a": 0, "fabricantes": 0,
+                       "receita_em_jogo": 0.0, "part_receita": None, "perdido_dia": 0.0,
+                       "custo_sem_repasse": 0, "com_alvo": 0},
             "fabricantes": [],
+            "produtos": [],
+            "total_produtos": 0,
             "pares": [],
             "total_pares": 0,
+            "gps": _bloco_gps(None, pd.DataFrame(), pd.DataFrame(), None),
         }
     sel = _selecionados(skus)
     total_b = contexto["receita_total_base"]
-    pares = _pares(sel, skus, contexto)
+    nomes_gps = list((gps or {}).get("descricoes") or {})
+
+    pares = _anexar_gps(_pares(sel, skus, contexto), gps, sinalizado=True)
+    produtos = _anexar_gps(_pares(sel, skus, contexto, por_fabricante=False), gps, sinalizado=True)
+    pares_gps = pd.DataFrame()
+    produtos_gps = pd.DataFrame()
+    if nomes_gps:
+        pares_gps = _anexar_gps(_so_gps(sel, skus, contexto, nomes_gps, True), gps, sinalizado=False)
+        produtos_gps = _anexar_gps(_so_gps(sel, skus, contexto, nomes_gps, False), gps, sinalizado=False)
+    bloco_gps = _bloco_gps(gps, produtos, produtos_gps, (gps or {}).get("receita_total"))
+
+    # Fabricantes de cada produto: os sinalizados primeiro, depois os que só o GPS aponta.
+    por_descricao: dict[str, list[dict[str, Any]]] = {}
+    for df in (pares, pares_gps):
+        for _i, r in df.iterrows():
+            por_descricao.setdefault(r["descricao"], []).append(_linha_par(r))
 
     fabricantes = []
     if not pares.empty:
@@ -379,9 +538,10 @@ def montar_a_precificar(skus: pd.DataFrame, contexto: dict[str, Any]) -> dict[st
             "dias_recente": contexto["dias_recente"],
         },
         "resumo": {
+            "produtos": int(len(produtos)),
             "pares": int(len(pares)),
             "skus": int(len(sel)),
-            "curva_a": int((pares["curva"] == "A").sum()) if not pares.empty else 0,
+            "curva_a": int((produtos["curva"] == "A").sum()) if not produtos.empty else 0,
             "fabricantes": len(fabricantes),
             "receita_em_jogo": _num(receita_em_jogo),
             "part_receita": _num(receita_em_jogo / total_b * 100, 2) if total_b > 0 else None,
@@ -391,15 +551,30 @@ def montar_a_precificar(skus: pd.DataFrame, contexto: dict[str, Any]) -> dict[st
         },
         "fabricantes": fabricantes,
         # A ordem já põe o que importa no topo; a busca da tela filtra estes.
+        "produtos": [
+            _linha_produto(r, por_descricao.get(r["descricao"], []))
+            for df in (produtos.head(LIMITE_LINHAS), produtos_gps.head(LIMITE_LINHAS))
+            for _i, r in df.iterrows()
+        ],
+        "total_produtos": int(len(produtos)),
         "pares": [_linha_par(r) for _i, r in pares.head(LIMITE_LINHAS).iterrows()],
         "total_pares": int(len(pares)),
+        "gps": bloco_gps,
     }
 
 
-def detalhe_par(mov: pd.DataFrame, skus: pd.DataFrame, descricao: str, fabricante: str) -> dict[str, Any]:
-    """Painel do item: margem por semana do par (todos os SKUs) e os SKUs sinalizados."""
+def detalhe_par(
+    mov: pd.DataFrame, skus: pd.DataFrame, descricao: str, fabricante: str | None = None,
+) -> dict[str, Any]:
+    """Painel do item: margem por semana (todos os SKUs) e os SKUs sinalizados.
+
+    Sem `fabricante`, o produto inteiro — a descrição com todos os fabricantes.
+    """
     d_all, f_all = _chaves_par(skus)
-    do_par = skus.loc[(d_all == descricao) & (f_all == fabricante)]
+    filtro = d_all == descricao
+    if fabricante is not None:
+        filtro &= f_all == fabricante
+    do_par = skus.loc[filtro]
     sel = _selecionados(do_par)
     return {
         "descricao": descricao,

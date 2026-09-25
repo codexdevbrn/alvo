@@ -1734,6 +1734,10 @@ export type ParAPrecificar = {
   var_qtd: number | null;
   reajuste: number | null;
   perdido_dia: number | null;
+  /** Falso nos pares que só o GPS aponta (sem prova do A precificar). Ausente em resposta antiga. */
+  sinalizado?: boolean;
+  /** `null` fora das 36 descrições da tabela 2D. */
+  gps?: GpsPar | null;
 };
 
 export type FabricanteAPrecificar = {
@@ -1754,6 +1758,8 @@ export type APrecificarResposta = {
     dias_recente: number;
   } | null;
   resumo: {
+    /** Produtos (descrições) sinalizados. Ausente em resposta antiga. */
+    produtos?: number;
     pares: number;
     skus: number;
     curva_a: number;
@@ -1765,15 +1771,81 @@ export type APrecificarResposta = {
     com_alvo: number;
   };
   fabricantes: FabricanteAPrecificar[];
+  /** A lista da tela, por produto (descrição): sinalizados primeiro, na ordem do
+   *  A precificar; depois os que só o GPS aponta. Ausente em resposta antiga. */
+  produtos?: ProdutoAPrecificar[];
+  /** Só os sinalizados. */
+  total_produtos?: number;
+  /** Descrição × fabricante sinalizados (os mesmos que vêm dentro de cada produto). */
   pares: ParAPrecificar[];
   total_pares: number;
+  /** Ausente em resposta gravada antes do GPS entrar na tela. */
+  gps?: ResumoGps;
 };
+
+/** Um produto (descrição) da lista, somando os fabricantes; `fabricantes` abre embaixo da linha. */
+export type ProdutoAPrecificar = Omit<ParAPrecificar, 'fabricante' | 'part_fabricante'> & {
+  fabricantes: ParAPrecificar[];
+};
+
+export type RecomendacaoGps = 'reajustar' | 'etapas' | 'oportunidade' | 'divergencia' | 'reduzir' | 'segurar' | 'manter';
+
+/** GPS de um par — calculado pela descrição, igual para todos os fabricantes dela.
+ *  Unidades em pontos percentuais. Regras em `backend/gps_dispersao.py`. */
+export type GpsPar = {
+  classe: 'abaixo' | 'dentro' | 'acima';
+  participacao: number | null;
+  /** Margem da descrição − margem geral da empresa. */
+  dispersao: number | null;
+  /** Perfil em que o preço atual da descrição cai; `null` fora de todas as faixas. */
+  perfil_item: string | null;
+  /** Faixa do perfil da empresa; `null` no lado aberto do "Até X". */
+  faixa: [number | null, number | null];
+  regra: string;
+  /** Limite MENOR/MAIOR; `null` em "Acima da Média", que vai até a borda da faixa. */
+  limite_alvo: number | null;
+  distancia: number | null;
+  teto: number | null;
+  /** Distância cortada pelo teto. */
+  aplicado: number | null;
+  recomendacao: RecomendacaoGps;
+  /** O que mexer nesta rodada: metade em "Subir em etapas", zero em Segurar/Divergência/Manter. */
+  ajuste_agora: number | null;
+  margem_alvo: number | null;
+};
+
+export type ResumoGps =
+  | {
+      disponivel: true;
+      perfil: {
+        meses: string[];
+        margem: number | null;
+        despesas: number | null;
+        taxa_retorno: number | null;
+        perfil: string;
+        rotulo: string;
+      };
+      margem_geral: number | null;
+      descricoes: number;
+      cobertura_receita: number | null;
+      recomendacoes: {
+        id: RecomendacaoGps;
+        rotulo: string;
+        direcao: 'subir' | 'descer' | 'manter';
+        produtos: number;
+        perdido_dia: number | null;
+      }[];
+      /** Produtos sinalizados fora das 36 descrições do GPS. */
+      produtos_fora: number;
+    }
+  | { disponivel: false; motivo: string };
 
 export type SemanaMargem = { semana: string; margem: number | null; receita: number | null; qtd: number | null };
 
 export type DetalheParAPrecificar = {
   descricao: string;
-  fabricante: string;
+  /** `null` no painel do produto inteiro. */
+  fabricante: string | null;
   semanas: SemanaMargem[];
   skus: ItemAPrecificar[];
   total_skus: number;
@@ -1789,10 +1861,12 @@ export async function obterAPrecificar(empresa: string, signal?: AbortSignal): P
 
 export async function obterParAPrecificar(
   empresa: string,
-  par: { descricao: string; fabricante: string },
+  par: { descricao: string; fabricante?: string | null },
   signal?: AbortSignal,
 ): Promise<DetalheParAPrecificar> {
-  const query = new URLSearchParams({ descricao: par.descricao, fabricante: par.fabricante });
+  // Sem fabricante, o produto inteiro (todos os fabricantes da descrição).
+  const query = new URLSearchParams({ descricao: par.descricao });
+  if (par.fabricante != null) query.set('fabricante', par.fabricante);
   const res = await chamar(
     `/api/precificacao/${encodeURIComponent(empresa)}/a-precificar/par?${query}`,
     { headers: authHeaders(), signal },
