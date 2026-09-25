@@ -76,8 +76,8 @@ export function BannerAtualizacao({ status }: Props) {
       await new Promise((r) => setTimeout(r, 2000));
     }
     setErro(
-      'O 2D Prisma reabriu, mas esta aba não conseguiu se reconectar. '
-      + 'Feche esta aba e use a janela que ele abriu.',
+      'A atualização está demorando para voltar. '
+      + 'Aguarde mais um pouco e recarregue esta aba (F5).',
     );
     setAplicando(false);
   };

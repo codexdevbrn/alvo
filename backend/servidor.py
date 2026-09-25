@@ -175,6 +175,27 @@ def _esperar_servidor(porta: int) -> bool:
 
 ARG_PRE_GERAR = "--pre-gerar"
 
+# O atualizador religa o app com este argumento. Sem ele, cada atualização abria
+# uma aba nova ao lado da que o usuário já tinha — a aba aberta se recarrega
+# sozinha quando a versão do servidor muda (`useRecarregarQuandoVersaoMudar`).
+ARG_APOS_ATUALIZAR = "--apos-atualizar"
+# Atualizador de versão anterior não passa o argumento; o log que ele grava ao
+# lado da instalação, escrito há poucos instantes, é a pista de que foi ele.
+SEGUNDOS_LOG_ATUALIZACAO_RECENTE = 180
+
+
+def _religado_pelo_atualizador() -> bool:
+    if ARG_APOS_ATUALIZAR in sys.argv:
+        return True
+    if not getattr(sys, "frozen", False):
+        return False
+    pasta_instalacao = os.path.dirname(os.path.abspath(sys.executable))
+    log = os.path.join(os.path.dirname(pasta_instalacao), "Prisma-atualizacao.log")
+    try:
+        return time.time() - os.path.getmtime(log) < SEGUNDOS_LOG_ATUALIZACAO_RECENTE
+    except OSError:
+        return False
+
 
 def _rodar_lote() -> int:
     """Executa a pré-geração e devolve o código de saída.
@@ -264,7 +285,10 @@ def main() -> None:
     thread_servidor = threading.Thread(target=servidor.run, name="uvicorn", daemon=True)
     thread_servidor.start()
 
-    _abrir_navegador_quando_subir(porta)
+    if _religado_pelo_atualizador():
+        print("Religado pelo atualizador: a aba já aberta se recarrega sozinha.")
+    else:
+        _abrir_navegador_quando_subir(porta)
 
     def encerrar():
         print("Encerrando o 2D Prisma...")

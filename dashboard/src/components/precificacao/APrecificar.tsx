@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Loader2, Search, Tags } from 'lucide-react';
+import { Fragment, useEffect, useMemo, useState } from 'react';
+import { AlertTriangle, ChevronDown, ChevronRight, Loader2, Search, Tags } from 'lucide-react';
 import {
   CartesianGrid,
   Line,
@@ -16,10 +16,14 @@ import {
   type APrecificarResposta,
   type DetalheParAPrecificar,
   type ParAPrecificar,
+  type ProdutoAPrecificar,
   type ProvaPrecificar,
+  type RecomendacaoGps,
   type SemanaMargem,
 } from '../../api/client';
 import { formatCurrency, formatPercent } from '../../utils/formatters';
+import { BadgeGps, BlocoGpsPainel, SecaoGps } from './GpsAPrecificar';
+import { RECOMENDACOES_GPS, pp } from './gps';
 
 type Props = { empresa: string };
 
@@ -63,8 +67,14 @@ function normalizar(texto: string): string {
   return texto.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 }
 
-function chavePar(par: { descricao: string; fabricante: string }): string {
-  return `${par.descricao}\u0000${par.fabricante}`;
+/** Linha da tabela: o produto (descrição, sem fabricante) ou um fabricante dele. */
+type ItemLinha = Omit<ParAPrecificar, 'fabricante' | 'part_fabricante'> & {
+  fabricante?: string;
+  part_fabricante?: number | null;
+};
+
+function chaveItem(item: { descricao: string; fabricante?: string }): string {
+  return `${item.descricao}\u0000${item.fabricante ?? ''}`;
 }
 
 /** O backend responde 404 com esta frase quando a empresa não tem o parquet do PRICE. */
@@ -72,15 +82,21 @@ function ehSemMovimentoPrice(erro: string | null): boolean {
   return !!erro && erro.toLowerCase().includes('ainda não tem movimento do price');
 }
 
-/** Aba "A precificar": quais produtos (descrição × fabricante, o grão em que o
- *  PRICE precifica) precisam de preço novo, a prova de cada um e quanto pesam na
- *  receita. SKU é detalhe, no painel. Regras em `backend/a_precificar.py`. */
+/** Aba "A precificar": quais produtos (descrição) precisam de preço novo, a prova
+ *  de cada um e quanto pesam na receita. Clicar no produto abre embaixo os
+ *  fabricantes (descrição × fabricante, o grão em que o PRICE precifica); SKU é
+ *  detalhe, no painel. Regras em `backend/a_precificar.py` e `gps_dispersao.py`. */
 export function APrecificar({ empresa }: Props) {
   const [dados, setDados] = useState<APrecificarResposta | null>(null);
   const [resultado, setResultado] = useState<{ chave: string; erro: string | null } | null>(null);
   const [fabricante, setFabricante] = useState<string | null>(null);
   const [busca, setBusca] = useState('');
   const [selecionado, setSelecionado] = useState<string | null>(null);
+  // Produto com os fabricantes abertos embaixo da linha.
+  const [aberto, setAberto] = useState<string | null>(null);
+  // Filtro do GPS: sem ele a lista é a do A precificar (só sinalizados); com ele,
+  // entram também os pares que só o GPS aponta.
+  const [recomendacao, setRecomendacao] = useState<RecomendacaoGps | null>(null);
 
   // Trocar de empresa remonta o componente (key na página), zerando filtros.
   const chave = empresa;
@@ -101,18 +117,24 @@ export function APrecificar({ empresa }: Props) {
     return () => controle.abort();
   }, [chave, empresa]);
 
-  const pares = useMemo(() => {
+  const produtos = useMemo(() => {
     if (!dados) return [];
     const termo = normalizar(busca.trim());
-    return dados.pares.filter((par) => {
-      if (fabricante && par.fabricante !== fabricante) return false;
+    return (dados.produtos ?? []).filter((produto) => {
+      if (recomendacao ? produto.gps?.recomendacao !== recomendacao : produto.sinalizado === false) return false;
+      if (fabricante && !produto.fabricantes.some((f) => f.fabricante === fabricante)) return false;
       if (!termo) return true;
-      return normalizar(`${par.descricao} ${par.fabricante}`).includes(termo);
+      return normalizar(`${produto.descricao} ${produto.fabricantes.map((f) => f.fabricante).join(' ')}`).includes(termo);
     });
-  }, [dados, fabricante, busca]);
+  }, [dados, fabricante, busca, recomendacao]);
 
   // Sem clique, o painel mostra o primeiro da lista — o que mais pesa no filtro.
-  const parAtivo = pares.find((par) => chavePar(par) === selecionado) ?? pares[0] ?? null;
+  let itemAtivo: ItemLinha | null = produtos[0] ?? null;
+  for (const produto of produtos) {
+    if (chaveItem(produto) === selecionado) itemAtivo = produto;
+    const filho = produto.fabricantes.find((f) => chaveItem(f) === selecionado);
+    if (filho) itemAtivo = filho;
+  }
 
   if (erro && ehSemMovimentoPrice(erro)) {
     return (
@@ -151,6 +173,8 @@ export function APrecificar({ empresa }: Props) {
   }
 
   const { resumo, janela } = dados;
+  const sinalizadosNaLista = (dados.produtos ?? []).filter((p) => p.sinalizado !== false).length;
+  const totalProdutos = dados.total_produtos ?? sinalizadosNaLista;
   const maxPerdido = Math.max(...dados.fabricantes.map((f) => f.perdido_dia ?? 0), 0);
   const fabricantesVisiveis = dados.fabricantes.slice(0, FABRICANTES_VISIVEIS);
   // Fabricante escolhido fora do top continua visível, senão o filtro some da tela.
@@ -164,8 +188,8 @@ export function APrecificar({ empresa }: Props) {
       <div className="prec-indicadores">
         <Indicador
           rotulo="Produtos a precificar"
-          valor={resumo.pares.toLocaleString('pt-BR')}
-          detalhe={`${resumo.curva_a.toLocaleString('pt-BR')} curva A · ${resumo.fabricantes.toLocaleString('pt-BR')} fabricantes · ${resumo.skus.toLocaleString('pt-BR')} SKUs`}
+          valor={(resumo.produtos ?? resumo.pares).toLocaleString('pt-BR')}
+          detalhe={`${resumo.curva_a.toLocaleString('pt-BR')} curva A · ${resumo.pares.toLocaleString('pt-BR')} com fabricante · ${resumo.skus.toLocaleString('pt-BR')} SKUs`}
           acento="var(--accent)"
         />
         <Indicador
@@ -187,6 +211,17 @@ export function APrecificar({ empresa }: Props) {
           acento="var(--warning)"
         />
       </div>
+
+      {dados.gps && (
+        <SecaoGps
+          gps={dados.gps}
+          recomendacao={recomendacao}
+          onEscolher={(rec) => {
+            setRecomendacao(rec);
+            setSelecionado(null);
+          }}
+        />
+      )}
 
       {dados.fabricantes.length > 0 && (
         <section className="glass-card glass-card-flat prec-card">
@@ -235,13 +270,21 @@ export function APrecificar({ empresa }: Props) {
         <section className="glass-card glass-card-flat prec-card">
           <div className="prec-card-topo">
             <div>
-              <h2>{fabricante ? `A precificar · ${fabricante}` : 'A precificar'}</h2>
+              <h2>
+                {recomendacao ? `GPS · ${RECOMENDACOES_GPS[recomendacao].rotulo}` : 'A precificar'}
+                {fabricante ? ` · ${fabricante}` : ''}
+              </h2>
               <p className="prec-mudo">
                 {janela
-                  ? `Por descrição e fabricante, de ${dataBr(janela.inicio_base)} a ${dataBr(janela.fim)}: os últimos 30 dias contra os 90 anteriores.`
+                  ? `Por produto, de ${dataBr(janela.inicio_base)} a ${dataBr(janela.fim)}: os últimos 30 dias contra os 90 anteriores. Clique no produto para ver os fabricantes.`
                   : 'Sem movimento no período.'}
               </p>
             </div>
+            {recomendacao && (
+              <button type="button" className="prec-mudo aprec-gps-voltar" onClick={() => setRecomendacao(null)}>
+                voltar à lista do A precificar
+              </button>
+            )}
             <label className="prec-busca">
               <Search size={13} aria-hidden="true" />
               <input
@@ -253,20 +296,35 @@ export function APrecificar({ empresa }: Props) {
               />
             </label>
           </div>
-          <TabelaPares
-            pares={pares}
-            selecionado={parAtivo ? chavePar(parAtivo) : null}
-            onClicar={(par) => setSelecionado(chavePar(par))}
+          <TabelaProdutos
+            produtos={produtos}
+            comGps={dados.gps?.disponivel === true}
+            aberto={aberto}
+            fabricanteFiltro={fabricante}
+            selecionado={itemAtivo ? chaveItem(itemAtivo) : null}
+            onProduto={(produto) => {
+              const chaveProduto = chaveItem(produto);
+              // Primeiro clique abre e seleciona; clicar de novo no produto já aberto fecha.
+              setAberto((atual) => (atual === produto.descricao && selecionado === chaveProduto ? null : produto.descricao));
+              setSelecionado(chaveProduto);
+            }}
+            onFabricante={(par) => setSelecionado(chaveItem(par))}
           />
           <p className="prec-mudo prec-rodape">
             Ordem = lucro por dia perdido até a referência × peso da curva (A 1 · B 0,6 · C 0,3) × quantidade de provas,
             somados nos SKUs do produto. Referência = alvo da última precificação; sem precificação, a margem dos 90 dias.
-            {dados.total_pares > dados.pares.length &&
-              ` Mostrando os ${dados.pares.length.toLocaleString('pt-BR')} primeiros de ${dados.total_pares.toLocaleString('pt-BR')}.`}
+            {dados.gps?.disponivel &&
+              ' GPS: só nas 36 descrições da tabela 2D, calculado pelo produto (descrição); cada fabricante leva o mesmo ajuste, cruzado com as provas dele. Ajuste = distância até a posição correta na faixa do perfil, limitado a um degrau.'}
+            {totalProdutos > sinalizadosNaLista &&
+              ` Mostrando os ${sinalizadosNaLista.toLocaleString('pt-BR')} primeiros de ${totalProdutos.toLocaleString('pt-BR')}.`}
           </p>
         </section>
 
-        <PainelPar empresa={empresa} par={parAtivo} />
+        <PainelPar
+          empresa={empresa}
+          par={itemAtivo}
+          perfilGps={dados.gps?.disponivel ? dados.gps.perfil.rotulo : null}
+        />
       </div>
     </div>
   );
@@ -293,68 +351,149 @@ function BolasProvas({ provas }: { provas: Partial<Record<ProvaPrecificar, numbe
   );
 }
 
-function TabelaPares({
-  pares,
+function textoSkus(item: { skus: number; skus_total: number }): string {
+  return item.skus === item.skus_total
+    ? `${item.skus} SKU${item.skus === 1 ? '' : 's'}`
+    : `${item.skus} de ${item.skus_total} SKUs`;
+}
+
+function TabelaProdutos({
+  produtos,
+  comGps,
+  aberto,
+  fabricanteFiltro,
   selecionado,
-  onClicar,
+  onProduto,
+  onFabricante,
 }: {
-  pares: ParAPrecificar[];
+  produtos: ProdutoAPrecificar[];
+  comGps: boolean;
+  aberto: string | null;
+  fabricanteFiltro: string | null;
   selecionado: string | null;
-  onClicar: (par: ParAPrecificar) => void;
+  onProduto: (produto: ProdutoAPrecificar) => void;
+  onFabricante: (par: ParAPrecificar) => void;
 }) {
-  if (pares.length === 0) return <p className="prec-vazio">Nenhum produto a precificar neste filtro.</p>;
+  if (produtos.length === 0) return <p className="prec-vazio">Nenhum produto a precificar neste filtro.</p>;
   return (
     <div className="prec-tabela-rolagem">
       <table className="prec-tabela aprec-tabela">
         <thead>
           <tr>
-            <th>Descrição</th>
-            <th>Fabricante</th>
+            <th>Produto</th>
             <th>Curva</th>
             <th>Provas</th>
-            <th className="r">Part. receita</th>
+            {!comGps && <th className="r">Part. receita</th>}
             <th className="r">Margem 90d → 30d</th>
             <th className="r">Gap</th>
             <th className="r">Qtd / dia</th>
             <th className="r">Perdido / dia</th>
+            {comGps && (
+              <th className="aprec-gps-th" title="Recomendação do GPS e o ajuste de margem, medidos pelo produto (descrição): distância até a posição correta na faixa do perfil, limitada a um degrau">
+                GPS
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
-          {pares.map((par) => (
-            <tr
-              key={chavePar(par)}
-              className={selecionado === chavePar(par) ? 'is-selecionada' : undefined}
-              onClick={() => onClicar(par)}
-            >
-              <td>
-                <span className="prec-nome">
-                  {par.descricao}
-                  <small>
-                    {par.skus === par.skus_total ? `${par.skus} SKU${par.skus === 1 ? '' : 's'}` : `${par.skus} de ${par.skus_total} SKUs`}
-                  </small>
-                </span>
-              </td>
-              <td className="aprec-fabricante">{par.fabricante}</td>
-              <td><span className={`aprec-curva is-${par.curva}`}>{par.curva}</span></td>
-              <td><BolasProvas provas={par.provas} /></td>
-              <td className="r">{pct(par.part_receita, 2)}</td>
-              <td className="r">
-                {pct(par.margem_base)}<span className="prec-seta">→</span>{pct(par.margem_recente)}
-              </td>
-              <td className={`r${(par.gap ?? 0) < 0 ? ' is-queda' : ''}`}>{sinal(par.gap, 'pp')}</td>
-              <td className={`r${(par.var_qtd ?? 0) < 0 ? ' is-queda' : ' is-alta'}`}>
-                {par.var_qtd == null ? '—' : `${par.var_qtd < 0 ? '▼' : '▲'} ${pct(Math.abs(par.var_qtd))}`}
-              </td>
-              <td className="r is-queda">− {moeda(par.perdido_dia)}</td>
-            </tr>
-          ))}
+          {produtos.map((produto) => {
+            const expandido = aberto === produto.descricao;
+            const filhos = fabricanteFiltro
+              ? produto.fabricantes.filter((f) => f.fabricante === fabricanteFiltro)
+              : produto.fabricantes;
+            const n = produto.fabricantes.length;
+            return (
+              <Fragment key={chaveItem(produto)}>
+                <tr
+                  className={`aprec-produto${selecionado === chaveItem(produto) ? ' is-selecionada' : ''}${expandido ? ' is-aberto' : ''}`}
+                  onClick={() => onProduto(produto)}
+                >
+                  <td>
+                    {/* Botão para o teclado; o clique sobe até a linha, que abre e seleciona. */}
+                    <button type="button" className="prec-nome aprec-produto-nome" aria-expanded={expandido}>
+                      <span className="aprec-seta" aria-hidden="true">
+                        {expandido ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                      </span>
+                      <span>
+                        {produto.descricao}
+                        <small>
+                          {n} fabricante{n === 1 ? '' : 's'} · {textoSkus(produto)}
+                        </small>
+                      </span>
+                    </button>
+                  </td>
+                  <CelulasLinha item={produto} comGps={comGps} />
+                </tr>
+                {expandido &&
+                  filhos.map((par) => (
+                    <tr
+                      key={chaveItem(par)}
+                      className={`aprec-filho${selecionado === chaveItem(par) ? ' is-selecionada' : ''}`}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onFabricante(par);
+                      }}
+                    >
+                      <td>
+                        <span className="prec-nome aprec-filho-nome">
+                          {par.fabricante}
+                          <small>
+                            {par.sinalizado === false ? 'sem prova · ' : ''}
+                            {textoSkus(par)}
+                          </small>
+                        </span>
+                      </td>
+                      <CelulasLinha item={par} comGps={comGps} />
+                    </tr>
+                  ))}
+              </Fragment>
+            );
+          })}
         </tbody>
       </table>
     </div>
   );
 }
 
-function textoProva(prova: ProvaPrecificar, par: ParAPrecificar): string {
+/** Colunas depois do nome — iguais para o produto e para cada fabricante dele. */
+function CelulasLinha({ item, comGps }: { item: ItemLinha; comGps: boolean }) {
+  return (
+    <>
+      <td><span className={`aprec-curva is-${item.curva}`}>{item.curva}</span></td>
+      <td><BolasProvas provas={item.provas} /></td>
+      {!comGps && <td className="r">{pct(item.part_receita, 2)}</td>}
+      <td className="r">
+        {pct(item.margem_base)}<span className="prec-seta">→</span>{pct(item.margem_recente)}
+      </td>
+      <td className={`r${(item.gap ?? 0) < 0 ? ' is-queda' : ''}`}>{sinal(item.gap, 'pp')}</td>
+      <td className={`r${(item.var_qtd ?? 0) < 0 ? ' is-queda' : ' is-alta'}`}>
+        {item.var_qtd == null ? '—' : `${item.var_qtd < 0 ? '▼' : '▲'} ${pct(Math.abs(item.var_qtd))}`}
+      </td>
+      <td className="r is-queda">{item.sinalizado === false ? '—' : `− ${moeda(item.perdido_dia)}`}</td>
+      {comGps && <CelulasGps item={item} />}
+    </>
+  );
+}
+
+function CelulasGps({ item }: { item: ItemLinha }) {
+  const gps = item.gps;
+  if (!gps) return <td className="aprec-gps-td aprec-gps-fora">fora da tabela 2D</td>;
+  const cortado = gps.distancia != null && gps.aplicado != null && Math.abs(gps.distancia) - Math.abs(gps.aplicado) > 0.005;
+  const direcao = (gps.aplicado ?? 0) > 0 ? ' is-alta' : (gps.aplicado ?? 0) < 0 ? ' is-queda' : '';
+  return (
+    <td className="aprec-gps-td">
+      <span className="aprec-gps-celula">
+        <BadgeGps recomendacao={gps.recomendacao} />
+        <small>
+          ajuste <b className={direcao}>{pp(gps.aplicado)}</b>
+          {cortado && <span className="aprec-gps-cortado" title="Distância até a posição correta, cortada pelo teto de um degrau"> {pp(gps.distancia)}</span>}
+        </small>
+      </span>
+    </td>
+  );
+}
+
+function textoProva(prova: ProvaPrecificar, par: ItemLinha): string {
   switch (prova) {
     case 'margem':
       return `margem ${pct(par.margem_base)} → ${pct(par.margem_recente)} nos últimos 30 dias`;
@@ -367,15 +506,16 @@ function textoProva(prova: ProvaPrecificar, par: ParAPrecificar): string {
   }
 }
 
-function PainelPar({ empresa, par }: { empresa: string; par: ParAPrecificar | null }) {
-  const chave = par ? `${empresa}|${chavePar(par)}` : null;
+function PainelPar({ empresa, par, perfilGps }: { empresa: string; par: ItemLinha | null; perfilGps: string | null }) {
+  const chave = par ? `${empresa}|${chaveItem(par)}` : null;
   const [resultado, setResultado] = useState<{ chave: string; detalhe: DetalheParAPrecificar | null; erro: string | null } | null>(null);
   const atual = resultado && resultado.chave === chave ? resultado : null;
   const descricao = par?.descricao ?? null;
+  // Sem fabricante é o produto inteiro: o gráfico e os SKUs juntam todos os fabricantes.
   const fabricante = par?.fabricante ?? null;
 
   useEffect(() => {
-    if (chave == null || descricao == null || fabricante == null) return;
+    if (chave == null || descricao == null) return;
     const controle = new AbortController();
     obterParAPrecificar(empresa, { descricao, fabricante }, controle.signal)
       .then((detalhe) => setResultado({ chave, detalhe, erro: null }))
@@ -396,11 +536,14 @@ function PainelPar({ empresa, par }: { empresa: string; par: ParAPrecificar | nu
 
   const detalhe = atual?.detalhe ?? null;
   return (
-    <aside className="glass-card glass-card-flat prec-painel" aria-label={`Detalhe de ${par.descricao} · ${par.fabricante}`}>
+    <aside
+      className="glass-card glass-card-flat prec-painel"
+      aria-label={`Detalhe de ${par.descricao}${par.fabricante ? ` · ${par.fabricante}` : ''}`}
+    >
       <div>
         <span className="prec-rotulo">Curva {par.curva}</span>
         <h3>{par.descricao}</h3>
-        <p className="aprec-painel-fabricante">{par.fabricante}</p>
+        <p className="aprec-painel-fabricante">{par.fabricante ?? 'Todos os fabricantes'}</p>
       </div>
 
       <div>
@@ -414,6 +557,9 @@ function PainelPar({ empresa, par }: { empresa: string; par: ParAPrecificar | nu
         )}
       </div>
 
+      {par.gps && <BlocoGpsPainel gps={par.gps} perfil={perfilGps} />}
+
+      {par.sinalizado !== false && (
       <div>
         <span className="prec-rotulo">Provas</span>
         <ul className="aprec-prova-lista">
@@ -426,16 +572,18 @@ function PainelPar({ empresa, par }: { empresa: string; par: ParAPrecificar | nu
           ))}
         </ul>
       </div>
+      )}
 
       <div>
         <span className="prec-rotulo">Peso na receita</span>
         <dl className="aprec-dl">
           <div><dt>Receita 90 dias</dt><dd>{moeda(par.receita_base)}</dd></div>
           <div><dt>Da empresa</dt><dd>{pct(par.part_receita, 2)}</dd></div>
-          <div><dt>Do fabricante {par.fabricante}</dt><dd>{pct(par.part_fabricante)}</dd></div>
+          {par.fabricante && <div><dt>Do fabricante {par.fabricante}</dt><dd>{pct(par.part_fabricante)}</dd></div>}
         </dl>
       </div>
 
+      {par.sinalizado !== false && (
       <div>
         <span className="prec-rotulo">
           {par.alvo != null ? `Se precificar no alvo (${pct(par.referencia)})` : `Se voltar à margem de antes (${pct(par.referencia)})`}
@@ -446,6 +594,7 @@ function PainelPar({ empresa, par }: { empresa: string; par: ParAPrecificar | nu
         </dl>
         <p className="prec-mudo">Mesma quantidade dos últimos 30 dias; o reajuste pode mexer no volume.</p>
       </div>
+      )}
 
       {detalhe && detalhe.skus.length > 0 && (
         <div>
