@@ -107,6 +107,8 @@ Os dois endpoints usam `_exigir_origem_local`, como `/aplicar`: alteram o logon 
 
 O canal é uma pasta compartilhada (na prática o OneDrive da empresa) configurada em Configurações → Atualizações, gravada em `config_app.caminho_atualizacoes`. O app lê o `version.json`, compara com `versao.VERSAO` e oferece o update; ao aplicar, confere o sha256, entrega a troca ao `atualizador.exe` e se encerra. O atualizador espera o processo morrer, extrai ao lado, **preserva `dados_locais/`, `logs/` e `base_de_dados.xlsx`**, troca as pastas, religa e só apaga o backup depois de confirmar que a versão nova respondeu. Log em `<pai da instalação>\Prisma-atualizacao.log`.
 
+**Depois de atualizar, nenhuma aba nova.** O atualizador religa com `--apos-atualizar` e `servidor.py` não abre o navegador; atualizador de versão anterior (que não passa o argumento) é reconhecido pelo `Prisma-atualizacao.log` gravado há menos de 3 min. Quem troca de versão é a aba já aberta: `useRecarregarQuandoVersaoMudar` (no `AppShell`) consulta `/api/versao` a cada 15 s e recarrega quando o número muda.
+
 Três coisas a não mexer sem entender:
 
 - **`_exigir_origem_local`** recusa `/api/atualizacoes/aplicar` de fora da máquina, inclusive loopback com cabeçalho de proxy — defesa contra qualquer reverse proxy futuro que reexponha a API na rede, já que o login pode estar desativado (`auth.LOGIN_DESATIVADO`).

@@ -37,6 +37,7 @@ import { TopoCortesToggle } from './TopoCortesToggle';
 import { TopoGruposClientesFiltro } from './TopoGruposClientesFiltro';
 import { EncaixeTopoContext } from './encaixeTopo';
 import { useEscopoAtual } from '../hooks/useEscopoAtual';
+import { useRecarregarQuandoVersaoMudar } from '../hooks/useRecarregarQuandoVersaoMudar';
 
 const URL_CARTEIRA = 'http://127.0.0.1:3001';
 const LS_SIDEBAR = 'prisma_sidebar_collapsed';
@@ -143,6 +144,8 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   // No mobile a sidebar é uma barra de topo estática e sempre mostra os rótulos.
   const colapsado = collapsed && !isMobile;
   const mainRef = useRef<HTMLElement>(null);
+  // Depois de uma atualização o app não abre aba nova: esta é que vira a versão nova.
+  useRecarregarQuandoVersaoMudar();
   const [statusAtualizacao, setStatusAtualizacao] = useState<StatusAtualizacao | null>(null);
 
   // Aviso de versão nova em qualquer tela, e não só dentro de Configurações:

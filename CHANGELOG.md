@@ -4,6 +4,15 @@ Formato: uma seção por versão publicada, mais recente no topo. Histórico é
 incremental — entradas antigas nunca são apagadas. O estado atual das telas e
 funcionalidades vive em `DOC_TEC.md`, não aqui.
 
+## 1.7.21 — 2026-09-25
+
+### Corrigido
+
+- **Atualização não abre mais aba nova**: o app religado pelo atualizador sobe
+  sem abrir o navegador, e a aba que já estava aberta se recarrega sozinha
+  quando percebe a versão nova (vale para atualização pela faixa do topo, por
+  Configurações ou pelo menu da bandeja).
+
 ## 1.7.20 — 2026-09-25
 
 ### Novo

@@ -144,7 +144,9 @@ def religar(destino: str, log: Registro, versao_esperada: str = "") -> bool:
     log(f"Religando {executavel}{alvo}.")
     try:
         processo = subprocess.Popen(
-            [executavel], cwd=destino, close_fds=True,
+            # --apos-atualizar: o app sobe sem abrir aba nova; a que o usuário já
+            # tinha aberta se recarrega sozinha ao ver a versão mudar.
+            [executavel, "--apos-atualizar"], cwd=destino, close_fds=True,
             # CREATE_NEW_CONSOLE, e não DETACHED_PROCESS: o Prisma é uma aplicação
             # de console e DETACHED_PROCESS a deixa sem console nenhum, o que mata
             # o bootloader do PyInstaller antes de o servidor subir. Além de
