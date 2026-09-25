@@ -10544,3 +10544,318 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   border-left: 1px dashed var(--accent);
   background: var(--accent-soft);
 }
+
+/* ---------------------------------------------------------------------------
+   Compras (/compras) — reaproveita o esqueleto da Precificação (prec-*):
+   indicadores, tabela e painel. Aqui só o que é próprio da tela.
+   --------------------------------------------------------------------------- */
+
+.compras-parametros {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 1.25rem;
+  padding: 0.9rem 1.1rem;
+}
+
+.compras-campo {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.compras-seg {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  overflow: hidden;
+  background: var(--surface-1);
+}
+
+.compras-seg button {
+  padding: 0.3rem 0.75rem;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.compras-seg button + button { border-left: 1px solid var(--border); }
+.compras-seg button:not(.is-ativo):not(:disabled):hover { background: var(--surface-3); color: var(--text-primary); }
+.compras-seg button.is-ativo { background: var(--accent); color: var(--accent-contrast); }
+.compras-seg button:disabled { cursor: progress; }
+.compras-seg button:focus-visible,
+.compras-toggle input:focus-visible + .compras-toggle-trilho,
+.compras-tabela tbody tr:focus-visible,
+.compras-link:focus-visible,
+.compras-botao:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.compras-toggle {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+  font-size: 0.74rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.compras-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+}
+
+.compras-toggle-trilho {
+  position: relative;
+  width: 32px;
+  height: 18px;
+  border-radius: var(--raio-pill);
+  background: var(--surface-4);
+  transition: background 0.15s;
+}
+
+.compras-toggle-trilho::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition: transform 0.15s, background 0.15s;
+}
+
+.compras-toggle input:checked + .compras-toggle-trilho { background: var(--accent); }
+.compras-toggle input:checked + .compras-toggle-trilho::after { transform: translateX(14px); background: var(--accent-contrast); }
+.compras-toggle input:disabled + .compras-toggle-trilho { opacity: 0.6; }
+
+.compras-alerta {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.55rem 0.8rem;
+  border: 1px solid var(--warning);
+  border-radius: var(--raio-controle);
+  background: var(--warning-bg);
+  color: var(--warning);
+  font-size: 0.76rem;
+  font-weight: 600;
+}
+
+.compras-erro {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.75rem 0.9rem;
+  border: 1px solid var(--danger);
+  border-radius: var(--raio-controle);
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 0.8rem;
+}
+
+.compras-erro span { flex: 1; }
+
+.compras-botao {
+  padding: 0.3rem 0.8rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--raio-controle);
+  background: var(--surface-2);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.compras-botao:hover { background: var(--surface-3); }
+
+.compras-filtros {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.compras-select select {
+  min-height: 1.8rem;
+  min-width: 13rem;
+  padding: 0 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 0.76rem;
+}
+
+.compras-busca { flex: 1; min-width: 14rem; }
+.compras-busca input { width: 100%; }
+.compras-limitado { margin-left: auto; }
+
+.compras-corpo { grid-template-columns: minmax(0, 1fr) 280px; }
+
+@media (max-width: 1024px) {
+  .compras-corpo { grid-template-columns: minmax(0, 1fr); }
+  .compras-toggle { margin-left: 0; }
+}
+
+.compras-tabela-rolagem { max-height: 38rem; }
+/* Nove colunas ao lado do painel: cabeçalho quebra em duas linhas e descrição e
+   fabricante cortam com reticências, senão Sugestão e Valor ficam atrás da rolagem. */
+.compras-tabela th { white-space: normal; vertical-align: bottom; }
+.compras-tabela td { padding: 0.5rem 0.4rem; }
+.compras-tabela tbody tr:focus-visible { outline-offset: -2px; }
+.compras-codigo { color: var(--text-primary); font-weight: 600; }
+
+.compras-descricao {
+  display: inline-block;
+  max-width: 9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+.compras-fabricante {
+  max-width: 7.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--accent-tertiary);
+}
+.compras-sugestao { color: var(--text-primary); font-weight: 700; }
+.compras-nr { color: var(--text-muted); }
+
+.compras-badge {
+  display: inline-block;
+  margin-left: 0.35rem;
+  padding: 0 0.4rem;
+  border-radius: var(--raio-pill);
+  background: var(--surface-3);
+  color: var(--text-secondary);
+  font-size: 0.62rem;
+  font-weight: 700;
+}
+
+.compras-badge.is-maximo { background: var(--accent-secondary-soft); color: var(--accent-secondary); }
+
+.compras-vazio { text-align: center; }
+
+.compras-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.compras-esqueleto {
+  display: grid;
+  gap: 0.6rem;
+  padding: 0.5rem 0;
+}
+
+.compras-esqueleto span {
+  height: 1.6rem;
+  border-radius: var(--raio-controle);
+  background: var(--surface-2);
+  animation: monitor-pulso 1.4s ease-in-out infinite;
+}
+
+.prec-indicador.is-esqueleto strong {
+  width: 60%;
+  border-radius: var(--raio-controle);
+  background: var(--surface-2);
+  animation: monitor-pulso 1.4s ease-in-out infinite;
+}
+
+.compras-barras {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 96px;
+  margin-top: 0.5rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.compras-barras span {
+  flex: 1;
+  min-width: 0;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent-secondary);
+}
+
+/* Mês corrente: parcial e fora da média. */
+.compras-barras span.is-parcial { background: var(--surface-4); }
+
+.compras-barras-meses {
+  display: flex;
+  gap: 3px;
+  margin: 0.2rem 0 0.35rem;
+  font-size: 0.6rem;
+  color: var(--text-muted);
+}
+
+.compras-barras-meses span { flex: 1; min-width: 0; text-align: center; }
+.compras-lojas { margin-top: 0.35rem; }
+.compras-lojas tbody tr { cursor: default; }
+
+/* Abaixo de 1024px o painel vira drawer: camada flutuante, então leva sombra. */
+.compras-drawer-fundo {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  background: color-mix(in srgb, var(--bg-main) 60%, transparent);
+}
+
+.compras-drawer {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(360px, 92vw);
+  overflow-y: auto;
+  align-content: start;
+  background: var(--bg-card);
+  border-left: 1px solid var(--border-strong);
+  box-shadow: var(--shadow-flutuante);
+}
+
+.compras-drawer-fechar {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--raio-controle);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+
+.compras-drawer-fechar:hover { background: var(--surface-3); color: var(--text-primary); }
+
+/* Compras: produto (descrição × fabricante) abre os SKUs embaixo. */
+.compras-produto { display: inline-flex; align-items: center; gap: 0.3rem; min-width: 0; }
+.compras-seta { flex: none; color: var(--text-muted); transition: transform 0.15s ease; }
+.compras-seta.is-aberta { transform: rotate(90deg); color: var(--accent); }
+.compras-linha-sku td { background: var(--surface-1); font-size: 12px; }
+.compras-linha-sku:hover td { background: var(--surface-2); }
+.compras-sku { display: inline-flex; align-items: baseline; gap: 0.4rem; padding-left: 1.3rem; }
+.compras-sku small { color: var(--text-muted); }
+.compras-alerta-sku { margin-left: 0.15rem; color: var(--warning); }

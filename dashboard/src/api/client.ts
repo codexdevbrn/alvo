@@ -1,4 +1,5 @@
 import type { DashboardData } from '../types/dashboard';
+import type { ComprasResposta, ExcecaoComprasEnvio, ParametrosCompras, ProdutoCompras } from '../types/compras';
 import type { ModoPeriodo } from '../utils/mesesFechados';
 import { comCache, limparCacheGeral } from '../utils/cacheRequisicoes';
 import { invalidarSummary } from '../utils/cacheSummary';
@@ -1275,6 +1276,84 @@ export async function obterResumoEstoque(
     const res = await chamar(url, { headers: authHeaders() });
     return tratarResposta(res);
   });
+}
+
+// ---------------------------------------------------------------------------
+// Compras (backend/compras.py)
+// ---------------------------------------------------------------------------
+
+/** Sem cache no navegador: cada parâmetro é uma combinação nova, e o backend já
+ *  guarda a parte cara (12 meses × loja × produto) sem eles na chave. */
+export async function obterCompras(
+  empresa: string,
+  parametros: ParametrosCompras & {
+    loja?: string | null;
+    fabricante?: string | null;
+    busca?: string;
+    somenteRecomendados: boolean;
+    grupos?: string;
+  },
+  signal?: AbortSignal,
+): Promise<ComprasResposta> {
+  const query = new URLSearchParams({
+    prazo_entrega: parametros.prazo_entrega,
+    giro: parametros.giro,
+    caixa_apertado: String(parametros.caixa_apertado),
+    somente_recomendados: String(parametros.somenteRecomendados),
+  });
+  if (parametros.loja) query.set('loja', parametros.loja);
+  if (parametros.fabricante) query.set('fabricante', parametros.fabricante);
+  if (parametros.busca?.trim()) query.set('busca', parametros.busca.trim());
+  if (parametros.grupos) query.set('grupos_clientes', parametros.grupos);
+  const res = await chamar(`/api/compras/${encodeURIComponent(empresa)}?${query}`, {
+    headers: authHeaders(),
+    signal,
+  });
+  return tratarResposta(res);
+}
+
+/** Um produto com todos os SKUs, inclusive não recomendados (modal de prazo e giro). */
+export async function obterProdutoCompras(
+  empresa: string,
+  produto: { descricao: string; fabricante: string },
+  parametros: ParametrosCompras & { loja?: string | null; grupos?: string },
+  signal?: AbortSignal,
+): Promise<ProdutoCompras> {
+  const query = new URLSearchParams({
+    descricao: produto.descricao,
+    fabricante: produto.fabricante,
+    prazo_entrega: parametros.prazo_entrega,
+    giro: parametros.giro,
+    caixa_apertado: String(parametros.caixa_apertado),
+  });
+  if (parametros.loja) query.set('loja', parametros.loja);
+  if (parametros.grupos) query.set('grupos_clientes', parametros.grupos);
+  const res = await chamar(`/api/compras/${encodeURIComponent(empresa)}/produto?${query}`, {
+    headers: authHeaders(),
+    signal,
+  });
+  return tratarResposta(res);
+}
+
+export async function salvarExcecaoCompras(empresa: string, excecao: ExcecaoComprasEnvio): Promise<void> {
+  const res = await chamar(`/api/compras/${encodeURIComponent(empresa)}/parametros`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(excecao),
+  });
+  await tratarResposta(res);
+}
+
+export async function limparExcecoesProdutoCompras(
+  empresa: string,
+  produto: { descricao: string; fabricante: string; codigos: string[] },
+): Promise<void> {
+  const res = await chamar(`/api/compras/${encodeURIComponent(empresa)}/parametros/limpar`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify(produto),
+  });
+  await tratarResposta(res);
 }
 
 // ---------------------------------------------------------------------------

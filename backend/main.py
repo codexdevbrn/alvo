@@ -46,6 +46,7 @@ import cache_telas
 import consulta_parquet
 import margem_price as mgp
 import a_precificar
+import compras
 import historico_precificacao as hist_prec
 import versao
 from alertas_clientes import avaliar_alertas_clientes, normalizar_regras_alerta
@@ -1086,6 +1087,13 @@ _cache_summary_dashboard: OrderedDict[str, dict] = OrderedDict()
 _CACHE_ESTOQUE_MAX = 8
 _cache_estoque_cobertura: OrderedDict[tuple, dict] = OrderedDict()
 _cache_estoque_cobertura_lock = threading.Lock()
+
+# Base da tela Compras (12 meses × loja × produto, sem os parâmetros). Prazo,
+# giro, caixa e filtros são aritmética em cima dela e ficam fora da chave: mudar
+# um parâmetro não relê a base. Só RAM — os parâmetros multiplicam as combinações.
+_CACHE_COMPRAS_MAX = 8
+_cache_compras_base: OrderedDict[tuple, dict] = OrderedDict()
+_cache_compras_lock = threading.Lock()
 
 # DataFrame de despesas (CONTROLADORIA.csv) por empresa, cacheado por mtime do
 # arquivo. Sem cache do resultado calculado: o groupby é leve (arquivo bem
@@ -2911,6 +2919,172 @@ def obter_resumo_estoque(
             _cache_estoque_cobertura.popitem(last=False)
     _tela_para_disco(empresa, "estoque", chave_cache, resultado)
     return resultado
+
+
+def _base_compras(empresa: str, loja_norm: Optional[str], grupos_norm) -> tuple[dict, date]:
+    """Base de 12 meses da tela Compras, em RAM sem os parâmetros na chave."""
+    caminho_movimento, caminho_produto = _caminho_produto_empresa(empresa)
+    try:
+        assinatura = (_assinatura_arquivo(caminho_produto), _assinatura_arquivo(caminho_movimento))
+    except OSError as exc:
+        raise HTTPException(status_code=400, detail=f"Não foi possível ler arquivos de estoque: {exc}") from exc
+    corte = af.data_corte_padrao()
+    chave_cache = (
+        empresa, loja_norm or "", assinatura, date.today(),
+        _assinatura_cortes_escopo(empresa, loja_norm, grupos_norm), corte,
+    )
+    with _cache_compras_lock:
+        base = _cache_compras_base.get(chave_cache)
+        if base is not None:
+            _cache_compras_base.move_to_end(chave_cache)
+    if base is None:
+        estoque, vendas, _lojas = _ler_estoque_vendas(empresa, caminho_produto, loja_norm, grupos_norm)
+        base = compras.preparar_base_compras(estoque, vendas, corte=corte)
+        _guardar_lru(_cache_compras_base, _cache_compras_lock, chave_cache, base, _CACHE_COMPRAS_MAX)
+    return base, corte
+
+
+# Exceções de prazo/giro: um arquivo por empresa na pasta de trabalho, valendo
+# para todas as lojas. O lock serializa o ler-alterar-gravar deste processo;
+# entre máquinas vale a última gravação (o OneDrive sincroniza o arquivo).
+_lock_parametros_compras = threading.Lock()
+
+
+def _caminho_parametros_compras(empresa: str) -> str:
+    return os.path.join(_pasta_trabalho_empresa(empresa), compras.NOME_ARQUIVO_PARAMETROS)
+
+
+def _excecoes_compras(empresa: str) -> dict:
+    return compras.normalizar_excecoes(_ler_json_trabalho(_caminho_parametros_compras(empresa)))
+
+
+def _validar_cenario_compras(prazo_entrega: str, giro: str) -> None:
+    try:
+        compras.validar_parametros(prazo_entrega, giro)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/compras/{empresa}")
+def obter_compras(
+    empresa: str,
+    loja: Optional[str] = None,
+    prazo_entrega: str = "imediato",
+    giro: str = "impulsionado",
+    caixa_apertado: bool = False,
+    fabricante: Optional[str] = None,
+    busca: Optional[str] = None,
+    somente_recomendados: bool = True,
+    limite: int = 1000,
+    grupos_clientes: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
+    """Quanto repor por produto (regras da planilha APMF, ver `compras.py`).
+
+    Mesma leitura de estoque e vendas do Estoque. A base de 12 meses fica em RAM
+    sem os parâmetros na chave; o que muda a cada clique é só a conta. As exceções
+    de prazo/giro (`compras_parametros.json`) são lidas a cada chamada: é um
+    arquivo pequeno, e outro comprador pode ter acabado de mudá-lo.
+    """
+    if limite < 1 or limite > 2000:
+        raise HTTPException(status_code=400, detail="limite deve ficar entre 1 e 2000.")
+    _validar_cenario_compras(prazo_entrega, giro)
+    empresa = _validar_nome_empresa(empresa)
+    loja_norm = _normalizar_loja(loja)
+    base, corte = _base_compras(empresa, loja_norm, _parse_grupos_clientes(grupos_clientes))
+    resultado = compras.calcular_compras(
+        base,
+        prazo_entrega=prazo_entrega,
+        giro=giro,
+        caixa_apertado=caixa_apertado,
+        fabricante=fabricante,
+        busca=busca,
+        somente_recomendados=somente_recomendados,
+        limite=limite,
+        excecoes=_excecoes_compras(empresa),
+    )
+    resultado.update({"empresa": empresa, "loja": loja_norm, "corte": corte.isoformat()})
+    return resultado
+
+
+@app.get("/api/compras/{empresa}/produto")
+def obter_produto_compras(
+    empresa: str,
+    descricao: str,
+    fabricante: str,
+    loja: Optional[str] = None,
+    prazo_entrega: str = "imediato",
+    giro: str = "impulsionado",
+    caixa_apertado: bool = False,
+    grupos_clientes: Optional[str] = None,
+    usuario: str = Depends(exigir_login),
+):
+    """Um produto (descrição × fabricante) com **todos** os SKUs, inclusive os não
+    recomendados — é o que o modal de prazo e giro lista."""
+    _validar_cenario_compras(prazo_entrega, giro)
+    empresa = _validar_nome_empresa(empresa)
+    loja_norm = _normalizar_loja(loja)
+    base, _corte = _base_compras(empresa, loja_norm, _parse_grupos_clientes(grupos_clientes))
+    resultado = compras.calcular_compras(
+        base,
+        prazo_entrega=prazo_entrega,
+        giro=giro,
+        caixa_apertado=caixa_apertado,
+        somente_recomendados=False,
+        limite=1,
+        excecoes=_excecoes_compras(empresa),
+        produto=(descricao, fabricante),
+    )
+    if not resultado["itens"]:
+        raise HTTPException(status_code=404, detail="Produto não encontrado neste escopo.")
+    return resultado["itens"][0]
+
+
+class ExcecaoComprasBody(BaseModel):
+    nivel: str
+    descricao: str = ""
+    fabricante: str = ""
+    codigo: str = ""
+    # None = herda (do produto, para SKU; da tela, para produto).
+    prazo: Optional[str] = None
+    giro: Optional[str] = None
+
+
+class LimparExcecoesComprasBody(BaseModel):
+    descricao: str
+    fabricante: str
+    codigos: list[str] = []
+
+
+def _alterar_excecoes_compras(empresa: str, alterar) -> dict:
+    empresa = _validar_nome_empresa(empresa)
+    caminho = _caminho_parametros_compras(empresa)
+    with _lock_parametros_compras:
+        atual = compras.normalizar_excecoes(_ler_json_trabalho(caminho))
+        try:
+            novo = alterar(atual)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        payload = compras.excecoes_para_arquivo(novo)
+        _gravar_json_trabalho(caminho, payload)
+    return payload
+
+
+@app.put("/api/compras/{empresa}/parametros")
+def salvar_excecao_compras(empresa: str, body: ExcecaoComprasBody, usuario: str = Depends(exigir_login)):
+    """Grava o prazo/giro de um produto ou SKU (estado inteiro do nível)."""
+    return _alterar_excecoes_compras(empresa, lambda atual: compras.definir_excecao(
+        atual, nivel=body.nivel, prazo=body.prazo, giro=body.giro,
+        descricao=body.descricao, fabricante=body.fabricante, codigo=body.codigo,
+    ))
+
+
+@app.post("/api/compras/{empresa}/parametros/limpar")
+def limpar_excecoes_compras(empresa: str, body: LimparExcecoesComprasBody, usuario: str = Depends(exigir_login)):
+    """Tira as exceções do produto e dos SKUs dele."""
+    return _alterar_excecoes_compras(empresa, lambda atual: compras.limpar_excecoes_produto(
+        atual, descricao=body.descricao, fabricante=body.fabricante, codigos=body.codigos,
+    ))
 
 
 @app.get("/api/vendedores/{empresa}")

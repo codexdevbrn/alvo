@@ -23,6 +23,7 @@ import {
   Bot,
   Scissors,
   Tags,
+  ShoppingCart,
 } from 'lucide-react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { getToken, clearToken, obterStatusAtualizacao, type StatusAtualizacao } from '../api/client';
@@ -124,6 +125,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
   const emClientes = location.pathname.startsWith('/clientes');
   const emVendedores = location.pathname.startsWith('/vendedores');
   const emEstoque = location.pathname.startsWith('/estoque');
+  const emCompras = location.pathname.startsWith('/compras');
   const emDiagnostico = location.pathname.startsWith('/diagnostico');
   const emDespesas = location.pathname.startsWith('/despesas');
   const emPrecificacao = location.pathname.startsWith('/precificacao');
@@ -290,6 +292,13 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
               onClick={() => navigate('/estoque')}
             />
             <NavItem
+              icon={<ShoppingCart size={17} />}
+              label="Compras"
+              collapsed={colapsado}
+              ativo={emCompras}
+              onClick={() => navigate('/compras')}
+            />
+            <NavItem
               icon={<Stethoscope size={17} />}
               label="Diagnóstico"
               collapsed={colapsado}
@@ -387,7 +396,8 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
               {emEstoque && <TopoVendaMediaSelect />}
               {emDespesas && <TopoDespesasPeriodoSelect />}
               <div ref={setEncaixeTopo} className="app-shell-topo-encaixe" />
-              {!emAssistente && !emCortes && !emTelaPrice && (
+              {/* Compras tem janela fixa (11 fechados + o corrente): o toggle não mudaria nada nela. */}
+              {!emAssistente && !emCortes && !emTelaPrice && !emCompras && (
                 <SidebarMesesFechadosToggle desabilitarMesmoPeriodo={emDashboard || emEstoque || emDespesas} />
               )}
               {/* Instante transitório antes da 1ª empresa resolver (ver

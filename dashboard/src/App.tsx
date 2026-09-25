@@ -20,6 +20,7 @@ const EstoquePage = lazy(() => import('./pages/EstoquePage'));
 const DiagnosticoPage = lazy(() => import('./pages/DiagnosticoPage'));
 const DespesasPage = lazy(() => import('./pages/DespesasPage'));
 const PrecificacaoPage = lazy(() => import('./pages/PrecificacaoPage'));
+const ComprasPage = lazy(() => import('./pages/ComprasPage'));
 const AssistenteIAPage = lazy(() => import('./pages/AssistenteIAPage'));
 const MercadologicoPage = lazy(() => import('./pages/MercadologicoPage'));
 
@@ -63,6 +64,7 @@ export default function App() {
             <Route path="/diagnostico" element={<DiagnosticoPage />} />
             <Route path="/despesas" element={<DespesasPage />} />
             <Route path="/precificacao" element={<PrecificacaoPage />} />
+            <Route path="/compras" element={<ComprasPage />} />
             {/* Pós-precificação é aba da Precificação; o link antigo continua valendo. */}
             <Route path="/pos-precificacao" element={<Navigate to="/precificacao?aba=pos" replace />} />
             <Route path="/assistente" element={<AssistenteIAPage />} />

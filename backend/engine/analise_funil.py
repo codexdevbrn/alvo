@@ -654,9 +654,14 @@ def montar_estoque_e_vendas(df_base, caminho_produto):
             soma_qtd = df_base.groupby("Código Interno")["QTD"].sum().replace(0, np.nan)
             custo_produto = soma_cmv / soma_qtd
         fabricante_produto = df_base.groupby("Código Interno")["NOME_FABRICANTE"].first()
+        # CMV por mês acompanha a QTD: a tela de Compras tira dele o custo médio
+        # dos últimos meses fechados, que o `Preço_médio_cmv` (período inteiro) não dá.
+        agregacoes = {"QTD": ("QTD", "sum")}
+        if "CMV" in df_base.columns:
+            agregacoes["CMV"] = ("CMV", "sum")
         vendas = (
             df_base.groupby(["Loja", "Código Interno", "Ano", "Mês"], as_index=False)
-            .agg(QTD=("QTD", "sum"))
+            .agg(**agregacoes)
             .rename(columns={"Loja": "Nome_Loja", "Código Interno": "CODIGO_INTERNO_PRODUTO"})
         )
 
