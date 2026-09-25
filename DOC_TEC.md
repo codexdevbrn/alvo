@@ -32,6 +32,7 @@ global, escolhido na barra lateral, e vale em todas as telas.
 | `/clientes` | `ClientesPage` | duas abas: "Visão geral" (dashboard da carteira) e "Base e tags" (busca, tags por cliente e catálogo de tags) |
 | `/vendedores` | `VendedoresPage` | ranking do último mês da base contra a média dos 6 anteriores e ficha por vendedor; só aparece depois de liberada em Configurações |
 | `/estoque` | `EstoquePage` | duas abas: "Visão geral" (capital, ruptura, cobertura e pontas, via `GET /api/estoque/resumo/{empresa}`) e "Escopo" (mapa produto a produto, classificado em saudável, risco de ruptura, sem estoque, estoque negativo, perdendo força, excesso e sem giro) |
+| `/compras` | `ComprasPage` | o que repor por produto (descrição × fabricante, com os SKUs embaixo) a partir de 12 meses de venda e do estoque, com prazo, giro e caixa apertado da planilha APMF (`backend/compras.py`, `GET /api/compras/{empresa}`). As exceções de prazo e giro por produto ou SKU (`compras_parametros.json` na pasta de trabalho) já existem no backend, mas a tela ainda não tem como editá-las |
 | `/assistente` | `AssistenteIAPage` | chat sobre a empresa selecionada, restrito aos MDs de CRM e análise diária |
 | `/mercadologico` | `MercadologicoPage` | Pregão Mercadológico embutido numa aba; a URL é constante de produto, não configuração |
 

@@ -4,6 +4,23 @@ Formato: uma seção por versão publicada, mais recente no topo. Histórico é
 incremental — entradas antigas nunca são apagadas. O estado atual das telas e
 funcionalidades vive em `DOC_TEC.md`, não aqui.
 
+## 1.7.22 — 2026-09-25
+
+### Adicionado
+
+- **Tela Compras** (`/compras`, no menu depois de Estoque): o que repor, com as
+  regras da planilha "Alvo Inteligência de Compras" (APMF). A sugestão sai da
+  venda dos últimos 12 meses (o mês corrente, parcial, fica fora da média) e do
+  estoque atual, conforme o prazo de entrega (Imediato, Regular ou Indústria),
+  o giro (Impulsionado ou Não impulsionado) e o caixa apertado. O arredondamento
+  é o do Excel: 22,5 vira 23.
+- A lista é por produto (descrição × fabricante) e abre os SKUs embaixo; o
+  painel mostra a venda mês a mês e a sugestão por loja. A conta é por loja:
+  sobra numa loja não cobre falta na outra. O valor do pedido usa o custo médio
+  dos 3 últimos meses fechados; SKU sem venda neles fica sem custo e fora do total.
+- O cenário escolhido fica no endereço da página: um link compartilhado abre com
+  os mesmos parâmetros. Na Altese, trocar um parâmetro recalcula em ~0,2 s.
+
 ## 1.7.21 — 2026-09-25
 
 ### Corrigido
