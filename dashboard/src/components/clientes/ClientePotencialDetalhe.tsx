@@ -90,7 +90,7 @@ export function ClientePotencialDetalhe({ empresa, cliente, loja = null, modoPer
                   </p>
                   <span className="clientes-ranking-valor">{formatCurrency(produto.receita)}</span>
                   <span className="clientes-potencial-detalhe-produto-nota">
-                    {formatNumber(produto.qtd)} un. · {formatPercent(produto.participacao, 1)} do período
+                    {formatNumber(Math.round(produto.qtd))} un. · {formatPercent(produto.participacao, 1)} do período
                   </span>
                 </li>
               ))}

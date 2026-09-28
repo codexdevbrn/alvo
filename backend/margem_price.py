@@ -151,6 +151,18 @@ def carregar_bruto(empresa: str, trabalho: Path, pasta_margem: Path) -> pd.DataF
     return df
 
 
+def _so_com_segmento(bruto: pd.DataFrame) -> pd.DataFrame:
+    """Tira as linhas sem `segmento` (o balde "NÃO HARMONIZADO"), como a tela do PRICE.
+
+    Vale para toda margem que se compara com o PRICE. Na Viannax (abr-set/26) a
+    margem mensal com essas linhas saía até 0,8 pp fora (34,10% contra 34,59% em
+    abril); sem elas, bate nos seis meses.
+    """
+    if "segmento" in bruto.columns:
+        return bruto.loc[bruto["segmento"].notna()]
+    return bruto
+
+
 def para_movimento_precificacao(bruto: pd.DataFrame) -> pd.DataFrame:
     """Renomeia para o contrato que `precificacao.montar_pos_precificacao` já lê.
 
@@ -162,9 +174,7 @@ def para_movimento_precificacao(bruto: pd.DataFrame) -> pd.DataFrame:
     do PRICE: com ela o total da loja ficava ~1,5% acima em lucro/dia e
     qtd/dia; sem ela bate no centavo (IBAD, abr-set/26).
     """
-    if "segmento" in bruto.columns:
-        bruto = bruto.loc[bruto["segmento"].notna()]
-    return bruto.rename(columns={
+    return _so_com_segmento(bruto).rename(columns={
         "fabricante": "NOME_FABRICANTE",
         "receita": "Receita",
         "cmv": "CMV",
@@ -188,7 +198,9 @@ def margem_mensal(bruto: pd.DataFrame, descricao: str | None = None) -> list[dic
     passar uma descrição isola 1 produto (mesmo cálculo que valida a tela do
     PRICE, útil também para a futura Pré-Precificação).
     """
-    df = bruto if descricao is None else bruto.loc[bruto["descricao"] == descricao]
+    df = _so_com_segmento(bruto)
+    if descricao is not None:
+        df = df.loc[df["descricao"] == descricao]
     if df.empty:
         return []
     pontos = []
@@ -217,6 +229,7 @@ def margem_geral(bruto: pd.DataFrame) -> dict | None:
     """Margem ponderada do recorte inteiro (sem quebra mensal) — usada como o
     número único de "margem média da empresa" no Dashboard.
     """
+    bruto = _so_com_segmento(bruto)
     if bruto.empty:
         return None
     receita = float(bruto["receita"].sum())

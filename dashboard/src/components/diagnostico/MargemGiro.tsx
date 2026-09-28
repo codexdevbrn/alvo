@@ -15,7 +15,7 @@ function TooltipMargemGiro({ active, payload }: { active?: boolean; payload?: Ar
     <div className="vendedores-chart-tooltip">
       <strong>{produto.descricao}</strong>
       <dl>
-        <div><dt>Margem</dt><dd>{produto.margem_pct == null ? '—' : formatPercent(produto.margem_pct, 1)}</dd></div>
+        <div><dt>Margem</dt><dd>{produto.margem_pct == null ? '—' : formatPercent(produto.margem_pct, 2)}</dd></div>
         <div><dt>Cobertura</dt><dd>{textoCobertura(produto.cobertura_meses)}</dd></div>
         <div><dt>Estoque</dt><dd>{formatCurrency(produto.valor_estoque ?? 0)}</dd></div>
         <div><dt>Situação</dt><dd>{ROTULOS_STATUS[produto.status]}</dd></div>

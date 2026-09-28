@@ -665,7 +665,7 @@ export function ClientesAlertaCard({
                         <div className="analisador-alerta-kpi">
                           <span>Quantidade</span>
                           <strong>
-                            {formatNumber(qtdUltimo)}
+                            {formatNumber(Math.round(qtdUltimo))}
                             <BadgeVariacao pct={varQtd} />
                           </strong>
                         </div>

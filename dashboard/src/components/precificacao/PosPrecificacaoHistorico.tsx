@@ -1,9 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Loader2, Search, Tags } from 'lucide-react';
+import { AlertTriangle, ChevronLeft, ChevronRight, Loader2, Search, Tags } from 'lucide-react';
 import {
   Area,
   AreaChart,
+  Brush,
   CartesianGrid,
+  LabelList,
   ResponsiveContainer,
   Tooltip,
   XAxis,
@@ -21,7 +23,7 @@ import {
   type RodadaLinhaTempo,
   type SituacaoHistorico,
 } from '../../api/client';
-import { formatCurrency, formatPercent } from '../../utils/formatters';
+import { formatCompacto, formatCurrency, formatPercent } from '../../utils/formatters';
 import { useDebouncedValue } from '../../hooks/useDebouncedValue';
 import { ehSemPrecificacao } from '../../utils/semPrecificacao';
 
@@ -29,6 +31,8 @@ type Props = { empresa: string };
 
 type Metrica = 'margem' | 'lucro_dia' | 'qtd_dia';
 type Granularidade = 'mensal' | 'diaria';
+/** Recorte do zoom no diário, em dias ISO (inclusivos). */
+type Janela = { inicio: string; fim: string };
 type NivelItem = Exclude<NivelHistorico, 'rodada'>;
 
 // Espelha `PERIODOS_DIAS` do backend (historico_precificacao.py).
@@ -129,8 +133,46 @@ function moeda(valor: number | null | undefined): string {
 
 function formatQtd(valor: number | null | undefined): string {
   if (valor == null || !Number.isFinite(valor)) return '—';
-  const inteiro = Math.abs(valor - Math.round(valor)) < 0.05;
-  return valor.toLocaleString('pt-BR', { maximumFractionDigits: inteiro ? 0 : 1 });
+  // Quantidade é sempre inteiro na exibição, mesmo em métricas derivadas
+  // como qtd/dia (uma média) — arredonda, não trunca.
+  return Math.round(valor).toLocaleString('pt-BR');
+}
+
+function janelaDoMes(mes: string): Janela {
+  const [ano, m] = mes.split('-').map(Number);
+  const ultimo = new Date(ano, m, 0).getDate();
+  return { inicio: `${mes}-01`, fim: `${mes}-${String(ultimo).padStart(2, '0')}` };
+}
+
+function deslocarMes(mes: string, passo: number): string {
+  const [ano, m] = mes.split('-').map(Number);
+  const data = new Date(ano, m - 1 + passo, 1);
+  return `${data.getFullYear()}-${String(data.getMonth() + 1).padStart(2, '0')}`;
+}
+
+/** Índices da série diária que caem dentro da janela; `null` se nenhum cai. */
+function indicesDaJanela(serie: PontoSeriePrecificacao[], janela: Janela): [number, number] | null {
+  let inicio = -1;
+  let fim = -1;
+  serie.forEach((ponto, i) => {
+    if (ponto.periodo < janela.inicio || ponto.periodo > janela.fim) return;
+    if (inicio < 0) inicio = i;
+    fim = i;
+  });
+  return inicio < 0 ? null : [inicio, fim];
+}
+
+function formatEixo(valor: number, metrica: Metrica): string {
+  // 2 casas: mesma regra de exibição de margem do resto do app.
+  if (metrica === 'margem') return `${valor.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
+  return formatCompacto(valor, metrica === 'lucro_dia');
+}
+
+/** Rótulo do ponto no formato da tela do PRICE, para comparar lado a lado. */
+function formatRotulo(valor: number, metrica: Metrica): string {
+  const casas = metrica === 'qtd_dia' ? 0 : 2;
+  const texto = valor.toLocaleString('pt-BR', { minimumFractionDigits: casas, maximumFractionDigits: casas });
+  return metrica === 'margem' ? `${texto}%` : texto;
 }
 
 function alternar<T>(lista: T[], valor: T): T[] {
@@ -145,6 +187,12 @@ export function PosPrecificacaoHistorico({ empresa }: Props) {
   const [todos, setTodos] = useState(false);
   const [metrica, setMetrica] = useState<Metrica>('margem');
   const [granularidade, setGranularidade] = useState<Granularidade>('mensal');
+  // Zoom do diário. Vale só para o período em que foi escolhido: trocar o
+  // período volta o zoom para ele. `versaoZoom` muda só em zoom vindo de fora
+  // do gráfico (mês clicado, setas, "Período") e remonta a barra de zoom na
+  // posição nova; arrastar a barra não remonta nada.
+  const [zoom, setZoom] = useState<(Janela & { periodo: number }) | null>(null);
+  const [versaoZoom, setVersaoZoom] = useState(0);
   const [busca, setBusca] = useState('');
   const buscaDebounced = useDebouncedValue(busca);
   const [selecionado, setSelecionado] = useState<{ nivel: NivelItem; nome: string } | null>(null);
@@ -233,6 +281,45 @@ export function PosPrecificacaoHistorico({ empresa }: Props) {
   const kpis = dados.kpis;
   const situacoes = kpis.situacoes;
 
+  // Sem zoom escolhido, o diário abre no período do filtro.
+  const diaria = dados.serie_diaria;
+  const janelaPadrao: Janela | null = diaria.length
+    ? {
+        inicio: dados.inicio_periodo && dados.inicio_periodo > diaria[0].periodo ? dados.inicio_periodo : diaria[0].periodo,
+        fim: diaria[diaria.length - 1].periodo,
+      }
+    : null;
+  const janela: Janela | null = zoom && zoom.periodo === periodo ? zoom : janelaPadrao;
+
+  function aplicarZoom(nova: Janela | null) {
+    setZoom(nova ? { ...nova, periodo } : null);
+    setVersaoZoom((v) => v + 1);
+  }
+
+  function abrirMes(mes: string) {
+    setGranularidade('diaria');
+    aplicarZoom(janelaDoMes(mes));
+  }
+
+  // Janela que já é um mês inteiro anda um mês; qualquer outra (o período, um
+  // trecho arrastado) abre primeiro o mês da ponta para o lado da seta. Mês fora
+  // do movimento não abre: a janela ficaria sem ponto e o gráfico mostraria tudo.
+  function mesAlvo(passo: number): string | null {
+    if (!janela || !diaria.length) return null;
+    const ponta = (passo < 0 ? janela.inicio : janela.fim).slice(0, 7);
+    const mesInteiro = janelaDoMes(janela.inicio.slice(0, 7));
+    const ehMes = mesInteiro.inicio === janela.inicio && mesInteiro.fim === janela.fim;
+    const alvo = ehMes ? deslocarMes(ponta, passo) : ponta;
+    const primeiro = diaria[0].periodo.slice(0, 7);
+    const ultimo = diaria[diaria.length - 1].periodo.slice(0, 7);
+    return alvo < primeiro || alvo > ultimo ? null : alvo;
+  }
+
+  function andarMes(passo: number) {
+    const alvo = mesAlvo(passo);
+    if (alvo) abrirMes(alvo);
+  }
+
   return (
     <div className="prec-hist" aria-busy={carregando}>
       <section className="glass-card glass-card-flat prec-card">
@@ -315,8 +402,8 @@ export function PosPrecificacaoHistorico({ empresa }: Props) {
         />
         <Indicador
           rotulo="Margem depois"
-          valor={pct(kpis.margem_depois)}
-          detalhe={`alvo ${pct(kpis.alvo)} · ${textoSinal(kpis.gap_pp, 'pp')}`}
+          valor={pct(kpis.margem_depois, 2)}
+          detalhe={`alvo ${pct(kpis.alvo, 2)} · ${textoSinal(kpis.gap_pp, 'pp')}`}
           acento={kpis.gap_pp == null ? 'var(--text-muted)' : kpis.gap_pp >= -1 ? 'var(--success)' : 'var(--danger)'}
         />
         <Indicador
@@ -342,9 +429,23 @@ export function PosPrecificacaoHistorico({ empresa }: Props) {
                 <p className="prec-mudo">
                   {todos ? 'Loja inteira' : 'Só os SKUs precificados no filtro'} ·{' '}
                   {granularidade === 'diaria'
-                    ? `${ROTULO_PERIODO[periodo] ?? 'período'}, dias com venda · dias com precificação em destaque.`
-                    : 'meses com precificação em destaque.'}
+                    ? 'dias com venda · arraste as alças embaixo para dar zoom.'
+                    : 'clique num mês para ver os dias dele.'}
                 </p>
+                {granularidade === 'diaria' && janela && (
+                  <div className="prec-zoom" role="group" aria-label="Zoom do gráfico diário">
+                    <button type="button" className="prec-zoom-btn" onClick={() => andarMes(-1)} disabled={!mesAlvo(-1)} aria-label="Mês anterior">
+                      <ChevronLeft size={14} aria-hidden="true" />
+                    </button>
+                    <span className="prec-zoom-rotulo">{dataBr(janela.inicio)} a {dataBr(janela.fim)}</span>
+                    <button type="button" className="prec-zoom-btn" onClick={() => andarMes(1)} disabled={!mesAlvo(1)} aria-label="Próximo mês">
+                      <ChevronRight size={14} aria-hidden="true" />
+                    </button>
+                    <button type="button" className="prec-zoom-btn is-texto" onClick={() => aplicarZoom(null)}>
+                      {ROTULO_PERIODO[periodo] ?? 'Período'}
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="prec-card-acoes">
                 <div className="periodo-segmented" role="radiogroup" aria-label="Granularidade do gráfico">
@@ -398,11 +499,15 @@ export function PosPrecificacaoHistorico({ empresa }: Props) {
               </div>
             </div>
             <SeriePrecificacao
+              key={granularidade === 'diaria' ? `d-${versaoZoom}-${periodo}-${todos}-${dados.serie_diaria.length}` : 'm'}
               serie={granularidade === 'diaria' ? dados.serie_diaria : dados.serie_mensal}
               granularidade={granularidade}
               marcadores={dados.marcadores}
               metrica={metrica}
-              altura={220}
+              altura={granularidade === 'diaria' ? 260 : 220}
+              janela={janela}
+              aoMudarJanela={(nova) => setZoom({ ...nova, periodo })}
+              aoClicarMes={abrirMes}
             />
           </section>
 
@@ -459,6 +564,8 @@ export function PosPrecificacaoHistorico({ empresa }: Props) {
           rodadas={rodadas}
           faixas={faixas}
           granularidade={granularidade}
+          janela={janela}
+          aoClicarMes={abrirMes}
         />
       </div>
     </div>
@@ -625,14 +732,32 @@ function SeriePrecificacao({
   marcadores,
   metrica,
   altura,
+  janela,
+  aoMudarJanela,
+  aoClicarMes,
 }: {
   serie: PontoSeriePrecificacao[];
   granularidade: Granularidade;
   marcadores: MarcadorPrecificacao[];
   metrica: Metrica;
   altura: number;
+  /** Com `aoMudarJanela`, o diário ganha a barra de zoom, aberta nesta janela. */
+  janela?: Janela | null;
+  aoMudarJanela?: (janela: Janela) => void;
+  /** No mensal, clicar num mês abre os dias dele. */
+  aoClicarMes?: (mes: string) => void;
 }) {
   const diaria = granularidade === 'diaria';
+  const comZoom = diaria && aoMudarJanela != null;
+  // Lido só na montagem: a barra é remontada (key no pai) quando o zoom vem de
+  // fora, e arrastá-la não deve reposicioná-la.
+  const [indicesIniciais] = useState(() => (comZoom && janela ? indicesDaJanela(serie, janela) : null));
+  const clicavel = !diaria && aoClicarMes != null;
+  // Rótulo em cada ponto, como na tela do PRICE — só enquanto cabe: no diário,
+  // até um mês visível (a janela do zoom); no painel estreito, poucos pontos.
+  const faixaVisivel = comZoom && janela ? indicesDaJanela(serie, janela) : null;
+  const pontosVisiveis = faixaVisivel ? faixaVisivel[1] - faixaVisivel[0] + 1 : serie.length;
+  const rotular = pontosVisiveis <= (altura >= 200 ? 31 : 8);
   // `periodo` do ponto é o mês (YYYY-MM) na série mensal e o dia (YYYY-MM-DD) na
   // diária; o marcador é casado pela chave equivalente.
   const skusPorPonto = useMemo(() => {
@@ -650,7 +775,19 @@ function SeriePrecificacao({
   const fillId = `prec-hist-${metrica}-${altura}-${granularidade}`;
   return (
     <ResponsiveContainer width="100%" height={altura}>
-      <AreaChart data={serie} margin={{ top: 12, right: 24, left: 24, bottom: 4 }}>
+      <AreaChart
+        data={serie}
+        margin={{ top: rotular ? 24 : 12, right: 24, left: comZoom ? 4 : 24, bottom: 4 }}
+        style={clicavel ? { cursor: 'pointer' } : undefined}
+        onClick={
+          clicavel
+            ? (estado) => {
+                const ponto = serie[Number(estado?.activeIndex)];
+                if (ponto) aoClicarMes?.(ponto.periodo);
+              }
+            : undefined
+        }
+      >
         <defs>
           <linearGradient id={fillId} x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor={cor} stopOpacity={0.3} />
@@ -667,7 +804,16 @@ function SeriePrecificacao({
           interval={!diaria && altura >= 200 && serie.length <= 12 ? 0 : 'preserveStartEnd'}
           minTickGap={diaria ? 28 : altura >= 200 ? 8 : 20}
         />
-        <YAxis hide domain={['auto', 'auto']} />
+        {/* Com zoom o eixo aparece: é a régua do caminho dia a dia. */}
+        <YAxis
+          hide={!comZoom}
+          domain={['auto', 'auto']}
+          width={56}
+          tick={{ fill: 'var(--text-muted)', fontSize: 11 }}
+          axisLine={false}
+          tickLine={false}
+          tickFormatter={(valor: number) => formatEixo(valor, metrica)}
+        />
         <Tooltip
           content={({ active, payload, label }) => {
             if (!active || !payload?.length) return null;
@@ -677,7 +823,7 @@ function SeriePrecificacao({
               <div className="vendedores-chart-tooltip">
                 <strong>{label}{skus ? ` · ${skus.toLocaleString('pt-BR')} SKUs precificados` : ''}</strong>
                 <dl>
-                  <div><dt>Margem</dt><dd>{pct(ponto.margem)}</dd></div>
+                  <div><dt>Margem</dt><dd>{pct(ponto.margem, 2)}</dd></div>
                   <div><dt>{diaria ? 'Lucro' : 'Lucro / dia'}</dt><dd>{moeda(ponto.lucro_dia)}</dd></div>
                   <div><dt>{diaria ? 'Qtd' : 'Qtd / dia'}</dt><dd>{formatQtd(ponto.qtd_dia)}</dd></div>
                   <div><dt>Receita</dt><dd>{formatCurrency(ponto.receita)}</dd></div>
@@ -709,7 +855,36 @@ function SeriePrecificacao({
             );
           }}
           activeDot={{ r: 5 }}
-        />
+        >
+          {rotular && (
+            <LabelList
+              dataKey={metrica}
+              position="top"
+              offset={10}
+              fill="var(--text-secondary)"
+              fontSize={diaria ? 10 : 11}
+              formatter={(valor: unknown) => (typeof valor === 'number' ? formatRotulo(valor, metrica) : '')}
+            />
+          )}
+        </Area>
+        {comZoom && (
+          <Brush
+            dataKey="rotulo"
+            height={24}
+            travellerWidth={8}
+            stroke="var(--accent)"
+            fill="var(--surface-1)"
+            // As datas já estão no topo do card; o texto da alça vazava do gráfico.
+            tickFormatter={() => ''}
+            startIndex={indicesIniciais?.[0]}
+            endIndex={indicesIniciais?.[1]}
+            onChange={({ startIndex, endIndex }) => {
+              const inicio = startIndex == null ? undefined : serie[startIndex];
+              const fim = endIndex == null ? undefined : serie[endIndex];
+              if (inicio && fim) aoMudarJanela?.({ inicio: inicio.periodo, fim: fim.periodo });
+            }}
+          />
+        )}
       </AreaChart>
     </ResponsiveContainer>
   );
@@ -777,9 +952,9 @@ function TabelaHistorico({
                   </>
                 )}
               </td>
-              <td className="r">{pct(linha.alvo)}</td>
+              <td className="r">{pct(linha.alvo, 2)}</td>
               <td className="r">
-                {pct(linha.margem_antes)}<span className="prec-seta">→</span>{pct(linha.margem_depois)}
+                {pct(linha.margem_antes, 2)}<span className="prec-seta">→</span>{pct(linha.margem_depois, 2)}
               </td>
               <td className={`r ${classeSinal(linha.gap_pp)}`}>{textoSinal(linha.gap_pp, 'pp')}</td>
               <td className={`r ${classeSinal(linha.efeito_lucro_pct)}`}>{textoSinal(linha.efeito_lucro_pct)}</td>
@@ -800,6 +975,8 @@ function PainelItem({
   rodadas,
   faixas,
   granularidade,
+  janela,
+  aoClicarMes,
 }: {
   empresa: string;
   selecionado: { nivel: NivelItem; nome: string } | null;
@@ -807,6 +984,8 @@ function PainelItem({
   rodadas: string[];
   faixas: string[];
   granularidade: Granularidade;
+  janela: Janela | null;
+  aoClicarMes: (mes: string) => void;
 }) {
   const chave = selecionado
     ? JSON.stringify([empresa, selecionado.nivel, selecionado.nome, periodo, rodadas, faixas])
@@ -863,12 +1042,18 @@ function PainelItem({
         <>
           <div>
             <span className="prec-rotulo">{granularidade === 'diaria' ? 'Margem diária' : 'Margem mensal'}</span>
+            {/* O painel acompanha o zoom do gráfico principal, sem barra própria. */}
             <SeriePrecificacao
-              serie={granularidade === 'diaria' ? item.serie_diaria : item.serie_mensal}
+              serie={
+                granularidade === 'diaria'
+                  ? item.serie_diaria.filter((p) => !janela || (p.periodo >= janela.inicio && p.periodo <= janela.fim))
+                  : item.serie_mensal
+              }
               granularidade={granularidade}
               marcadores={item.marcadores}
               metrica="margem"
               altura={140}
+              aoClicarMes={aoClicarMes}
             />
           </div>
 
@@ -881,7 +1066,7 @@ function PainelItem({
                 {item.historico.map((evento) => (
                   <li key={evento.dia} className={evento.no_filtro ? undefined : 'is-apagado'}>
                     <b>{dataBr(evento.dia)}</b>
-                    alvo {pct(evento.alvo)} · margem no dia {pct(evento.margem_no_dia)} · {evento.skus} SKU{evento.skus === 1 ? '' : 's'}
+                    alvo {pct(evento.alvo, 2)} · margem no dia {pct(evento.margem_no_dia, 2)} · {evento.skus} SKU{evento.skus === 1 ? '' : 's'}
                     {!evento.mensuravel && ' · não medível'}
                   </li>
                 ))}

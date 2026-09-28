@@ -126,11 +126,16 @@ def atualizar_base(
 NOME_COMPLEMENTO = "base_empresas_complemento.json"
 
 
-def carregar_complemento(trabalho: Path | None) -> dict[str, dict[str, str]]:
-    """`{trabalho}/base_empresas_complemento.json`: empresa → {loja: CNPJ}.
+def carregar_complemento(trabalho: Path | None) -> dict[str, dict[str, tuple[str, bool]]]:
+    """`{trabalho}/base_empresas_complemento.json`: empresa → {loja: CNPJ ou
+    {"cnpj": ..., "forcar": true}}.
 
     Para empresa cujo `_EMPRESA.dw_2d` vem sem CNPJ (a Cativo exporta só as
-    lojas). Ausente = vazio.
+    lojas) — CNPJ como texto simples, o caso comum. `forcar: true` é para
+    quando o DW *tem* CNPJ mas ele está errado (ex.: Viannax — a Estética
+    Automotiva está com um CNPJ no `_EMPRESA.dw_2d` e outro no parquet do
+    PRICE, e corrigir o DW não é opção): o valor vira dict em vez de string.
+    Ausente = vazio.
     """
     if trabalho is None:
         return {}
@@ -139,39 +144,52 @@ def carregar_complemento(trabalho: Path | None) -> dict[str, dict[str, str]]:
         return {}
     import json
 
+    def _entrada(valor) -> tuple[str, bool]:
+        if isinstance(valor, dict):
+            return so_digitos(valor.get("cnpj")), bool(valor.get("forcar"))
+        return so_digitos(valor), False
+
     bruto = json.loads(caminho.read_text(encoding="utf-8"))
     return {
-        str(empresa): {str(loja).strip(): so_digitos(cnpj) for loja, cnpj in (lojas or {}).items()}
+        str(empresa): {str(loja).strip(): _entrada(valor) for loja, valor in (lojas or {}).items()}
         for empresa, lojas in bruto.items()
     }
 
 
 def aplicar_complemento(
-    base: pd.DataFrame, complemento: dict[str, dict[str, str]], empresas: Iterable[str],
+    base: pd.DataFrame, complemento: dict[str, dict[str, tuple[str, bool]]], empresas: Iterable[str],
 ) -> tuple[pd.DataFrame, list[str]]:
     """Preenche CNPJ de loja que o DW trouxe vazio e acrescenta loja que o DW não
-    lista (só de empresa que está na fonte). CNPJ que o DW já trouxe não é
-    sobrescrito — o DW continua sendo a fonte oficial. Devolve (base, mudanças)."""
+    lista (só de empresa que está na fonte). CNPJ que o DW já trouxe só é
+    sobrescrito com `forcar: true` — sem isso o DW continua sendo a fonte
+    oficial. Devolve (base, mudanças)."""
     empresas = set(empresas)
     base = base.copy()
     mudancas: list[str] = []
     for empresa, lojas in complemento.items():
         if empresa not in empresas:
             continue
-        for loja, cnpj in lojas.items():
-            loja, cnpj = str(loja).strip(), so_digitos(cnpj)
+        for loja, entrada in lojas.items():
+            loja, (cnpj, forcar) = str(loja).strip(), entrada
             if not cnpj:
                 continue
             achou = (base["empresa"] == empresa) & (base["id_loja"].str.casefold() == loja.casefold())
-            if achou.any():
-                vazio = achou & (base["cnpj"].fillna("") == "")
-                if vazio.any():
-                    base.loc[vazio, "cnpj"] = cnpj
-                    mudancas.append(f"{empresa}/{loja}: CNPJ {cnpj}")
-            else:
+            if not achou.any():
                 linha = {c: "" for c in COLUNAS_BASE} | {"empresa": empresa, "id_loja": loja, "cnpj": cnpj}
                 base = pd.concat([base, pd.DataFrame([linha])], ignore_index=True)
                 mudancas.append(f"{empresa}/{loja}: loja acrescentada, CNPJ {cnpj}")
+                continue
+            vazio = achou & (base["cnpj"].fillna("") == "")
+            if vazio.any():
+                base.loc[vazio, "cnpj"] = cnpj
+                mudancas.append(f"{empresa}/{loja}: CNPJ {cnpj}")
+                continue
+            if forcar:
+                diferente = achou & (base["cnpj"] != cnpj)
+                if diferente.any():
+                    antigo = base.loc[diferente, "cnpj"].iloc[0]
+                    base.loc[achou, "cnpj"] = cnpj
+                    mudancas.append(f"{empresa}/{loja}: CNPJ {antigo} -> {cnpj} (forçado)")
     return base[COLUNAS_BASE], mudancas
 
 
@@ -202,3 +220,33 @@ def cnpjs_por_empresa(base: pd.DataFrame) -> dict[str, list[str]]:
         empresa: sorted(set(grupo["cnpj"]))
         for empresa, grupo in com_cnpj.groupby("empresa", sort=True)
     }
+
+
+def lojas_sem_parquet_price(base: pd.DataFrame, pasta_margem: Path | None) -> list[str]:
+    """Lojas com CNPJ na base cujo `margem_{cnpj}.parquet` não existe em
+    `pasta_margem`, só nas empresas em que *outra* loja tem o parquet.
+
+    Sinal de margem por transação incompleta sem ninguém perceber: a Viannax
+    (set/2026) tinha a Estética Automotiva com um CNPJ no `_EMPRESA.dw_2d` e
+    outro no PRICE — a loja ficava de fora da margem em silêncio, e a matriz
+    sozinha bastava para a tela nunca dar erro (`ErroMargemPrice` só dispara
+    sem nenhum parquet). Empresa sem nenhum parquet no PRICE não entra aqui:
+    ela ainda não foi precificada, e isso não é aviso, é o normal.
+    """
+    if pasta_margem is None or base.empty:
+        return []
+    pasta = Path(pasta_margem)
+    com_cnpj = base[base["cnpj"].fillna("") != ""].copy()
+    if com_cnpj.empty:
+        return []
+    com_cnpj["tem_parquet"] = com_cnpj["cnpj"].map(lambda c: (pasta / f"margem_{c}.parquet").is_file())
+    avisos = []
+    for empresa, grupo in com_cnpj.groupby("empresa", sort=True):
+        if not grupo["tem_parquet"].any():
+            continue
+        for linha in grupo[~grupo["tem_parquet"]].itertuples():
+            avisos.append(
+                f"{linha.empresa}/{linha.id_loja}: CNPJ {linha.cnpj} sem parquet em {pasta.name} "
+                "(outra loja da empresa tem — a margem por transação fica incompleta)"
+            )
+    return avisos

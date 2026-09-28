@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pandas as pd
+
 import main  # noqa: F401  (insere a raiz do projeto no sys.path)
 import base_empresas as be
 from precificacao_do_postgres import resolver_cnpjs
@@ -112,9 +114,9 @@ def test_complemento_preenche_cnpj_vazio_e_nao_sobrescreve_o_dw(tmp_path):
     _arquivo(tmp_path, "GAP", ['"gap";"10481020000185";"GAP";"";"sn";"x";"1";"1";""'])
     base, _ = be.montar_base(tmp_path, ["Cativo", "GAP"])
     complemento = {
-        "Cativo": {"cativo matriz rj": "05.154.197/0001-37", "Ecocity Solar": "08.348.589/0001-25"},
-        "GAP": {"gap": "99999999000199"},        # DW já tem CNPJ: não troca
-        "Fora da fonte": {"x": "11111111000111"},  # empresa que não está na Dados Alvos: ignora
+        "Cativo": {"cativo matriz rj": ("05154197000137", False), "Ecocity Solar": ("08348589000125", False)},
+        "GAP": {"gap": ("99999999000199", False)},        # DW já tem CNPJ, sem forçar: não troca
+        "Fora da fonte": {"x": ("11111111000111", False)},  # empresa que não está na Dados Alvos: ignora
     }
     base, mudancas = be.aplicar_complemento(base, complemento, ["Cativo", "GAP"])
     assert be.cnpjs_por_empresa(base) == {
@@ -122,3 +124,42 @@ def test_complemento_preenche_cnpj_vazio_e_nao_sobrescreve_o_dw(tmp_path):
         "GAP": ["10481020000185"],
     }
     assert len(mudancas) == 2
+
+
+def test_complemento_com_forcar_sobrescreve_cnpj_do_dw(tmp_path):
+    """Caso Viannax (set/2026): o DW traz um CNPJ errado para a loja, e não dá
+    para corrigir o DW — `forcar: true` é o único jeito de trocar."""
+    _arquivo(tmp_path, "Viannax", [
+        '"vianax_estetica";"05052880000777";"VIANNAX ESTETICA";"";"lr";"x";"1";"1";""',
+    ])
+    base, _ = be.montar_base(tmp_path, ["Viannax"])
+    complemento = {"Viannax": {"vianax_estetica": ("05052880000100", True)}}
+    base, mudancas = be.aplicar_complemento(base, complemento, ["Viannax"])
+    assert be.cnpjs_por_empresa(base) == {"Viannax": ["05052880000100"]}
+    assert mudancas == ["Viannax/vianax_estetica: CNPJ 05052880000777 -> 05052880000100 (forçado)"]
+
+
+def test_carregar_complemento_le_string_simples_e_dict_com_forcar(tmp_path):
+    (tmp_path / be.NOME_COMPLEMENTO).write_text(
+        '{"Cativo": {"cativo": "05.154.197/0001-37"}, '
+        '"Viannax": {"vianax_estetica": {"cnpj": "05052880000100", "forcar": true}}}',
+        encoding="utf-8",
+    )
+    complemento = be.carregar_complemento(tmp_path)
+    assert complemento["Cativo"]["cativo"] == ("05154197000137", False)
+    assert complemento["Viannax"]["vianax_estetica"] == ("05052880000100", True)
+
+
+def test_lojas_sem_parquet_price_so_avisa_quando_outra_loja_da_empresa_tem(tmp_path):
+    margem = tmp_path / "margem_price"
+    margem.mkdir()
+    (margem / "margem_05052880000163.parquet").write_bytes(b"")
+    base = pd.DataFrame([
+        {"empresa": "Viannax", "id_loja": "vianax", "cnpj": "05052880000163", "nome": "", "cep": "", "tipo_tributacao": "", "data_att": ""},
+        {"empresa": "Viannax", "id_loja": "vianax_estetica", "cnpj": "05052880000777", "nome": "", "cep": "", "tipo_tributacao": "", "data_att": ""},
+        {"empresa": "SemPrice", "id_loja": "unica", "cnpj": "22222222000122", "nome": "", "cep": "", "tipo_tributacao": "", "data_att": ""},
+    ])
+    avisos = be.lojas_sem_parquet_price(base, margem)
+    assert len(avisos) == 1
+    assert "Viannax/vianax_estetica" in avisos[0] and "05052880000777" in avisos[0]
+    assert "SemPrice" not in " ".join(avisos)  # empresa inteira sem parquet: não é o caso a sinalizar

@@ -119,7 +119,7 @@ export function MetricsGrid({ stats, onRevenueClick, mesAberto = false, despesas
                     />
                     <StatCard
                         title={singleYearMode ? `Quantidade vendida (${yearLabel})` : `Quantidade vendida / ${unidade}`}
-                        value={formatNumber(qtyB)}
+                        value={formatNumber(Math.round(qtyB))}
                         icon={Package}
                         trend={showTrend ? `${textoPct(qtyTrendPct)} vs ${labelA}` : undefined}
                         trendArrow={qtyB >= qtyA ? 'up' : 'down'}

@@ -604,7 +604,7 @@ def serie_semanal(mov: pd.DataFrame, codigos: set[str]) -> list[dict[str, Any]]:
             "semana": dia.date().isoformat(),
             "margem": _num((r["receita"] - r["cmv"]) / r["receita"] * 100),
             "receita": _num(r["receita"]),
-            "qtd": _num(r["qtd"], 3),
+            "qtd": _num(r["qtd"], 0),  # quantidade é sempre inteiro na exibição
         }
         for dia, r in tot.iterrows()
     ]

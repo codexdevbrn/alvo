@@ -46,6 +46,10 @@ def main() -> None:
     parser.add_argument("--fonte", default=os.environ.get("PRISMA_FONTE") or caminhos_padrao.fonte_dados())
     parser.add_argument("--trabalho", default=os.environ.get("PRISMA_TRABALHO") or caminhos_padrao.trabalho())
     parser.add_argument("--dw", default=os.environ.get("PRISMA_DW") or caminhos_padrao.dw())
+    parser.add_argument(
+        "--margem-price", default=os.environ.get("PRISMA_MARGEM_PRICE") or caminhos_padrao.margem_price(),
+        help="Pasta margem_price (PRICE), para avisar loja sem parquet lá",
+    )
     parser.add_argument("--refazer", action="store_true", help="Relê o DW de todas as empresas")
     parser.add_argument("--conferir", action="store_true", help="Mostra o resultado sem gravar")
     args = parser.parse_args()
@@ -72,6 +76,9 @@ def main() -> None:
         f"{linha.empresa}: loja {linha.id_loja!r} sem CNPJ (nem no DW nem no complemento)"
         for linha in base[base["cnpj"].fillna("") == ""].itertuples()
     ]
+    # Loja com CNPJ que não tem parquet no PRICE, com outra loja da mesma
+    # empresa que tem — a margem por transação some em silêncio sem isto.
+    avisos += base_empresas.lojas_sem_parquet_price(base, _caminho(args.margem_price))
 
     print(f"DW: {dw}\nDados Alvos: {len(empresas)} empresa(s) | no mapa: {base['empresa'].nunique()} "
           f"| lojas: {len(base)} | com CNPJ: {len(base_empresas.cnpjs_por_empresa(base))}")

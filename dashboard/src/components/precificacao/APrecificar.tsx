@@ -463,7 +463,7 @@ function CelulasLinha({ item, comGps }: { item: ItemLinha; comGps: boolean }) {
       <td><BolasProvas provas={item.provas} /></td>
       {!comGps && <td className="r">{pct(item.part_receita, 2)}</td>}
       <td className="r">
-        {pct(item.margem_base)}<span className="prec-seta">→</span>{pct(item.margem_recente)}
+        {pct(item.margem_base, 2)}<span className="prec-seta">→</span>{pct(item.margem_recente, 2)}
       </td>
       <td className={`r${(item.gap ?? 0) < 0 ? ' is-queda' : ''}`}>{sinal(item.gap, 'pp')}</td>
       <td className={`r${(item.var_qtd ?? 0) < 0 ? ' is-queda' : ' is-alta'}`}>
@@ -496,13 +496,13 @@ function CelulasGps({ item }: { item: ItemLinha }) {
 function textoProva(prova: ProvaPrecificar, par: ItemLinha): string {
   switch (prova) {
     case 'margem':
-      return `margem ${pct(par.margem_base)} → ${pct(par.margem_recente)} nos últimos 30 dias`;
+      return `margem ${pct(par.margem_base, 2)} → ${pct(par.margem_recente, 2)} nos últimos 30 dias`;
     case 'custo':
       return `custo ${sinal(par.var_custo)}, preço ${sinal(par.var_preco)}`;
     case 'volume':
       return `qtd/dia ${sinal(par.var_qtd)} contra os 90 dias anteriores`;
     case 'alvo':
-      return `margem ${pct(par.margem_recente)} contra alvo de ${pct(par.alvo)} (${dataBr(par.dia_alvo)})`;
+      return `margem ${pct(par.margem_recente, 2)} contra alvo de ${pct(par.alvo, 2)} (${dataBr(par.dia_alvo)})`;
   }
 }
 
@@ -586,7 +586,7 @@ function PainelPar({ empresa, par, perfilGps }: { empresa: string; par: ItemLinh
       {par.sinalizado !== false && (
       <div>
         <span className="prec-rotulo">
-          {par.alvo != null ? `Se precificar no alvo (${pct(par.referencia)})` : `Se voltar à margem de antes (${pct(par.referencia)})`}
+          {par.alvo != null ? `Se precificar no alvo (${pct(par.referencia, 2)})` : `Se voltar à margem de antes (${pct(par.referencia, 2)})`}
         </span>
         <dl className="aprec-dl">
           <div><dt>Reajuste médio</dt><dd>{sinal(par.reajuste)}</dd></div>
@@ -644,9 +644,9 @@ function GraficoMargem({ semanas, referencia }: { semanas: SemanaMargem[]; refer
                 <div className="vendedores-chart-tooltip">
                   <strong>Semana de {label}</strong>
                   <dl>
-                    <div><dt>Margem</dt><dd>{pct(ponto.margem)}</dd></div>
+                    <div><dt>Margem</dt><dd>{pct(ponto.margem, 2)}</dd></div>
                     <div><dt>Receita</dt><dd>{moeda(ponto.receita)}</dd></div>
-                    <div><dt>Qtd</dt><dd>{ponto.qtd?.toLocaleString('pt-BR') ?? '—'}</dd></div>
+                    <div><dt>Qtd</dt><dd>{ponto.qtd == null ? '—' : Math.round(ponto.qtd).toLocaleString('pt-BR')}</dd></div>
                   </dl>
                 </div>
               );
@@ -657,7 +657,7 @@ function GraficoMargem({ semanas, referencia }: { semanas: SemanaMargem[]; refer
       </ResponsiveContainer>
       <div className="prec-legenda">
         <span><i style={{ background: 'var(--accent)' }} />margem</span>
-        {referencia != null && <span><i style={{ background: 'var(--text-muted)' }} />referência {pct(referencia)}</span>}
+        {referencia != null && <span><i style={{ background: 'var(--text-muted)' }} />referência {pct(referencia, 2)}</span>}
       </div>
     </>
   );

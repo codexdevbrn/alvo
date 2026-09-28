@@ -9875,6 +9875,53 @@ button.empresa-dropdown-item.is-padrao:focus-visible {
   margin: 0.2rem 0 0;
 }
 
+/* Zoom do diário: ‹ janela › e volta ao período. */
+.prec-zoom {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.5rem;
+}
+
+.prec-zoom-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.7rem;
+  height: 1.7rem;
+  padding: 0 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--raio-controle);
+  background: var(--surface-1);
+  color: var(--text-secondary);
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.prec-zoom-btn:hover {
+  background: var(--surface-2);
+  color: var(--text-primary);
+}
+
+.prec-zoom-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+  background: var(--surface-1);
+  color: var(--text-muted);
+}
+
+.prec-zoom-btn.is-texto {
+  padding: 0 0.6rem;
+}
+
+.prec-zoom-rotulo {
+  min-width: 11.5rem;
+  color: var(--text-primary);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
 .prec-legenda {
   display: flex;
   gap: 0.9rem;

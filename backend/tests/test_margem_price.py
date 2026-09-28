@@ -218,3 +218,17 @@ def test_cnpjs_vem_da_base_oficial_antes_do_mapa_manual(tmp_path):
     # Empresa fora da base continua achando o CNPJ no mapa manual.
     assert mp.resolver_cnpjs("Cativo", tmp_path) == ["05154197000137"]
     assert mp.resolver_cnpjs("Nenhuma", tmp_path) == []
+
+
+def test_margem_da_empresa_ignora_linha_sem_segmento_como_o_price():
+    """Viannax abr/26: com o balde sem segmento a margem saía 34,10%, e o PRICE
+    mostra 34,59%. Margem mensal e geral usam a mesma regra da precificação."""
+    bruto = pd.DataFrame([
+        _linha("2026-04-01", "Lubrificante", 100.0, 60.0, quantidade=2.0),
+        _linha("2026-04-02", "NÃO HARMONIZADO", 100.0, 90.0, quantidade=5.0, segmento=None),
+    ])
+    bruto["data"] = pd.to_datetime(bruto["data"])
+    (ponto,) = mp.margem_mensal(bruto)
+    assert ponto["margem"] == pytest.approx(40.0)
+    assert (ponto["receita"], ponto["qtd"], ponto["dias_venda"]) == (100.0, 2.0, 1)
+    assert mp.margem_geral(bruto)["margem"] == pytest.approx(40.0)
