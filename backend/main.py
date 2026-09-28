@@ -1177,6 +1177,24 @@ def _tela_para_disco(empresa: str, tela: str, chave: tuple, resultado: dict) -> 
     cache_telas.gravar(Path(pasta_trabalho), tela, _chave_disco_tela(pasta_trabalho, chave), resultado)
 
 
+def _tabelas_do_disco(empresa: str, tela: str, chave: tuple, nomes: tuple[str, ...]):
+    """Como `_tela_do_disco`, para resultado em tabelas (parquet)."""
+    try:
+        _pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
+    except HTTPException:
+        return None
+    return cache_telas.ler_tabelas(Path(pasta_trabalho), tela, _chave_disco_tela(pasta_trabalho, chave), nomes)
+
+
+def _tabelas_para_disco(empresa: str, tela: str, chave: tuple, tabelas: dict, extra: dict) -> None:
+    try:
+        _pasta_fonte, pasta_trabalho = _pastas_empresa(empresa)
+        _assert_escrita_fora_da_fonte(pasta_trabalho)
+    except HTTPException:
+        return
+    cache_telas.gravar_tabelas(Path(pasta_trabalho), tela, _chave_disco_tela(pasta_trabalho, chave), tabelas, extra)
+
+
 def _guardar_lru(cache: OrderedDict, trava, chave, valor, maximo: int) -> None:
     with trava:
         cache[chave] = valor
@@ -2924,7 +2942,10 @@ def obter_resumo_estoque(
 
 
 def _base_compras(empresa: str, loja_norm: Optional[str], grupos_norm) -> tuple[dict, date]:
-    """Base de 12 meses da tela Compras, em RAM sem os parâmetros na chave."""
+    """Base de 12 meses da tela Compras, sem os parâmetros na chave: RAM, depois
+    disco (`_cache_telas`, gravada pelo lote da manhã ou pela 1ª máquina do dia),
+    depois o cálculo. Guardar a base, e não a resposta, deixa qualquer cenário
+    rápido — a resposta muda a cada clique de prazo, giro ou caixa."""
     caminho_movimento, caminho_produto = _caminho_produto_empresa(empresa)
     try:
         assinatura = (_assinatura_arquivo(caminho_produto), _assinatura_arquivo(caminho_movimento))
@@ -2933,15 +2954,20 @@ def _base_compras(empresa: str, loja_norm: Optional[str], grupos_norm) -> tuple[
     corte = af.data_corte_padrao()
     chave_cache = (
         empresa, loja_norm or "", assinatura, date.today(),
-        _assinatura_cortes_escopo(empresa, loja_norm, grupos_norm), corte,
+        _assinatura_cortes_escopo(empresa, loja_norm, grupos_norm), corte, compras.VERSAO_BASE,
     )
     with _cache_compras_lock:
         base = _cache_compras_base.get(chave_cache)
         if base is not None:
             _cache_compras_base.move_to_end(chave_cache)
     if base is None:
-        estoque, vendas, _lojas = _ler_estoque_vendas(empresa, caminho_produto, loja_norm, grupos_norm)
-        base = compras.preparar_base_compras(estoque, vendas, corte=corte)
+        do_disco = _tabelas_do_disco(empresa, "compras-base", chave_cache, compras.TABELAS_BASE)
+        if do_disco is not None:
+            base = compras.base_do_disco(*do_disco)
+        else:
+            estoque, vendas, _lojas = _ler_estoque_vendas(empresa, caminho_produto, loja_norm, grupos_norm)
+            base = compras.preparar_base_compras(estoque, vendas, corte=corte)
+            _tabelas_para_disco(empresa, "compras-base", chave_cache, *compras.base_para_disco(base))
         _guardar_lru(_cache_compras_base, _cache_compras_lock, chave_cache, base, _CACHE_COMPRAS_MAX)
     return base, corte
 
@@ -3456,7 +3482,10 @@ def obter_historico_precificacao(
         except OSError:
             assinatura_dump = None
         if fonte == "margem_price" and assinatura_dump is not None:
-            chave_disco = ("historico", assinatura_mgp, assinatura_dump, periodo, nivel, bool(todos))
+            chave_disco = (
+                "historico", hist_prec.VERSAO_RESPOSTA, assinatura_mgp, assinatura_dump,
+                periodo, nivel, bool(todos),
+            )
             em_disco = _tela_do_disco(empresa, "precificacao-historico", chave_disco)
             if em_disco is not None:
                 return em_disco

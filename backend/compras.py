@@ -219,6 +219,23 @@ def preparar_base_compras(estoque: pd.DataFrame, vendas: pd.DataFrame, *, corte:
     return base
 
 
+TABELAS_BASE = ("linhas", "produtos")
+#: Entra na chave do cache da base (RAM e disco). Mudou `preparar_base_compras`,
+#: suba o número: a base gravada pelo lote com a regra velha deixa de ser lida.
+VERSAO_BASE = 1
+
+
+def base_para_disco(base: dict[str, Any]) -> tuple[dict[str, pd.DataFrame], dict[str, Any]]:
+    """Base preparada → (tabelas, extra) para `cache_telas.gravar_tabelas`."""
+    return {nome: base[nome] for nome in TABELAS_BASE}, {"meses": list(base["meses"])}
+
+
+def base_do_disco(tabelas: dict[str, pd.DataFrame], extra: dict[str, Any]) -> dict[str, Any]:
+    """Inverso de `base_para_disco`: os 12 meses voltam a ser as colunas 0…11."""
+    linhas = tabelas["linhas"].rename(columns={str(i): i for i in range(MESES_JANELA)})
+    return {"linhas": linhas, "produtos": tabelas["produtos"], "meses": list(extra.get("meses") or [])}
+
+
 def _numero(valor, casas: int = 4) -> Optional[float]:
     if valor is None or pd.isna(valor):
         return None

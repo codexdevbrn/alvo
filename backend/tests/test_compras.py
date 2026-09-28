@@ -324,3 +324,22 @@ def test_arquivo_de_excecoes_ida_e_volta_e_edicao():
 
     exc = cp.limpar_excecoes_produto(exc, descricao="Amortecedor", fabricante="MONROE", codigos=["2"])
     assert exc == {"produtos": {}, "skus": {}}
+
+
+def test_base_em_disco_da_a_mesma_resposta(tmp_path):
+    """A base que o lote grava em `_cache_telas` volta idêntica: mesma resposta em
+    qualquer cenário, com e sem exceção. Chave diferente não é lida."""
+    import cache_telas
+
+    estoque, vendas = _casos_referencia()
+    base = cp.preparar_base_compras(estoque, pd.DataFrame(vendas), corte=CORTE)
+    cache_telas.gravar_tabelas(tmp_path, "compras-base", ("x", 1), *cp.base_para_disco(base))
+    lida = cache_telas.ler_tabelas(tmp_path, "compras-base", ("x", 1), cp.TABELAS_BASE)
+    assert lida is not None
+    de_volta = cp.base_do_disco(*lida)
+
+    excecoes = cp.normalizar_excecoes({"skus": {"51347": {"prazo": "industria"}}})
+    for kwargs in ({}, {"giro": "nao_impulsionado", "prazo_entrega": "regular"}, {"excecoes": excecoes}):
+        assert cp.calcular_compras(de_volta, somente_recomendados=False, **kwargs) == \
+            cp.calcular_compras(base, somente_recomendados=False, **kwargs)
+    assert cache_telas.ler_tabelas(tmp_path, "compras-base", ("x", 2), cp.TABELAS_BASE) is None

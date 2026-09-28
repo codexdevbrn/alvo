@@ -130,3 +130,28 @@ def test_item_traz_historico_mesmo_fora_do_filtro():
     assert [h["no_filtro"] for h in item["historico"]] == [True, False]
     assert item["skus"][0]["codigo"] == "A"
     assert item["skus"][0]["alvo"] == pytest.approx(31.0)
+
+
+def test_serie_diaria_fica_no_periodo_e_pula_dia_sem_venda():
+    """Um ponto por dia com venda, do início do período ao fim do movimento;
+    `todos` troca os SKUs precificados pela loja inteira, como no mensal."""
+    dump = _dump([{"codigo": "A", "data_exportacao": "2026-05-20 10:00"}])
+    mov = _mov([
+        ("A", "2026-01-05", 50.0, 30.0, 1),    # fora dos 90 dias
+        ("A", "2026-05-18", 100.0, 60.0, 2),
+        ("A", "2026-05-18", 20.0, 10.0, 1),    # mesmo dia soma
+        ("A", "2026-05-25", 100.0, 70.0, 1),   # 19–24/05 sem venda: não vira ponto
+        ("B", "2026-05-19", 400.0, 100.0, 4),  # não precificado
+    ])
+    eventos, serie = _preparar(dump, mov)
+    r = hp.montar_historico(eventos, serie, periodo_dias=90)
+    assert [p["periodo"] for p in r["serie_diaria"]] == ["2026-05-18", "2026-05-25"]
+    dia = r["serie_diaria"][0]
+    assert (dia["rotulo"], dia["receita"], dia["lucro_dia"], dia["qtd_dia"]) == ("18/05", 120.0, 50.0, 3.0)
+    assert dia["margem"] == pytest.approx(100 * 50 / 120)
+
+    loja = hp.montar_historico(eventos, serie, periodo_dias=90, todos=True)
+    assert [p["periodo"] for p in loja["serie_diaria"]] == ["2026-05-18", "2026-05-19", "2026-05-25"]
+
+    item = hp.montar_item(eventos, serie, nivel="sku", nome="A", periodo_dias=90)
+    assert [p["periodo"] for p in item["serie_diaria"]] == ["2026-05-18", "2026-05-25"]

@@ -31,6 +31,14 @@ $pythonIoAnterior = $env:PYTHONIOENCODING
 New-Item -ItemType Directory -Path $logs -Force | Out-Null
 $logResumo = Join-Path $logs "lote_noturno.log"
 $logDetalhado = Join-Path $logs "lote_noturno_detalhado.log"
+# Log detalhado preso por um processo que ficou para tras (24/09/2026: um preparo
+# travado segurou o arquivo ate o reboot, e toda passada seguinte morreu em
+# IOException na primeira escrita). Travado, a passada escreve num arquivo proprio.
+try {
+    [IO.File]::Open($logDetalhado, [IO.FileMode]::Append, [IO.FileAccess]::Write, [IO.FileShare]::Read).Dispose()
+} catch [System.IO.IOException] {
+    $logDetalhado = Join-Path $logs ("lote_noturno_detalhado_{0}.log" -f (Get-Date -Format "yyyyMMdd_HHmmss"))
+}
 
 if ([string]::IsNullOrWhiteSpace($Python)) {
     $comandoPython = Get-Command python -ErrorAction SilentlyContinue
@@ -141,18 +149,23 @@ try {
         $argumentosAnalise += "--dry-run"
     } else {
         if (-not (Test-Path -LiteralPath $arquivoSegredo)) {
-            throw "Chave Ollama ausente. Execute configurar_ollama.ps1 primeiro."
-        }
-
+            # Ultima etapa e opcional: sem chave nesta maquina o lote nao falha,
+            # senao os dados prontos das etapas anteriores aparecem como erro 0x2.
+            "[$(Get-Date -Format o)] Analises IA puladas: chave Ollama ausente (configurar_ollama.ps1)" | Add-Content -LiteralPath $logResumo -Encoding UTF8
+            $argumentosAnalise = $null
+        } else {
         $blobProtegido = (Get-Content -Raw -LiteralPath $arquivoSegredo).Trim()
         $segredo = ConvertTo-SecureString -String $blobProtegido
         $ponte = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($segredo)
         $env:OLLAMA_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ponte)
+        }
     }
 
-    "[$(Get-Date -Format o)] Inicio analises IA" | Add-Content -LiteralPath $logDetalhado -Encoding UTF8
-    $codigoAnalises = Invoke-PythonComLog -Argumentos $argumentosAnalise
-    "[$(Get-Date -Format o)] Fim analises IA exit=$codigoAnalises" | Add-Content -LiteralPath $logDetalhado -Encoding UTF8
+    if ($argumentosAnalise) {
+        "[$(Get-Date -Format o)] Inicio analises IA" | Add-Content -LiteralPath $logDetalhado -Encoding UTF8
+        $codigoAnalises = Invoke-PythonComLog -Argumentos $argumentosAnalise
+        "[$(Get-Date -Format o)] Fim analises IA exit=$codigoAnalises" | Add-Content -LiteralPath $logDetalhado -Encoding UTF8
+    }
 } catch {
     # So a etapa e o tipo do erro: a mensagem pode carregar valor sensivel (chave).
     $tipoErro = $_.Exception.GetType().Name

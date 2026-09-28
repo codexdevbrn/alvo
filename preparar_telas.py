@@ -68,6 +68,9 @@ TELAS = (
     # sem dump responde 404, que aqui não é falha.
     ("Precificação: a precificar", "/api/precificacao/{e}/a-precificar", {}),
     ("Precificação: pós", "/api/precificacao/{e}/historico", {"periodo": 180, "nivel": "familia"}),
+    # Compras guarda em disco a base de 12 meses, não a resposta: um cenário
+    # basta para prepará-la, e todos os outros saem dela em ~0,2 s.
+    ("Compras", "/api/compras/{e}", {"limite": 1}),
 )
 
 
@@ -99,6 +102,7 @@ def preparar_empresa(empresa: str) -> tuple[str, float, list[str]]:
             erros.append(f"{nome}: HTTP {resposta.status_code} {resposta.text[:120]}")
     # O processo guarda a base de uma empresa na RAM; solta antes da próxima.
     main._cache_base_empresa.clear()
+    main._cache_compras_base.clear()
     trabalho = main._resolver_caminho_trabalho()
     if trabalho:
         cache_telas.limpar_antigos(Path(trabalho) / empresa)

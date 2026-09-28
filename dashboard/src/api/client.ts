@@ -1689,6 +1689,8 @@ export type HistoricoPrecificacaoResposta = {
   linha_tempo: RodadaLinhaTempo[];
   kpis: KpisHistorico;
   serie_mensal: PontoSeriePrecificacao[];
+  /** Um ponto por dia com venda, só dentro do período filtrado. */
+  serie_diaria: PontoSeriePrecificacao[];
   marcadores: MarcadorPrecificacao[];
   nivel: NivelHistorico;
   linhas: LinhaHistorico[];
@@ -1710,6 +1712,7 @@ export type ItemHistoricoPrecificacao = {
     no_filtro: boolean;
   }[];
   serie_mensal: PontoSeriePrecificacao[];
+  serie_diaria: PontoSeriePrecificacao[];
   marcadores: MarcadorPrecificacao[];
   skus: (MetricasHistorico & { codigo: string; descricao: string; fabricante: string; fx: string })[];
 };

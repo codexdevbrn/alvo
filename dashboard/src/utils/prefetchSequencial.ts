@@ -2,12 +2,14 @@ import { EVENTO_EMPRESA } from './empresaSelecionada';
 import { EVENTO_LOJA, codificarEscopoLojas, lerLojas } from './lojaSelecionada';
 import { EVENTO_VENDA_MEDIA, lerMesesVendaMedia } from './vendaMedia';
 import { limparCacheGeral } from './cacheRequisicoes';
+import { gruposClientesParam, lerGruposClientesFiltro } from './gruposClientesFiltro';
 import { invalidarSummary, gravarSummaryCache, lerSummaryCache } from './cacheSummary';
 import {
   obterPainelClientes,
   obterPainelDiagnostico,
   obterRankingVendedores,
   obterResumoEstoque,
+  obterCompras,
   obterResumoDespesas,
   obterAPrecificar,
   obterHistoricoPrecificacao,
@@ -98,6 +100,7 @@ const ROTA_TAREFA: [string, string][] = [
   ['/diagnostico', 'Diagnóstico'],
   ['/vendedores', 'Vendedores'],
   ['/estoque', 'Estoque'],
+  ['/compras', 'Compras'],
   ['/despesas', 'Despesas'],
   ['/monitor', 'Monitoramento'],
   ['/clientes', 'Clientes: Visão geral'],
@@ -205,6 +208,15 @@ async function rodarFila(empresa: string, motivo: MotivoPrefetch = 'empresa') {
         await Promise.all(MODOS_PERIODO.map((modo) => obterRankingVendedores(empresaAtual, loja, undefined, modo)));
     }},
     tarefaEstoque,
+    // O servidor guarda a base de 12 meses sem os parâmetros na chave: aquecer o
+    // cenário padrão deixa qualquer troca de prazo, giro ou caixa em ~0,2 s.
+    // Grupos entram porque fazem parte da chave (como na tela).
+    { nome: 'Compras', fn: async () => {
+        await obterCompras(empresaAtual, {
+          prazo_entrega: 'imediato', giro: 'impulsionado', caixa_apertado: false,
+          somenteRecomendados: true, loja, grupos: gruposClientesParam(lerGruposClientesFiltro()),
+        });
+    }},
     { nome: 'Despesas', fn: async () => {
         await Promise.all([
           obterResumoDespesas(empresaAtual, { loja, meses: 12, usarMesesFechados: true }),

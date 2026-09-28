@@ -28,6 +28,7 @@ import { ehSemPrecificacao } from '../../utils/semPrecificacao';
 type Props = { empresa: string };
 
 type Metrica = 'margem' | 'lucro_dia' | 'qtd_dia';
+type Granularidade = 'mensal' | 'diaria';
 type NivelItem = Exclude<NivelHistorico, 'rodada'>;
 
 // Espelha `PERIODOS_DIAS` do backend (historico_precificacao.py).
@@ -53,6 +54,11 @@ const METRICAS: { id: Metrica; rotulo: string }[] = [
   { id: 'margem', rotulo: 'Margem' },
   { id: 'lucro_dia', rotulo: 'Lucro / dia' },
   { id: 'qtd_dia', rotulo: 'Qtd / dia' },
+];
+
+const GRANULARIDADES: { id: Granularidade; rotulo: string }[] = [
+  { id: 'mensal', rotulo: 'Mensal' },
+  { id: 'diaria', rotulo: 'Diário' },
 ];
 
 const ROTULO_NIVEL: Record<NivelHistorico, string> = {
@@ -138,6 +144,7 @@ export function PosPrecificacaoHistorico({ empresa }: Props) {
   const [nivel, setNivel] = useState<NivelHistorico>('familia');
   const [todos, setTodos] = useState(false);
   const [metrica, setMetrica] = useState<Metrica>('margem');
+  const [granularidade, setGranularidade] = useState<Granularidade>('mensal');
   const [busca, setBusca] = useState('');
   const buscaDebounced = useDebouncedValue(busca);
   const [selecionado, setSelecionado] = useState<{ nivel: NivelItem; nome: string } | null>(null);
@@ -331,12 +338,29 @@ export function PosPrecificacaoHistorico({ empresa }: Props) {
           <section className="glass-card glass-card-flat prec-card">
             <div className="prec-card-topo">
               <div>
-                <h2>Evolução mensal</h2>
+                <h2>{granularidade === 'diaria' ? 'Evolução diária' : 'Evolução mensal'}</h2>
                 <p className="prec-mudo">
-                  {todos ? 'Loja inteira' : 'Só os SKUs precificados no filtro'} · meses com precificação em destaque.
+                  {todos ? 'Loja inteira' : 'Só os SKUs precificados no filtro'} ·{' '}
+                  {granularidade === 'diaria'
+                    ? `${ROTULO_PERIODO[periodo] ?? 'período'}, dias com venda · dias com precificação em destaque.`
+                    : 'meses com precificação em destaque.'}
                 </p>
               </div>
               <div className="prec-card-acoes">
+                <div className="periodo-segmented" role="radiogroup" aria-label="Granularidade do gráfico">
+                  {GRANULARIDADES.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      role="radio"
+                      aria-checked={granularidade === item.id}
+                      className={`periodo-segmented-btn${granularidade === item.id ? ' is-active' : ''}`}
+                      onClick={() => setGranularidade(item.id)}
+                    >
+                      {item.rotulo}
+                    </button>
+                  ))}
+                </div>
                 <div className="periodo-segmented" role="radiogroup" aria-label="Abrangência do gráfico">
                   <button
                     type="button"
@@ -373,7 +397,13 @@ export function PosPrecificacaoHistorico({ empresa }: Props) {
                 </div>
               </div>
             </div>
-            <SerieMensal serie={dados.serie_mensal} marcadores={dados.marcadores} metrica={metrica} altura={220} />
+            <SeriePrecificacao
+              serie={granularidade === 'diaria' ? dados.serie_diaria : dados.serie_mensal}
+              granularidade={granularidade}
+              marcadores={dados.marcadores}
+              metrica={metrica}
+              altura={220}
+            />
           </section>
 
           <section className="glass-card glass-card-flat prec-card">
@@ -428,6 +458,7 @@ export function PosPrecificacaoHistorico({ empresa }: Props) {
           periodo={periodo}
           rodadas={rodadas}
           faixas={faixas}
+          granularidade={granularidade}
         />
       </div>
     </div>
@@ -588,27 +619,35 @@ function LinhaDoTempo({
   );
 }
 
-function SerieMensal({
+function SeriePrecificacao({
   serie,
+  granularidade,
   marcadores,
   metrica,
   altura,
 }: {
   serie: PontoSeriePrecificacao[];
+  granularidade: Granularidade;
   marcadores: MarcadorPrecificacao[];
   metrica: Metrica;
   altura: number;
 }) {
-  const skusPorMes = useMemo(() => {
+  const diaria = granularidade === 'diaria';
+  // `periodo` do ponto é o mês (YYYY-MM) na série mensal e o dia (YYYY-MM-DD) na
+  // diária; o marcador é casado pela chave equivalente.
+  const skusPorPonto = useMemo(() => {
     const mapa = new Map<string, number>();
-    for (const m of marcadores) mapa.set(m.periodo, (mapa.get(m.periodo) ?? 0) + m.skus);
+    for (const m of marcadores) {
+      const chave = diaria ? m.dia : m.periodo;
+      mapa.set(chave, (mapa.get(chave) ?? 0) + m.skus);
+    }
     return mapa;
-  }, [marcadores]);
+  }, [marcadores, diaria]);
 
   if (serie.length === 0) return <p className="prec-vazio">Sem vendas neste recorte.</p>;
 
   const cor = 'var(--accent)';
-  const fillId = `prec-hist-${metrica}-${altura}`;
+  const fillId = `prec-hist-${metrica}-${altura}-${granularidade}`;
   return (
     <ResponsiveContainer width="100%" height={altura}>
       <AreaChart data={serie} margin={{ top: 12, right: 24, left: 24, bottom: 4 }}>
@@ -625,22 +664,22 @@ function SerieMensal({
           axisLine={false}
           tickLine={false}
           // No painel (estreito) todos os meses não cabem — deixa o Recharts espaçar.
-          interval={altura >= 200 && serie.length <= 12 ? 0 : 'preserveStartEnd'}
-          minTickGap={altura >= 200 ? 8 : 20}
+          interval={!diaria && altura >= 200 && serie.length <= 12 ? 0 : 'preserveStartEnd'}
+          minTickGap={diaria ? 28 : altura >= 200 ? 8 : 20}
         />
         <YAxis hide domain={['auto', 'auto']} />
         <Tooltip
           content={({ active, payload, label }) => {
             if (!active || !payload?.length) return null;
             const ponto = payload[0]?.payload as PontoSeriePrecificacao;
-            const skus = skusPorMes.get(ponto.periodo);
+            const skus = skusPorPonto.get(ponto.periodo);
             return (
               <div className="vendedores-chart-tooltip">
                 <strong>{label}{skus ? ` · ${skus.toLocaleString('pt-BR')} SKUs precificados` : ''}</strong>
                 <dl>
                   <div><dt>Margem</dt><dd>{pct(ponto.margem)}</dd></div>
-                  <div><dt>Lucro / dia</dt><dd>{moeda(ponto.lucro_dia)}</dd></div>
-                  <div><dt>Qtd / dia</dt><dd>{formatQtd(ponto.qtd_dia)}</dd></div>
+                  <div><dt>{diaria ? 'Lucro' : 'Lucro / dia'}</dt><dd>{moeda(ponto.lucro_dia)}</dd></div>
+                  <div><dt>{diaria ? 'Qtd' : 'Qtd / dia'}</dt><dd>{formatQtd(ponto.qtd_dia)}</dd></div>
                   <div><dt>Receita</dt><dd>{formatCurrency(ponto.receita)}</dd></div>
                 </dl>
               </div>
@@ -648,18 +687,19 @@ function SerieMensal({
           }}
         />
         <Area
-          type="monotone"
+          type={diaria ? 'linear' : 'monotone'}
           dataKey={metrica}
           stroke={cor}
-          strokeWidth={2}
+          strokeWidth={diaria ? 1.5 : 2}
           fill={`url(#${fillId})`}
           connectNulls={false}
           isAnimationActive={false}
           dot={({ cx, cy, index }: { cx?: number; cy?: number; index?: number }) => {
             const chave = `ponto-${index}`;
             if (cx == null || cy == null || index == null) return <g key={chave} />;
-            if (!skusPorMes.has(serie[index]?.periodo)) {
-              return <circle key={chave} cx={cx} cy={cy} r={2} fill={cor} />;
+            if (!skusPorPonto.has(serie[index]?.periodo)) {
+              // No diário são centenas de pontos: bolinha em cada um vira borrão.
+              return diaria ? <g key={chave} /> : <circle key={chave} cx={cx} cy={cy} r={2} fill={cor} />;
             }
             return (
               <g key={chave}>
@@ -759,12 +799,14 @@ function PainelItem({
   periodo,
   rodadas,
   faixas,
+  granularidade,
 }: {
   empresa: string;
   selecionado: { nivel: NivelItem; nome: string } | null;
   periodo: number;
   rodadas: string[];
   faixas: string[];
+  granularidade: Granularidade;
 }) {
   const chave = selecionado
     ? JSON.stringify([empresa, selecionado.nivel, selecionado.nome, periodo, rodadas, faixas])
@@ -820,8 +862,14 @@ function PainelItem({
       {item && (
         <>
           <div>
-            <span className="prec-rotulo">Margem mensal</span>
-            <SerieMensal serie={item.serie_mensal} marcadores={item.marcadores} metrica="margem" altura={140} />
+            <span className="prec-rotulo">{granularidade === 'diaria' ? 'Margem diária' : 'Margem mensal'}</span>
+            <SeriePrecificacao
+              serie={granularidade === 'diaria' ? item.serie_diaria : item.serie_mensal}
+              granularidade={granularidade}
+              marcadores={item.marcadores}
+              metrica="margem"
+              altura={140}
+            />
           </div>
 
           <div>

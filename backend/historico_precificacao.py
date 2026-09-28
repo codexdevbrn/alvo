@@ -26,9 +26,12 @@ import pandas as pd
 
 from periodo_mensal import inicio_mes
 from precificacao import (
+    _dias_entre,
     _meses_entre,
     _pontos_serie,
+    _pontos_serie_diaria,
     _recortar_meses_com_dado,
+    _totais_diarios,
     _totais_mensais,
 )
 
@@ -40,6 +43,9 @@ NIVEIS = ("familia", "fabricante", "par", "sku")
 LIMITE_LINHAS = 500
 LIMITE_SKUS_ITEM = 10
 FAIXA_NO_ALVO_PP = 1.0
+#: Entra na chave do cache em disco da aba. Mudou o formato da resposta de
+#: `montar_historico`, suba o número: o que o lote gravou antes deixa de ser lido.
+VERSAO_RESPOSTA = 2
 
 
 class ErroHistoricoPrecificacao(RuntimeError):
@@ -287,6 +293,22 @@ def _serie(serie_mov: pd.DataFrame, codigos: set[str] | None) -> list[dict]:
     return _pontos_serie(totais, meses)
 
 
+def _serie_diaria(serie_mov: pd.DataFrame, codigos: set[str] | None, inicio: pd.Timestamp | None) -> list[dict]:
+    """Um ponto por dia com venda, do início do período ao fim do movimento.
+
+    Fica no período filtrado (até 365 dias): o movimento inteiro dia a dia seria
+    ilegível e pesado, e o mensal já conta a história longa."""
+    df = serie_mov if codigos is None else serie_mov.loc[serie_mov["codigo"].isin(codigos)]
+    df = df.loc[df["_data"].notna()]
+    if inicio is not None:
+        df = df.loc[df["_data"] >= inicio]
+    if df.empty:
+        return []
+    ini, fim = df["_data"].min(), df["_data"].max()
+    dias = _dias_entre(ini, fim, limite=int((fim.normalize() - ini.normalize()).days) + 1)
+    return _pontos_serie_diaria(_totais_diarios(df), dias)
+
+
 def _marcadores(eventos: pd.DataFrame) -> list[dict]:
     if eventos.empty:
         return []
@@ -413,6 +435,7 @@ def montar_historico(
         "linha_tempo": linha_tempo,
         "kpis": kpis,
         "serie_mensal": _serie(serie_mov, None if todos else codigos),
+        "serie_diaria": _serie_diaria(serie_mov, None if todos else codigos, inicio_periodo),
         "marcadores": _marcadores(filtrados),
         "nivel": nivel,
         "linhas": linhas,
@@ -467,6 +490,7 @@ def montar_item(
         "faixas": _faixas(vigentes["faixa"]) if not vigentes.empty else [],
         "historico": historico,
         "serie_mensal": _serie(serie_mov, set(todas["codigo"])),
+        "serie_diaria": _serie_diaria(serie_mov, set(todas["codigo"]), inicio_periodo),
         "marcadores": _marcadores(todas),
         "skus": skus,
     }

@@ -105,6 +105,71 @@ def gravar(pasta_trabalho: Path, tela: str, chave: Any, resultado: dict) -> None
         logger.warning("Falha ao gravar cache da tela %s em %s", tela, destino, exc_info=True)
 
 
+_META_CHAVE = b"prisma_chave"
+_META_EXTRA = b"prisma_extra"
+
+
+def _caminho_tabela(pasta_trabalho: Path, tela: str, chave: Any, nome: str) -> Path:
+    base = caminho(pasta_trabalho, tela, chave)
+    return base.with_name(base.name.replace(".json.gz", f".{nome}.parquet"))
+
+
+def gravar_tabelas(pasta_trabalho: Path, tela: str, chave: Any, tabelas: dict, extra: dict) -> None:
+    """Como `gravar`, para resultado que é tabela (DataFrame): um parquet por
+    tabela, com a chave e o `extra` (JSON) nos metadados. Colunas viram texto."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    texto = texto_chave(tela, chave).encode("utf-8")
+    extra_json = json.dumps(extra, ensure_ascii=False, default=str).encode("utf-8")
+    for nome, df in tabelas.items():
+        destino = _caminho_tabela(pasta_trabalho, tela, chave, nome)
+        try:
+            destino.parent.mkdir(parents=True, exist_ok=True)
+            tabela = pa.Table.from_pandas(df.rename(columns=str), preserve_index=False)
+            tabela = tabela.replace_schema_metadata({
+                **(tabela.schema.metadata or {}), _META_CHAVE: texto, _META_EXTRA: extra_json,
+            })
+            fd, tmp = tempfile.mkstemp(prefix=".tmp_", suffix=".parquet", dir=destino.parent)
+            os.close(fd)
+            try:
+                pq.write_table(tabela, tmp)
+                os.replace(tmp, destino)
+            except Exception:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+        except Exception:  # noqa: BLE001
+            logger.warning("Falha ao gravar cache da tela %s em %s", tela, destino, exc_info=True)
+            return
+
+
+def ler_tabelas(pasta_trabalho: Path, tela: str, chave: Any, nomes: tuple[str, ...]) -> tuple[dict, dict] | None:
+    """(tabelas, extra) gravados por `gravar_tabelas`; `None` se faltar alguma,
+    estiver corrompida ou for de outra chave."""
+    import pyarrow.parquet as pq
+
+    texto = texto_chave(tela, chave).encode("utf-8")
+    tabelas: dict = {}
+    extra: dict = {}
+    for nome in nomes:
+        arquivo = _caminho_tabela(pasta_trabalho, tela, chave, nome)
+        if not arquivo.is_file():
+            return None
+        try:
+            tabela = pq.read_table(arquivo)
+        except Exception:  # noqa: BLE001
+            return None
+        meta = tabela.schema.metadata or {}
+        if meta.get(_META_CHAVE) != texto:
+            return None
+        extra = json.loads(meta.get(_META_EXTRA, b"{}").decode("utf-8"))
+        tabelas[nome] = tabela.to_pandas()
+    return tabelas, extra
+
+
 def limpar_antigos(pasta_trabalho: Path, dias: int = DIAS_PARA_LIMPAR) -> int:
     """Apaga arquivos de cache com mais de `dias` dias. Devolve quantos."""
     pasta = Path(pasta_trabalho) / SUBPASTA

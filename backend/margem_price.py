@@ -28,6 +28,7 @@ precisar sem o dump de pares família×fabricante que a Pós-Precificação exig
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 import pandas as pd
@@ -108,6 +109,24 @@ def assinatura(empresa: str, trabalho: Path, pasta_margem: Path) -> tuple | None
     return tuple(partes) if partes else None
 
 
+def _ler_parquet_com_espera(caminho: Path, tentativas: int = 4, espera: float = 5.0) -> pd.DataFrame:
+    """Lê o parquet repetindo se o OneDrive estiver no meio da troca do arquivo.
+
+    O PRICE regrava estes parquets ao longo do dia; lido nesse instante, o
+    Windows responde `[Errno 22] Invalid argument` (28/09/2026: 5 empresas
+    perderam a Precificação no preparo das 13:00, e a mesma leitura passava
+    minutos depois).
+    """
+    for tentativa in range(tentativas):
+        try:
+            return pd.read_parquet(caminho)
+        except OSError:
+            if tentativa == tentativas - 1:
+                raise
+            time.sleep(espera)
+    raise AssertionError("inalcançável")
+
+
 def carregar_bruto(empresa: str, trabalho: Path, pasta_margem: Path) -> pd.DataFrame:
     """Todas as transações de todas as lojas da empresa, schema original do parquet.
 
@@ -124,7 +143,7 @@ def carregar_bruto(empresa: str, trabalho: Path, pasta_margem: Path) -> pd.DataF
         caminho = _caminho_parquet(pasta, cnpj)
         if not caminho.is_file():
             continue
-        partes.append(pd.read_parquet(caminho))
+        partes.append(_ler_parquet_com_espera(caminho))
     if not partes:
         raise ErroMargemPrice(f"Nenhum parquet encontrado para '{empresa}' em {pasta}.")
     df = pd.concat(partes, ignore_index=True)
