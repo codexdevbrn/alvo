@@ -415,3 +415,78 @@ def test_blocos_das_telas_substituem_o_csv_de_liquidez(tmp_path):
     assert "### Estoque e compras" in documento
     assert "Dado não disponível para esta empresa." in documento
     assert "SKU-1" not in documento
+
+
+def _lote_com_fonte(tmp_path):
+    """Cenário de lote com pasta fonte: o movimento entra na assinatura."""
+    client_id, database, dossie, trabalho, empresa = _montar_cenario(tmp_path)
+    fonte = tmp_path / "fonte"
+    (fonte / empresa.name).mkdir(parents=True)
+    movimento = fonte / empresa.name / f"{empresa.name}_MOVIMENTO_ATUAL.parquet"
+    movimento.write_bytes(b"v1")
+    # A fonte é mais velha que o summary, como depois de uma normalização normal.
+    summary = next(empresa.glob("summary_dashboard*"))
+    os.utime(movimento, (summary.stat().st_mtime - 60, summary.stat().st_mtime - 60))
+    chamadas = []
+
+    def enviar(_mensagens, _api_key, **_kwargs):
+        chamadas.append(1)
+        return NARRATIVA_VALIDA
+
+    def rodar(**extra):
+        return executar_lote(
+            database=database, dossie=dossie, trabalho=trabalho, api_key="x",
+            enviar=enviar, fonte=fonte, **extra,
+        )
+
+    return client_id, dossie, empresa, movimento, chamadas, rodar
+
+
+def test_lote_pula_empresa_sem_fonte_nova(tmp_path):
+    client_id, dossie, _empresa, _movimento, chamadas, rodar = _lote_com_fonte(tmp_path)
+
+    assert rodar()[0].status == "ok"
+    antes = (dossie / f"{client_id}-analise.md").read_text(encoding="utf-8")
+    segunda = rodar()[0]
+
+    assert (segunda.status, segunda.codigo) == ("ignorado", "sem_mudanca")
+    assert len(chamadas) == 1
+    assert "fontes_assinatura:" in antes
+    assert (dossie / f"{client_id}-analise.md").read_text(encoding="utf-8") == antes
+
+
+def test_lote_refaz_quando_crm_ou_fonte_mudam_ou_quando_forcado(tmp_path):
+    client_id, dossie, empresa, movimento, chamadas, rodar = _lote_com_fonte(tmp_path)
+    rodar()
+
+    (dossie / f"{client_id}-crm.md").write_text("# CRM\nReunião nova.", encoding="utf-8")
+    assert rodar()[0].status == "ok"
+
+    movimento.write_bytes(b"v2 maior")
+    summary = next(empresa.glob("summary_dashboard*"))
+    os.utime(movimento, (summary.stat().st_mtime - 30, summary.stat().st_mtime - 30))
+    assert rodar()[0].status == "ok"
+
+    assert rodar(forcar=True)[0].status == "ok"
+    assert len(chamadas) == 4
+
+
+def test_lote_refaz_analise_que_tinha_falhado(tmp_path):
+    client_id, dossie, _empresa, _movimento, chamadas, rodar = _lote_com_fonte(tmp_path)
+    (dossie / f"{client_id}-analise.md").write_text("---\nstatus: erro\n---\n", encoding="utf-8")
+
+    assert rodar()[0].status == "ok"
+    assert len(chamadas) == 1
+
+
+def test_summary_mais_velho_que_a_fonte_nao_troca_a_analise_por_erro(tmp_path):
+    client_id, dossie, empresa, movimento, chamadas, rodar = _lote_com_fonte(tmp_path)
+    rodar()
+    antes = (dossie / f"{client_id}-analise.md").read_text(encoding="utf-8")
+
+    movimento.write_bytes(b"v2 chegou depois do summary")  # mtime agora > summary
+    resultado = rodar()[0]
+
+    assert (resultado.status, resultado.codigo) == ("ignorado", "summary_desatualizado")
+    assert (dossie / f"{client_id}-analise.md").read_text(encoding="utf-8") == antes
+    assert len(chamadas) == 1

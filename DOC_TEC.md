@@ -85,7 +85,7 @@ O lote noturno (`normalizar_todas_empresas`) regera summary e resumo do
 monitor a partir dos CSV da fonte. Sem ele, a primeira pessoa a abrir o
 Monitoramento paga a reconstrução (~18 s de CPU mais o download dos summaries).
 
-## Assistente IA e análises da carteira
+## MonitorIA e análises da carteira
 
 Fluxo em duas partes, ligadas pelos arquivos MD da pasta `Carteira/`:
 

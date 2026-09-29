@@ -299,7 +299,7 @@ export default function AssistenteIAPage() {
       <div className="dashboard-container chat-ia-page">
         <header className="app-page-header chat-ia-header">
           <div>
-            <h1>Assistente IA{empresa && <span className="analisador-header-empresa"> · {empresa}</span>}</h1>
+            <h1>MonitorIA{empresa && <span className="analisador-header-empresa"> · {empresa}</span>}</h1>
             <p className="app-page-header-sub">Converse sobre a empresa com base no CRM, na análise diária e nos números do Prisma.</p>
           </div>
           {mensagens.length > 0 && (
@@ -395,7 +395,7 @@ export default function AssistenteIAPage() {
               )}
             </aside>
 
-            <section className="glass-card glass-card-flat chat-ia-conversa" aria-label="Conversa com assistente IA">
+            <section className="glass-card glass-card-flat chat-ia-conversa" aria-label="Conversa com o MonitorIA">
               <div className="chat-ia-mensagens custom-scrollbar" aria-live="polite">
                 {mensagens.length === 0 && !enviando && (
                   <div className="chat-ia-vazio">
@@ -435,7 +435,7 @@ export default function AssistenteIAPage() {
                 )}
                 {mensagens.map((mensagem) => (
                   <article key={mensagem.id} className={`chat-ia-mensagem is-${mensagem.role}`}>
-                    <span className="chat-ia-mensagem-autor">{mensagem.role === 'user' ? 'Você' : 'Prisma IA'}</span>
+                    <span className="chat-ia-mensagem-autor">{mensagem.role === 'user' ? 'Você' : 'MonitorIA'}</span>
                     {mensagem.role === 'assistant'
                       ? <MarkdownResposta texto={mensagem.content} className="chat-ia-balao" />
                       : <p className="chat-ia-balao">{mensagem.content}</p>}
@@ -444,7 +444,7 @@ export default function AssistenteIAPage() {
                 ))}
                 {enviando && (
                   <article className="chat-ia-mensagem is-assistant is-digitando" role="status">
-                    <span className="chat-ia-mensagem-autor">Prisma IA</span>
+                    <span className="chat-ia-mensagem-autor">MonitorIA</span>
                     <PassosAgenteAoVivo
                       passos={passos}
                       escrevendo={Boolean(rascunhoExibido)}

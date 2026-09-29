@@ -102,6 +102,7 @@ def _classificar_erro(texto: str) -> str:
 
 def _comando(
     executavel: str, pasta: str, sistema: str, modelo: str, formato: str, mcp: dict | None = None,
+    esforco: str | None = None,
 ) -> list[str]:
     comando = [
         executavel, "-p",
@@ -112,6 +113,8 @@ def _comando(
         "--setting-sources", "",
         "--no-session-persistence",
     ]
+    if esforco:
+        comando += ["--effort", esforco]
     if formato == "stream-json":
         comando += ["--verbose", "--include-partial-messages"]
     if sistema:
@@ -155,8 +158,11 @@ def chamar_claude(
     ao_receber: Callable[[str], None] | None = None,
     ao_evento: Callable[[dict], None] | None = None,
     mcp: dict | None = None,
+    esforco: str | None = None,
 ) -> str:
     """Envia a conversa ao Claude Code e devolve o texto da resposta.
+
+    ``esforco`` (low…max) é o ``--effort`` do CLI; ``None`` usa o padrão do modelo.
 
     Com ``ao_receber``, cada pedaço do texto é entregue assim que chega (o chat
     mostra a resposta sendo escrita); o retorno continua sendo o texto inteiro.
@@ -172,11 +178,11 @@ def chamar_claude(
     if ao_receber is not None or ao_evento is not None or mcp:
         return _transmitir(
             executavel, sistema, prompt, modelo, timeout,
-            ao_receber or (lambda _texto: None), ao_evento or (lambda _evento: None), mcp,
+            ao_receber or (lambda _texto: None), ao_evento or (lambda _evento: None), mcp, esforco,
         )
 
     with tempfile.TemporaryDirectory(prefix="prisma-claude-") as pasta:
-        comando = _comando(executavel, pasta, sistema, modelo, "json")
+        comando = _comando(executavel, pasta, sistema, modelo, "json", esforco=esforco)
         try:
             # Três descritores explícitos: depois do FreeConsole do .exe os
             # handles herdados são inválidos (ver servidor._fechar_console).
@@ -214,6 +220,7 @@ def _transmitir(
     ao_receber: Callable[[str], None],
     ao_evento: Callable[[dict], None],
     mcp: dict | None,
+    esforco: str | None = None,
 ) -> str:
     """``stream-json``: repassa cada ``text_delta`` e fecha com o evento ``result``.
 
@@ -226,7 +233,7 @@ def _transmitir(
     enchesse o buffer do pipe, o processo travaria antes de fechar o stdout.
     """
     with tempfile.TemporaryDirectory(prefix="prisma-claude-") as pasta:
-        comando = _comando(executavel, pasta, sistema, modelo, "stream-json", mcp)
+        comando = _comando(executavel, pasta, sistema, modelo, "stream-json", mcp, esforco)
         try:
             processo = subprocess.Popen(
                 comando,

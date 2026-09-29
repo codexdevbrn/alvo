@@ -324,7 +324,7 @@ export function AppShell({ children, ultimoMovimento }: AppShellProps) {
             />
             <NavItem
               icon={<Bot size={17} />}
-              label="Assistente IA"
+              label="MonitorIA"
               collapsed={colapsado}
               ativo={emAssistente}
               onClick={() => navigate('/assistente')}

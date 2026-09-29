@@ -78,6 +78,20 @@ def _argumentos() -> argparse.Namespace:
     )
     parser.add_argument("--modelo", default=MODELO_CLAUDE, help="Modelo do Claude (a reserva Ollama usa o dela).")
     parser.add_argument(
+        "--fonte", type=Path,
+        default=Path(caminhos_padrao.fonte_dados()) if caminhos_padrao.fonte_dados() else None,
+        help="Pasta fonte (Dados Alvos): entra na assinatura que decide se a análise é refeita.",
+    )
+    parser.add_argument(
+        "--margem", type=Path,
+        default=Path(caminhos_padrao.margem_price()) if caminhos_padrao.margem_price() else None,
+        help="Pasta de margem do PRICE: também entra na assinatura.",
+    )
+    parser.add_argument(
+        "--forcar", action="store_true",
+        help="Refaz a análise mesmo sem mudança nas fontes.",
+    )
+    parser.add_argument(
         "--sem-telas", action="store_true",
         help="Não lê as telas (rentabilidade, clientes, estoque, compras, precificação); só o summary.",
     )
@@ -122,6 +136,9 @@ def main() -> int:
             dry_run=args.dry_run,
             crm_reserva=args.crm_reserva.expanduser().resolve() if args.crm_reserva else None,
             blocos_telas=None if args.sem_telas else _blocos_telas(),
+            fonte=args.fonte,
+            margem=args.margem,
+            forcar=args.forcar,
         )
     except ErroDossieIA as exc:
         print(f"ERRO CONFIG [{exc.codigo}]: {exc}", file=sys.stderr)

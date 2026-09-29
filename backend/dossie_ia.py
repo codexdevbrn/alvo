@@ -9,6 +9,7 @@ ferramentas, caminhos, segredo ou formato final do arquivo.
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import logging
 import math
@@ -21,7 +22,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
-from typing import Callable, Iterable
+from typing import Any, Callable, Iterable
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 from uuid import UUID
@@ -622,6 +623,7 @@ class EnvioIA:
         ao_receber: Callable[[str], None] | None = None,
         ao_evento: Callable[[dict], None] | None = None,
         mcp: dict | None = None,
+        esforco: str | None = None,
     ):
         self.timeout_claude = timeout_claude
         self._claude = chamar_claude
@@ -630,6 +632,7 @@ class EnvioIA:
         self._ao_receber = ao_receber
         self._ao_evento = ao_evento
         self._mcp = mcp
+        self._esforco = esforco
         self.ultimo_modelo: str | None = None
 
     def __call__(self, mensagens: list[dict], api_key: str | None, *, modelo: str = MODELO_CLAUDE) -> str:
@@ -640,6 +643,8 @@ class EnvioIA:
             extra["ao_evento"] = self._ao_evento
         if self._mcp:
             extra["mcp"] = self._mcp
+        if self._esforco:
+            extra["esforco"] = self._esforco
         try:
             resposta = self._claude(mensagens, modelo=modelo, timeout=self.timeout_claude, **extra)
         except claude_assinatura.ErroClaude as exc:
@@ -1050,6 +1055,7 @@ def documento_sucesso(
     modelo: str,
     crm_mtime: float | None,
     gerado_em: datetime | None = None,
+    fontes_assinatura: str | None = None,
 ) -> str:
     agora = gerado_em or datetime.now(timezone.utc)
     frontmatter = [
@@ -1066,6 +1072,7 @@ def documento_sucesso(
             if crm_mtime is not None else None
         ),
         f"prisma_updated_at: {_yaml(contexto.get('updated_at'))}",
+        *([f"fontes_assinatura: {_yaml(fontes_assinatura)}"] if fontes_assinatura else []),
         "---",
         "",
         f"# Análise IA — {cliente.empresa}",
@@ -1133,6 +1140,99 @@ def gravar_atomico(destino: str | Path, conteudo: str) -> None:
         raise
 
 
+# Entra na assinatura das fontes: mudar prompt, seções ou blocos das telas e
+# subir esta versão faz o lote refazer a análise de todas as empresas.
+VERSAO_ANALISE = "2026-09-29"
+
+# Arquivos da pasta de trabalho que mudam o que as telas mostram. Vão pelo
+# conteúdo: o lote pode regravá-los iguais, e a data mudaria sem nada mudar.
+ARQUIVOS_TRABALHO_NA_ASSINATURA = ("{empresa}_PRECIFICACAO.parquet", "clientes_harm.json", "clientes_tags.json", "config.json")
+
+
+def _hash_arquivo(caminho: Path) -> str | None:
+    try:
+        return hashlib.sha256(caminho.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def assinatura_fontes(
+    pasta_empresa: Path,
+    caminho_crm: Path,
+    *,
+    fonte: str | Path | None,
+    margem: str | Path | None,
+    modelo: str,
+) -> str:
+    """Impressão digital de tudo que alimenta a análise de uma empresa.
+
+    A análise só é refeita quando ela muda. Antes a regra era "o summary foi
+    regerado nesta passada", mas o lote regrava o summary de todas as empresas
+    em toda passada (o corte D-1 muda o arquivo) — o agente refaria as ~36
+    análises três vezes por dia sem nenhum dado novo.
+
+    Parquets grandes da fonte e do PRICE entram por nome, tamanho e data (o
+    OneDrive preserva a data do arquivo); CRM e arquivos pequenos do trabalho,
+    pelo conteúdo.
+    """
+    nome = pasta_empresa.name
+    partes: dict[str, Any] = {
+        "versao": VERSAO_ANALISE,
+        "modelo": modelo,
+        "crm": _hash_arquivo(caminho_crm),
+    }
+    if fonte:
+        pasta_fonte = Path(fonte) / nome
+        arquivos = []
+        for arquivo in sorted(pasta_fonte.glob(f"{nome}_*.parquet")):
+            try:
+                info = arquivo.stat()
+            except OSError:
+                continue
+            arquivos.append((arquivo.name, info.st_size, info.st_mtime_ns))
+        partes["fonte"] = arquivos
+    partes["trabalho"] = {
+        molde.format(empresa=nome): _hash_arquivo(pasta_empresa / molde.format(empresa=nome))
+        for molde in ARQUIVOS_TRABALHO_NA_ASSINATURA
+    }
+    if margem:
+        try:
+            import margem_price
+
+            partes["price"] = margem_price.assinatura(nome, pasta_empresa.parent, Path(margem))
+        except Exception as exc:  # noqa: BLE001 — sem PRICE a assinatura segue com o resto
+            logger.warning("Assinatura do PRICE indisponível empresa=%s tipo=%s", nome, type(exc).__name__)
+    serializado = json.dumps(partes, sort_keys=True, ensure_ascii=False, default=str)
+    return hashlib.sha256(serializado.encode("utf-8")).hexdigest()[:20]
+
+
+def _assinatura_da_analise_ok(destino: Path) -> str | None:
+    """Assinatura gravada numa análise ``status: ok``; ``None`` se não houver."""
+    try:
+        with destino.open(encoding="utf-8") as arquivo:
+            cabecalho = [next(arquivo, "") for _ in range(20)]
+    except OSError:
+        return None
+    texto = "".join(cabecalho)
+    if not re.search(r"(?m)^status:\s*ok\s*$", texto):
+        return None
+    achado = re.search(r'(?m)^fontes_assinatura:\s*"?([0-9a-f]+)"?\s*$', texto)
+    return achado.group(1) if achado else None
+
+
+def _summary_mais_velho_que_a_fonte(pasta_empresa: Path, fonte: str | Path | None) -> bool:
+    """O summary é feito do movimento: se é mais velho que ele, a normalização falhou."""
+    if not fonte:
+        return False
+    nome = pasta_empresa.name
+    summary = caminho_summary_existente(pasta_empresa)
+    movimento = Path(fonte) / nome / f"{nome}_MOVIMENTO_ATUAL.parquet"
+    try:
+        return summary is not None and summary.stat().st_mtime < movimento.stat().st_mtime
+    except OSError:
+        return False
+
+
 def localizar_crm(
     pasta_dossie: str | Path, client_id: str, pasta_reserva: str | Path | None = None,
 ) -> Path | None:
@@ -1164,8 +1264,17 @@ def executar_lote(
     enviar: Callable[..., str] | None = None,
     crm_reserva: str | Path | None = None,
     blocos_telas: Callable[[str, dict], dict] | None = None,
+    fonte: str | Path | None = None,
+    margem: str | Path | None = None,
+    forcar: bool = False,
 ) -> list[ResultadoCliente]:
-    """Processa carteira; falha de um cliente nunca impede próximos."""
+    """Processa carteira; falha de um cliente nunca impede próximos.
+
+    Empresa cujas fontes não mudaram desde a última análise ``ok`` é pulada
+    (``sem_mudanca``) — ``forcar`` refaz assim mesmo. Summary mais velho que a
+    fonte também pula (``summary_desatualizado``), sem trocar a análise anterior
+    por um MD de erro.
+    """
     pasta_dossie = Path(dossie)
     if not pasta_dossie.is_dir():
         raise ErroDossieIA("dossie_ausente", "Pasta de dossiês não encontrada.")
@@ -1203,6 +1312,17 @@ def executar_lote(
             caminho_crm = localizar_crm(pasta_dossie, cliente.client_id, crm_reserva)
             if caminho_crm is None:
                 raise ErroDossieIA("crm_md_ausente", "Dossiê CRM correspondente não encontrado.")
+            assinatura = assinatura_fontes(pastas[0], caminho_crm, fonte=fonte, margem=margem, modelo=modelo)
+            if not forcar and _assinatura_da_analise_ok(destino) == assinatura:
+                resultados.append(ResultadoCliente(
+                    cliente.client_id, cliente.empresa, "ignorado", "sem_mudanca",
+                ))
+                continue
+            if _summary_mais_velho_que_a_fonte(pastas[0], fonte):
+                resultados.append(ResultadoCliente(
+                    cliente.client_id, cliente.empresa, "ignorado", "summary_desatualizado",
+                ))
+                continue
             dossie_crm = caminho_crm.read_text(encoding="utf-8")
             contexto = montar_contexto_prisma(
                 cliente.empresa, pastas[0], fresh_since=fresh_since, blocos_telas=blocos_telas,
@@ -1226,6 +1346,7 @@ def executar_lote(
                 cliente, narrativa, contexto,
                 modelo=getattr(enviar, "ultimo_modelo", None) or modelo,
                 crm_mtime=caminho_crm.stat().st_mtime,
+                fontes_assinatura=assinatura,
             )
             gravar_atomico(destino, conteudo)
             resultados.append(ResultadoCliente(

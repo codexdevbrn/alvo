@@ -191,7 +191,7 @@ def login(dados: LoginRequest):
 
 
 # ---------------------------------------------------------------------------
-# Assistente IA da carteira
+# MonitorIA (chat da carteira)
 # ---------------------------------------------------------------------------
 
 CHAT_REQUISICOES_POR_MINUTO = 8
@@ -246,6 +246,9 @@ def _contexto_chat_empresa(empresa: str) -> chat_carteira.ContextoEmpresa:
 TIMEOUT_CHAT_CLAUDE_SEGUNDOS = 120
 # Com ferramentas cada consulta é uma volta a mais (2–5 s cada, até 6 por resposta).
 TIMEOUT_CHAT_FERRAMENTAS_SEGUNDOS = 240
+# Chat é pergunta curta de gerente: esforço médio responde mais curto e mais rápido
+# que o padrão (high) do Sonnet 5.5, sem deixar de consultar a base quando precisa.
+ESFORCO_CHAT = "medium"
 
 
 def _servidor_mcp(request: Request, sessao: str) -> dict:
@@ -403,6 +406,7 @@ def conversar_com_empresa_stream(
         ao_receber=lambda texto: fila.put({"tipo": "delta", "texto": texto}),
         ao_evento=ao_evento,
         mcp=_servidor_mcp(request, sessao),
+        esforco=ESFORCO_CHAT,
     )
 
     def gerar() -> None:

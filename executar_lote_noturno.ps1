@@ -142,11 +142,10 @@ try {
     }
 
     $etapa = "chave e analises IA"
+    # O analisador so refaz a empresa cujas fontes mudaram desde a ultima analise
+    # ok (assinatura no proprio MD) e pula a de summary mais velho que a fonte.
+    # O antigo --fresh-since nao servia: o summary e regravado em toda passada.
     $argumentosAnalise = @($analisador)
-    if (-not $SemNormalizacao) {
-        # Impede analise com summary antigo quando a normalizacao do cliente falhou.
-        $argumentosAnalise += @("--fresh-since", $inicioUtc.ToString("o"))
-    }
     if ($DryRunAnalises) {
         $argumentosAnalise += "--dry-run"
     } else {
