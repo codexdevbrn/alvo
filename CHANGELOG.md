@@ -4,7 +4,7 @@ Formato: uma seção por versão publicada, mais recente no topo. Histórico é
 incremental — entradas antigas nunca são apagadas. O estado atual das telas e
 funcionalidades vive em `DOC_TEC.md`, não aqui.
 
-## 1.7.25 — 2026-09-29
+## 1.8.0 — 2026-09-29
 
 ### Adicionado
 
