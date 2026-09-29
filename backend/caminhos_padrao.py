@@ -130,6 +130,18 @@ def dossie_carteira() -> Optional[str]:
     return caminho if os.path.isdir(caminho) else None
 
 
+def dossie_crm_provisorio() -> Optional[str]:
+    """CRMs da Carteira Web do Erick, enquanto `Carteira/dossie` não recebe os seus.
+
+    Lá o nome é `<clientId>--<slug>.md`, não `<clientId>-crm.md`; quem casa os
+    dois é `dossie_ia.localizar_crm`. Somente leitura. Sai quando os CRMs
+    definitivos chegarem — o definitivo já tem precedência.
+    """
+    return _padrao(
+        os.path.join("6 - Erick", "Carteira Web", "dossies"), "01 - Marco + Monitores",
+    )
+
+
 def margem_price() -> Optional[str]:
     """Pasta com um parquet de margem por transação por CNPJ (sistema PRICE).
 

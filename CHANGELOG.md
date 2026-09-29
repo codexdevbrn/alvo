@@ -4,6 +4,42 @@ Formato: uma seção por versão publicada, mais recente no topo. Histórico é
 incremental — entradas antigas nunca são apagadas. O estado atual das telas e
 funcionalidades vive em `DOC_TEC.md`, não aqui.
 
+## 1.7.25 — 2026-09-29
+
+### Adicionado
+
+- **Assistente IA consulta a base na hora.** O chat ganhou ferramentas: consulta
+  livre às vendas, ao estoque e às despesas; ficha de cliente e de vendedor;
+  compra sugerida e precificação de um produto; antes × depois da precificação;
+  lançamentos de despesas; resumo de qualquer tela; e uma calculadora. Só lê, e só
+  a empresa selecionada.
+- **A espera mostra o que o agente está fazendo**: cada consulta aparece como um
+  passo ("Abrindo a ficha de…", "Consultando vendas e estoque"), com relógio, e a
+  resposta guarda a lista recolhível do que foi consultado.
+- **Resposta aparece enquanto é escrita**, formatada (títulos, listas, tabelas) e
+  com a fonte de cada fato como selo.
+- **Painel lateral do Assistente** com o risco, os alertas e a próxima pauta da
+  análise diária, e o botão "Ler análise completa". Perguntas sugeridas para
+  começar a conversa.
+- **Análises diárias mais completas**: rentabilidade mês a mês (lucro bruto,
+  margem e margem após despesas), clientes e risco de churn, vendedores, estoque
+  com compra sugerida e precificação (A precificar, GPS e pós-precificação), com
+  os mesmos números das telas.
+
+### Alterado
+
+- A IA passa a usar o **Claude pela assinatura** (modelo Sonnet 5.5), pelo Claude
+  Code logado na máquina; o Ollama Cloud fica como reserva quando o Claude falha.
+- O estoque da análise diária vem da tela Estoque, não mais do arquivo de
+  liquidez parado em julho.
+- Na análise diária, a margem após despesas não conta "Mercadoria Revenda", que
+  já está no CMV (mesma regra do GPS).
+
+### Corrigido
+
+- A caixa de pergunta do Assistente não fica mais cortada no rodapé.
+- Quantidades no anexo da análise saem inteiras.
+
 ## 1.7.22 — 2026-09-25
 
 ### Adicionado

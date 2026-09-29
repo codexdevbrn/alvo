@@ -3,6 +3,7 @@ Ponto de entrada do executável. Dois modos:
 
     Prisma.exe                 sobe o backend, serve o frontend, abre o navegador
     Prisma.exe --pre-gerar     roda o lote de pré-geração de summaries e encerra
+    Prisma.exe --mcp-prisma    servidor MCP das ferramentas do chat (stdio)
 
 O modo de lote existe para a máquina que hospeda a tarefa agendada não precisar de
 Python nem do repositório: o executável já carrega o lote, e o canal de atualização
@@ -175,6 +176,10 @@ def _esperar_servidor(porta: int) -> bool:
 
 ARG_PRE_GERAR = "--pre-gerar"
 
+# O chat do Assistente sobe o servidor de ferramentas pelo próprio executável:
+# congelado não há Python solto para rodar `mcp_prisma.py`.
+ARG_MCP = "--mcp-prisma"
+
 # O atualizador religa o app com este argumento. Sem ele, cada atualização abria
 # uma aba nova ao lado da que o usuário já tinha — a aba aberta se recarrega
 # sozinha quando a versão do servidor muda (`useRecarregarQuandoVersaoMudar`).
@@ -236,6 +241,13 @@ def main() -> None:
     # Congelado no Windows, qualquer uso de multiprocessing relança o
     # executável em vez de bifurcar; sem isto o app abriria cópias de si mesmo.
     multiprocessing.freeze_support()
+    if ARG_MCP in sys.argv:
+        # Antes de console e log: o stdout é o canal do JSON-RPC, e o
+        # registro.configurar() o substituiria.
+        import mcp_prisma
+
+        mcp_prisma.main()
+        return
     _preparar_console()
     # Antes de qualquer print: sem console (modo janela) `sys.stdout` é None e
     # `print` levantaria AttributeError. configurar() cobre isso e liga o arquivo.

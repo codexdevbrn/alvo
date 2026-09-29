@@ -8,6 +8,7 @@ import json
 import gzip
 import logging
 import os
+import queue
 import re
 import secrets
 import shutil
@@ -30,13 +31,14 @@ import pandas as pd
 import numpy as np
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
 import atualizacoes
 import caminhos_padrao
 import chat_ia as chat_carteira
+import ferramentas_ia
 import dados_no_disco
 import db
 import inicio_automatico
@@ -236,7 +238,64 @@ def _contexto_chat_empresa(empresa: str) -> chat_carteira.ContextoEmpresa:
         database=database,
         dossie=dossie,
         trabalho=_resolver_caminho_trabalho(),
+        crm_reserva=caminhos_padrao.dossie_crm_provisorio(),
     )
+
+
+# Chat é ao vivo: melhor cair na reserva do que deixar a tela esperando 5 min.
+TIMEOUT_CHAT_CLAUDE_SEGUNDOS = 120
+# Com ferramentas cada consulta é uma volta a mais (2–5 s cada, até 6 por resposta).
+TIMEOUT_CHAT_FERRAMENTAS_SEGUNDOS = 240
+
+
+def _servidor_mcp(request: Request, sessao: str) -> dict:
+    """Como o ``claude -p`` sobe o servidor de ferramentas desta conversa.
+
+    Congelado não há Python solto: o próprio executável vira o servidor
+    (``Prisma.exe --mcp-prisma``). A API é a porta em que este processo atende
+    de verdade (``scope["server"]``), não o Host do pedido — em dev ele chega
+    pelo proxy do Vite.
+    """
+    if getattr(sys, "frozen", False):
+        comando, argumentos = sys.executable, ["--mcp-prisma"]
+    else:
+        comando, argumentos = sys.executable, [str(Path(__file__).resolve().with_name("mcp_prisma.py"))]
+    porta = (request.scope.get("server") or ("127.0.0.1", 8003))[1]
+    return {
+        "command": comando,
+        "args": argumentos,
+        "env": {
+            "PRISMA_API": f"http://127.0.0.1:{porta}",
+            "PRISMA_SESSAO": sessao,
+            "PYTHONIOENCODING": "utf-8",
+            "PYTHONUTF8": "1",
+        },
+    }
+
+
+class FerramentaBody(BaseModel):
+    nome: str
+    argumentos: dict = {}
+
+
+@app.post("/api/ia/ferramentas/executar")
+def executar_ferramenta_ia(
+    corpo: FerramentaBody,
+    request: Request,
+    x_prisma_sessao: Optional[str] = Header(default=None),
+):
+    """Chamada do servidor MCP (``mcp_prisma.py``) em nome do chat.
+
+    Sem login: quem autoriza é o token da conversa, emitido por
+    ``/api/ia/chat/stream`` e amarrado a uma empresa — a empresa nunca vem do
+    modelo. Só aceita chamada desta máquina.
+    """
+    _exigir_origem_local(request)
+    empresa = ferramentas_ia.empresa_da_sessao(x_prisma_sessao or "")
+    if empresa is None:
+        raise HTTPException(status_code=403, detail="Sessão de ferramentas inválida ou expirada.")
+    texto, erro = ferramentas_ia.executar(empresa, corpo.nome, corpo.argumentos)
+    return {"texto": texto, "erro": erro}
 
 
 def _erro_http_chat(exc: chat_carteira.ErroChatIA) -> HTTPException:
@@ -246,8 +305,9 @@ def _erro_http_chat(exc: chat_carteira.ErroChatIA) -> HTTPException:
         status = 404
     elif exc.codigo in {"crm_md_ausente", "analise_md_ausente", "analise_indisponivel"}:
         status = 409
-    elif exc.codigo.startswith("ollama_"):
-        status = 503 if "key" in exc.codigo else 502
+    elif exc.codigo.startswith(("ollama_", "claude_")):
+        # Sem Claude Code, sem login ou sem chave: configuração da máquina (503).
+        status = 503 if exc.codigo in {"claude_ausente", "claude_login"} or "key" in exc.codigo else 502
     else:
         status = 422
     return HTTPException(status_code=status, detail=str(exc))
@@ -276,21 +336,131 @@ def conversar_com_empresa(
     _limitar_chat(f"{usuario}:{host}")
     try:
         contexto = _contexto_chat_empresa(corpo.empresa)
-        chave = chat_carteira.carregar_api_key_ollama()
+        chave = chat_carteira.carregar_api_key_ollama_reserva()
+        enviar = chat_carteira.EnvioIA(timeout_claude=TIMEOUT_CHAT_CLAUDE_SEGUNDOS)
         resposta = chat_carteira.responder_chat(
             contexto,
             [mensagem.model_dump() for mensagem in corpo.mensagens],
             chave,
+            enviar=enviar,
         )
         return {
             "resposta": resposta,
             "empresa": contexto.empresa_carteira,
             "client_id": contexto.client_id,
-            "modelo": chat_carteira.MODELO_OLLAMA,
+            "modelo": enviar.ultimo_modelo or chat_carteira.MODELO_CLAUDE,
         }
     except chat_carteira.ErroChatIA as exc:
         logger.warning("Chat IA falhou usuario=%s codigo=%s", usuario, exc.codigo)
         raise _erro_http_chat(exc) from exc
+
+
+@app.post("/api/ia/chat/stream")
+def conversar_com_empresa_stream(
+    corpo: ChatEmpresaBody,
+    request: Request,
+    usuario: str = Depends(exigir_login),
+):
+    """Mesmo chat de ``/api/ia/chat``, com a resposta chegando aos poucos (NDJSON).
+
+    Eventos, um JSON por linha: ``inicio`` (uma tentativa começa — na segunda,
+    de correção de formato, a tela descarta o rascunho), ``passo`` (o agente
+    chamou uma ferramenta: ``estado`` andamento → ok/erro, com o texto do que
+    está fazendo), ``delta`` (pedaço do texto), ``fim`` (resposta já validada,
+    que substitui o rascunho) e ``erro``. O que dá para recusar antes de chamar
+    a IA (limite, empresa, histórico) continua saindo como status HTTP.
+
+    Com ferramentas: a conversa ganha um token de sessão (a empresa fica no
+    backend) e o ``claude -p`` sobe o servidor MCP do Prisma. A reserva no
+    Ollama segue sem ferramentas.
+    """
+    host = request.client.host if request.client else "sem-host"
+    _limitar_chat(f"{usuario}:{host}")
+    historico = [mensagem.model_dump() for mensagem in corpo.mensagens]
+    try:
+        contexto = _contexto_chat_empresa(corpo.empresa)
+        chat_carteira.montar_mensagens_chat(contexto, historico)
+        chave = chat_carteira.carregar_api_key_ollama_reserva()
+    except chat_carteira.ErroChatIA as exc:
+        logger.warning("Chat IA falhou usuario=%s codigo=%s", usuario, exc.codigo)
+        raise _erro_http_chat(exc) from exc
+
+    fila: "queue.Queue[dict | None]" = queue.Queue()
+    sessao = ferramentas_ia.criar_sessao(_validar_nome_empresa(corpo.empresa))
+
+    def ao_evento(evento: dict) -> None:
+        if evento.get("tipo") == "ferramenta":
+            fila.put({
+                "tipo": "passo", "id": evento.get("id"), "estado": "andamento",
+                "texto": ferramentas_ia.descrever_chamada(str(evento.get("nome") or ""), evento.get("argumentos")),
+            })
+        elif evento.get("tipo") == "ferramenta_fim":
+            fila.put({"tipo": "passo", "id": evento.get("id"), "estado": "erro" if evento.get("erro") else "ok"})
+
+    enviar = chat_carteira.EnvioIA(
+        timeout_claude=TIMEOUT_CHAT_FERRAMENTAS_SEGUNDOS,
+        ao_iniciar=lambda: fila.put({"tipo": "inicio"}),
+        ao_receber=lambda texto: fila.put({"tipo": "delta", "texto": texto}),
+        ao_evento=ao_evento,
+        mcp=_servidor_mcp(request, sessao),
+    )
+
+    def gerar() -> None:
+        try:
+            resposta = chat_carteira.responder_chat(
+                contexto, historico, chave, enviar=enviar, ferramentas=True,
+            )
+            fila.put({
+                "tipo": "fim",
+                "resposta": resposta,
+                "modelo": enviar.ultimo_modelo or chat_carteira.MODELO_CLAUDE,
+            })
+        except chat_carteira.ErroChatIA as exc:
+            logger.warning("Chat IA falhou usuario=%s codigo=%s", usuario, exc.codigo)
+            erro = _erro_http_chat(exc)
+            fila.put({"tipo": "erro", "status": erro.status_code, "detalhe": erro.detail})
+        except Exception:  # noqa: BLE001 — o stream precisa fechar com um evento
+            logger.exception("Chat IA falhou sem código usuario=%s", usuario)
+            fila.put({"tipo": "erro", "status": 500, "detalhe": "Falha inesperada ao gerar a resposta."})
+        finally:
+            ferramentas_ia.encerrar_sessao(sessao)
+            fila.put(None)
+
+    threading.Thread(target=gerar, name="chat-ia-stream", daemon=True).start()
+
+    def linhas():
+        while (evento := fila.get()) is not None:
+            yield json.dumps(evento, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(
+        linhas(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.get("/api/ia/analise")
+def ler_analise_empresa(
+    empresa: str,
+    _usuario: str = Depends(exigir_login),
+):
+    """Análise diária da empresa para leitura na tela.
+
+    Só a análise — gerada pelo próprio Prisma. O CRM continua sem sair do backend.
+    """
+    try:
+        contexto = _contexto_chat_empresa(empresa)
+    except chat_carteira.ErroChatIA as exc:
+        raise _erro_http_chat(exc) from exc
+    analise = contexto.analise
+    if not analise.disponivel or not analise.conteudo:
+        raise HTTPException(status_code=404, detail="A análise desta empresa ainda não foi gerada.")
+    return {
+        "empresa": contexto.empresa_carteira,
+        "status": analise.status,
+        "atualizado_em": analise.atualizado_em,
+        "markdown": analise.conteudo,
+    }
 
 
 # ---------------------------------------------------------------------------

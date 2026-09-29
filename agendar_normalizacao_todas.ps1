@@ -1,5 +1,6 @@
-# Registra ou atualiza o lote noturno: normalizacao seguida das analises Ollama Cloud.
-# Requer a chave previamente salva por configurar_ollama.ps1.
+# Registra ou atualiza o lote noturno: normalizacao seguida das analises IA.
+# As analises usam o Claude pela assinatura (Claude Code logado neste usuario);
+# a chave do Ollama Cloud (configurar_ollama.ps1) e reserva opcional.
 [CmdletBinding()]
 param(
     [string]$NomeTarefa = "Prisma-NormalizarTodasEmpresas",
@@ -21,8 +22,10 @@ if ($Remover) {
 if (-not (Test-Path -LiteralPath $orquestrador)) {
     throw "Orquestrador nao encontrado: $orquestrador"
 }
-if (-not (Test-Path -LiteralPath $arquivoSegredo)) {
-    throw "Chave Ollama ausente. Execute .\configurar_ollama.ps1 antes de agendar."
+$temClaude = [bool](Get-Command claude -ErrorAction SilentlyContinue) -or
+    (Test-Path -LiteralPath (Join-Path $env:USERPROFILE ".local\bin\claude.exe"))
+if (-not $temClaude -and -not (Test-Path -LiteralPath $arquivoSegredo)) {
+    throw "Sem Claude Code logado e sem chave Ollama. Instale o Claude Code ou execute .\configurar_ollama.ps1 antes de agendar."
 }
 
 $python = Get-Command python -ErrorAction SilentlyContinue
@@ -50,7 +53,7 @@ Register-ScheduledTask `
     -Trigger $trigger `
     -Settings $settings `
     -Principal $principal `
-    -Description "Normaliza empresas e atualiza dossies executivos via Ollama Cloud (seg-sex)." `
+    -Description "Normaliza empresas e atualiza dossies executivos via Claude (Ollama Cloud de reserva) (seg-sex)." `
     -Force | Out-Null
 
 Write-Host "Tarefa registrada: $NomeTarefa"

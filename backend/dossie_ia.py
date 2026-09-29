@@ -1,4 +1,4 @@
-"""Geração segura dos dossiês executivos da carteira com Ollama Cloud.
+"""Geração segura dos dossiês executivos da carteira com Claude (Ollama Cloud de reserva).
 
 O workbook do CRM e os summaries do Prisma são entradas somente leitura. A
 única escrita deste módulo acontece em ``<clientId>-analise.md`` dentro da pasta
@@ -29,6 +29,8 @@ from uuid import UUID
 import pandas as pd
 from openpyxl import load_workbook
 
+import claude_assinatura
+from claude_assinatura import MODELO_CLAUDE
 from estoque_cobertura import montar_cobertura_estoque
 from monitor_empresas import montar_card, obter_resumo_monitor, caminho_summary_existente
 
@@ -48,7 +50,10 @@ SECOES_OBRIGATORIAS = (
     "## Resumo",
     "## Evidências",
     "## Tendência comercial",
-    "## Estoque e liquidez",
+    "## Rentabilidade",
+    "## Clientes e vendedores",
+    "## Estoque e compras",
+    "## Precificação",
     "## Qualidade dos dados",
     "## Alertas",
     "## Oportunidades",
@@ -65,8 +70,8 @@ class ErroDossieIA(RuntimeError):
         self.codigo = codigo
 
 
-class ErroOllama(ErroDossieIA):
-    """Falha de transporte ou resposta da API, sem corpo remoto sensível."""
+class ErroProvedorIA(ErroDossieIA):
+    """Falha de transporte ou resposta do provedor de IA, sem corpo remoto sensível."""
 
     def __init__(
         self,
@@ -79,6 +84,10 @@ class ErroOllama(ErroDossieIA):
         super().__init__(codigo, mensagem)
         self.repetivel = repetivel
         self.aguardar_segundos = aguardar_segundos
+
+
+class ErroOllama(ErroProvedorIA):
+    """Falha da API do Ollama Cloud."""
 
 
 @dataclass(frozen=True)
@@ -333,8 +342,15 @@ def montar_contexto_prisma(
     fresh_since: datetime | None = None,
     hoje: date | None = None,
     limite_ranking: int = 5,
+    blocos_telas: Callable[[str, dict], dict] | None = None,
 ) -> dict:
-    """Monta fatos compactos e auditáveis sem pedir cálculo numérico ao LLM."""
+    """Monta fatos compactos e auditáveis sem pedir cálculo numérico ao LLM.
+
+    ``blocos_telas`` (o lote passa ``contexto_telas.montar_blocos_telas``) acrescenta
+    rentabilidade, clientes, vendedores, estoque, compras e precificação, com os
+    números das telas. Com ele, o estoque vem da tela e o ``Liquidez_*.csv`` —
+    parado em jul/2026 — não é lido.
+    """
     pasta = Path(pasta_empresa)
     caminho_summary = caminho_summary_existente(pasta)
     if caminho_summary is None:
@@ -367,7 +383,7 @@ def montar_contexto_prisma(
         )
         if isinstance(valor, (int, float)) and valor < 0
     ]
-    return {
+    contexto = {
         "empresa": empresa,
         "updated_at": resumo.get("updated_at"),
         "summary_mtime_utc": datetime.fromtimestamp(
@@ -398,8 +414,12 @@ def montar_contexto_prisma(
             summary, mapa="d", indice_dimensao=4, periodo=periodo_ranking,
             periodo_anterior=periodo_anterior, limite=limite_ranking,
         ),
-        "estoque_liquidez": _resumir_estoque_liquidez(pasta),
     }
+    if blocos_telas is not None:
+        contexto["telas"] = blocos_telas(pasta.name, summary)
+    else:
+        contexto["estoque_liquidez"] = _resumir_estoque_liquidez(pasta)
+    return contexto
 
 
 def _system_prompt(*, crm_disponivel: bool = True) -> str:
@@ -430,7 +450,8 @@ REGRAS DE SEGURANÇA E VERDADE:
   ou [CRM+PRISMA], inclusive hipóteses, oportunidades e recomendações.
   A etiqueta deve ser o último conteúdo da linha; somente pontuação pode vir depois.
 - Não use HTML, links, tabelas, frontmatter, H1 ou blocos de código.
-- Seja direto e acionável. Máximo aproximado: 1.200 palavras.
+- Seja direto e acionável. Escolha os números que mudam a decisão; não repita todos.
+  Máximo aproximado: 1.800 palavras.
 
 FORMATO EXATO:
 {secoes}
@@ -440,10 +461,25 @@ Em "Risco executivo", primeira linha deve ser exatamente:
 
 Em "Evidências", escreva pelo menos dois bullets iniciados por "- ".
 
-Em "Estoque e liquidez":
-- Se estoque_liquidez.disponivel=true, informe valor total, contagens de ruptura,
-  excesso e sem giro, janela analisada e SKUs prioritários. Cite [PRISMA].
-- Se false, diga exatamente que dados de estoque e vendas não estão disponíveis. Não estime.
+Os blocos em metricas_prisma.telas vêm das telas do Prisma, com valores e variações
+já calculados. Use-os assim, sempre com [PRISMA]:
+- "Rentabilidade" (bloco rentabilidade): lucro bruto e margem bruta do período e do
+  último mês. Se despesas_disponiveis=true, informe também o resultado e a margem após
+  despesas e diga que as despesas excluem Mercadoria Revenda (já contida no CMV). Meses
+  listados sem lançamento de despesa indicam Controladoria incompleta: não conclua sobre eles.
+- "Clientes e vendedores" (blocos clientes, diagnostico_receita e vendedores): base ativa,
+  novos, perdidos, concentração da receita, clientes em queda, pior cauda, potencial de
+  compra, produtos que mais moveram a receita e vendedores em alerta. Receita sob risco é
+  exposição de clientes em queda, não perda confirmada. Sinais precoces são sinais, não tendência.
+- "Estoque e compras" (bloco estoque_e_compras): valor em estoque, rupturas, excesso, sem
+  giro, capital parado, SKUs prioritários e a compra sugerida pela tela Compras.
+- "Precificação" (bloco precificacao): lucro perdido por dia, produtos com maior perda e
+  reajuste sugerido, perfil GPS e taxa de retorno, efeito da última rodada de precificação.
+- Bloco com disponivel=false: diga em uma linha que o dado não está disponível para a
+  empresa. Não estime.
+- Sem metricas_prisma.telas (contexto antigo): use estoque_liquidez em "Estoque e compras"
+  e diga nas seções Rentabilidade, Clientes e vendedores e Precificação que os dados não
+  estão disponíveis.
 
 Em "Qualidade dos dados", destaque anomalias, períodos parciais e defasagem das fontes.
 Se nenhuma anomalia estiver comprovada, declare que nenhuma foi identificada no contexto.
@@ -562,6 +598,65 @@ def chamar_ollama(
     raise ultimo_erro
 
 
+class EnvioIA:
+    """Claude pela assinatura; Ollama Cloud como reserva quando há chave.
+
+    Mesma assinatura de ``chamar_ollama``: ``api_key`` é a chave do Ollama e só
+    é usada se o Claude falhar (sem Claude Code, login vencido, limite de uso).
+    ``ultimo_modelo`` diz quem respondeu, para o MD e o chat não registrarem o
+    Claude numa resposta que veio da reserva. Uma instância por lote ou por
+    requisição do chat: o atributo não é seguro entre threads.
+
+    Streaming (chat): ``ao_iniciar`` avisa que uma tentativa começa — a segunda,
+    de correção de formato, substitui o rascunho da primeira — e ``ao_receber``
+    recebe os pedaços do texto. A reserva não transmite: entrega tudo de uma vez.
+    """
+
+    def __init__(
+        self,
+        *,
+        timeout_claude: int = claude_assinatura.TIMEOUT_CLAUDE_SEGUNDOS,
+        chamar_claude: Callable[..., str] = claude_assinatura.chamar_claude,
+        chamar_reserva: Callable[..., str] = chamar_ollama,
+        ao_iniciar: Callable[[], None] | None = None,
+        ao_receber: Callable[[str], None] | None = None,
+        ao_evento: Callable[[dict], None] | None = None,
+        mcp: dict | None = None,
+    ):
+        self.timeout_claude = timeout_claude
+        self._claude = chamar_claude
+        self._reserva = chamar_reserva
+        self._ao_iniciar = ao_iniciar
+        self._ao_receber = ao_receber
+        self._ao_evento = ao_evento
+        self._mcp = mcp
+        self.ultimo_modelo: str | None = None
+
+    def __call__(self, mensagens: list[dict], api_key: str | None, *, modelo: str = MODELO_CLAUDE) -> str:
+        if self._ao_iniciar is not None:
+            self._ao_iniciar()
+        extra: dict = {"ao_receber": self._ao_receber} if self._ao_receber is not None else {}
+        if self._ao_evento is not None:
+            extra["ao_evento"] = self._ao_evento
+        if self._mcp:
+            extra["mcp"] = self._mcp
+        try:
+            resposta = self._claude(mensagens, modelo=modelo, timeout=self.timeout_claude, **extra)
+        except claude_assinatura.ErroClaude as exc:
+            if not (api_key or "").strip():
+                raise ErroProvedorIA(exc.codigo, str(exc)) from exc
+            logger.warning("Claude indisponível (%s); usando Ollama Cloud de reserva.", exc.codigo)
+            if self._ao_iniciar is not None:
+                self._ao_iniciar()
+            resposta = self._reserva(mensagens, api_key, modelo=MODELO_OLLAMA)
+            if self._ao_receber is not None:
+                self._ao_receber(resposta)
+            self.ultimo_modelo = MODELO_OLLAMA
+            return resposta
+        self.ultimo_modelo = modelo
+        return resposta
+
+
 def validar_markdown_ia(markdown: str, *, crm_disponivel: bool = True) -> None:
     """Bloqueia formato incompleto e conteúdo ativo antes de tocar no destino."""
     if len(markdown) > MAX_SAIDA_CARACTERES:
@@ -615,11 +710,12 @@ def gerar_narrativa(
     contexto_prisma: dict,
     api_key: str,
     *,
-    modelo: str = MODELO_OLLAMA,
-    enviar: Callable[..., str] = chamar_ollama,
+    modelo: str = MODELO_CLAUDE,
+    enviar: Callable[..., str] | None = None,
     crm_disponivel: bool = True,
 ) -> str:
     """Tenta uma correção de formato; nunca aceita resposta parcial."""
+    enviar = enviar or EnvioIA()
     mensagens = montar_mensagens(
         empresa, dossie_crm, contexto_prisma, crm_disponivel=crm_disponivel,
     )
@@ -735,12 +831,17 @@ def apendice_prisma(contexto: dict) -> str:
         card = cards.get(chave) or {}
         valor = card.get("media") if chave == "receita_dia" else card.get("total")
         prefixo = "R$ " if chave in ("receita", "receita_dia") else ""
+        # Quantidade e contagem de clientes são sempre inteiras.
+        casas = 2 if chave in ("receita", "receita_dia") else 0
         linhas.append(
-            f"| {rotulo} | {prefixo}{_fmt_numero(valor)} | {_fmt_pct(card.get('variacao_pct'))} |"
+            f"| {rotulo} | {prefixo}{_fmt_numero(valor, casas)} | {_fmt_pct(card.get('variacao_pct'))} |"
         )
     linhas.extend([""] + _tabela_ranking("Maiores clientes compradores", contexto.get("top_clientes_compradores") or []))
     linhas.extend([""] + _tabela_ranking("Maiores fabricantes", contexto.get("top_fabricantes") or []))
     linhas.extend([""] + _tabela_ranking("Maiores produtos", contexto.get("top_produtos") or []))
+    if "telas" in contexto:
+        linhas.extend(apendice_telas(contexto["telas"]))
+        return "\n".join(linhas).rstrip() + "\n"
     estoque = contexto.get("estoque_liquidez") or {}
     linhas.extend(["", "### Estoque e liquidez", ""])
     if not estoque.get("disponivel"):
@@ -763,6 +864,182 @@ def apendice_prisma(contexto: dict) -> str:
             "Excessos prioritários", estoque.get("excessos_prioritarios") or [],
         ))
     return "\n".join(linhas).rstrip() + "\n"
+
+
+def _celula(valor: object) -> str:
+    return str(valor if valor not in (None, "") else "n/d").replace("|", "\\|").replace("\n", " ")
+
+
+def _rs(valor: object) -> str:
+    return "n/d" if valor is None else f"R$ {_fmt_numero(valor)}"
+
+
+def _inteiro(valor: object) -> str:
+    return _fmt_numero(valor, 0)
+
+
+def _tabela(colunas: list[tuple[str, str]], itens: Iterable[dict], formatos: dict[str, Callable[[object], str]]) -> list[str]:
+    """Tabela simples: ``colunas`` = [(chave, título)]; título com ``>`` alinha à direita."""
+    itens = list(itens)
+    if not itens:
+        return ["- Nenhum item."]
+    cabecalho = "| " + " | ".join(titulo.lstrip(">") for _, titulo in colunas) + " |"
+    separador = "|" + "|".join("---:" if titulo.startswith(">") else "---" for _, titulo in colunas) + "|"
+    corpo = [
+        "| " + " | ".join(formatos.get(chave, _celula)(item.get(chave)) for chave, _ in colunas) + " |"
+        for item in itens
+    ]
+    return [cabecalho, separador, *corpo]
+
+
+def _indisponivel_md(bloco: dict) -> list[str] | None:
+    if bloco.get("disponivel"):
+        return None
+    return ["- Dado não disponível para esta empresa."]
+
+
+def apendice_telas(telas: dict) -> list[str]:
+    """Anexo dos blocos das telas: o chat lê daqui os mesmos números da análise."""
+    linhas: list[str] = []
+
+    rent = telas.get("rentabilidade") or {}
+    linhas.extend(["", "### Rentabilidade", ""])
+    falta = _indisponivel_md(rent)
+    if falta:
+        linhas.extend(falta)
+    else:
+        linhas.extend([
+            f"- Janela: {rent.get('janela')} (meses fechados)",
+            f"- Lucro bruto: {_rs(rent.get('lucro_bruto_periodo'))} · margem bruta {_fmt_pct(rent.get('margem_bruta_periodo_pct'))}",
+        ])
+        if rent.get("despesas_disponiveis"):
+            linhas.append(
+                f"- Resultado após despesas: {_rs(rent.get('resultado_apos_despesas_periodo'))} · "
+                f"margem {_fmt_pct(rent.get('margem_apos_despesas_periodo_pct'))} "
+                f"({rent.get('meses_com_despesa')} meses com despesa; sem Mercadoria Revenda)"
+            )
+        linhas.append("")
+        linhas.extend(_tabela(
+            [("mes", "Mês"), ("receita", ">Receita"), ("lucro_bruto", ">Lucro bruto"),
+             ("margem_bruta_pct", ">Margem bruta"), ("despesas", ">Despesas"),
+             ("margem_apos_despesas_pct", ">Margem após despesas")],
+            rent.get("serie_mensal") or [],
+            {"receita": _rs, "lucro_bruto": _rs, "despesas": _rs,
+             "margem_bruta_pct": _fmt_pct, "margem_apos_despesas_pct": _fmt_pct},
+        ))
+
+    cli = telas.get("clientes") or {}
+    linhas.extend(["", "### Clientes", ""])
+    falta = _indisponivel_md(cli)
+    if falta:
+        linhas.extend(falta)
+    else:
+        linhas.extend([
+            f"- {cli.get('periodo')}, {cli.get('comparacao')}",
+            f"- Clientes ativos: {_inteiro(cli.get('clientes_ativos'))} ({_fmt_pct(cli.get('variacao_clientes_pct'))})",
+            f"- Novos {_inteiro(cli.get('novos'))} · recuperados {_inteiro(cli.get('recuperados'))} · "
+            f"perdidos {_inteiro(cli.get('perdidos'))} · saldo {_inteiro(cli.get('saldo_clientes'))}",
+            f"- Ticket médio: {_rs(cli.get('ticket_medio'))} ({_fmt_pct(cli.get('variacao_ticket_pct'))})",
+            f"- {_inteiro(cli.get('clientes_que_fazem_80pct_receita'))} clientes fazem 80% da receita "
+            f"({_fmt_pct(cli.get('participacao_desses_clientes_na_base_pct'))} da base)",
+        ])
+        risco = cli.get("risco_de_churn") or {}
+        if risco:
+            linhas.extend([f"- Receita sob risco: {_rs(risco.get('receita_sob_risco'))}", "",
+                           "#### Clientes com maior perda", ""])
+            linhas.extend(_tabela(
+                [("cliente", "Cliente"), ("perda", ">Perda"), ("variacao_pct", ">Variação"), ("faixa", "Faixa")],
+                risco.get("clientes_com_maior_perda") or [], {"perda": _rs, "variacao_pct": _fmt_pct},
+            ))
+        if cli.get("maiores_perdidos"):
+            linhas.extend(["", "#### Maiores clientes perdidos", ""])
+            linhas.extend(_tabela(
+                [("cliente", "Cliente"), ("receita", ">Receita antes"), ("ultima_compra", "Última compra")],
+                cli["maiores_perdidos"], {"receita": _rs},
+            ))
+
+    ven = telas.get("vendedores") or {}
+    linhas.extend(["", "### Vendedores", ""])
+    falta = _indisponivel_md(ven)
+    if falta:
+        linhas.extend(falta)
+    else:
+        formatos = {"receita": _rs, "variacao_pct": _fmt_pct, "clientes": _inteiro}
+        colunas = [("vendedor", "Vendedor"), ("receita", ">Receita"), ("variacao_pct", ">Variação"), ("clientes", ">Clientes")]
+        linhas.extend(_tabela(colunas, ven.get("maiores_receitas") or [], formatos))
+        if ven.get("em_alerta_de_queda"):
+            linhas.extend(["", "#### Vendedores em alerta de queda", ""])
+            linhas.extend(_tabela(colunas, ven["em_alerta_de_queda"], formatos))
+
+    est = telas.get("estoque_e_compras") or {}
+    linhas.extend(["", "### Estoque e compras", ""])
+    falta = _indisponivel_md(est)
+    if falta:
+        linhas.extend(falta)
+    else:
+        linhas.extend([
+            f"- Janela de vendas: {est.get('janela_vendas')}",
+            f"- Estoque: {_rs(est.get('valor_estoque'))} em {_inteiro(est.get('produtos'))} produtos",
+            f"- Ruptura {_inteiro(est.get('em_ruptura'))} · excesso {_inteiro(est.get('em_excesso'))} · "
+            f"sem giro {_inteiro(est.get('sem_giro'))}",
+            f"- Capital parado: {_rs(est.get('valor_parado'))} ({_fmt_pct(est.get('parcela_parada_pct'))} do estoque)",
+            "", "#### Ruptura iminente", "",
+        ])
+        colunas = [("sku", "SKU"), ("produto", "Produto"), ("fabricante", "Fabricante"), ("estoque", ">Estoque"),
+                   ("venda_media_mes", ">Venda média/mês"), ("valor_estoque", ">Valor em estoque")]
+        formatos = {"estoque": _inteiro, "venda_media_mes": _inteiro, "valor_estoque": _rs}
+        linhas.extend(_tabela(colunas, est.get("ruptura_iminente") or [], formatos))
+        linhas.extend(["", "#### Maior capital parado", ""])
+        linhas.extend(_tabela(colunas, est.get("maior_capital_parado") or [], formatos))
+        compras = est.get("compras_sugeridas") or {}
+        if compras:
+            linhas.extend([
+                "", "#### Compra sugerida", "",
+                f"- {_rs(compras.get('valor_total'))} em {_inteiro(compras.get('produtos'))} produtos "
+                f"({_inteiro(compras.get('skus'))} SKUs), cenário {compras.get('cenario')}",
+                "",
+            ])
+            linhas.extend(_tabela(
+                [("produto", "Produto"), ("fabricante", "Fabricante"), ("sugestao_unidades", ">Unidades"), ("valor", ">Valor")],
+                compras.get("maiores_itens") or [], {"sugestao_unidades": _inteiro, "valor": _rs},
+            ))
+
+    pre = telas.get("precificacao") or {}
+    linhas.extend(["", "### Precificação", ""])
+    falta = _indisponivel_md(pre)
+    if falta:
+        linhas.extend(falta)
+    else:
+        ap = pre.get("a_precificar") or {}
+        if ap:
+            linhas.extend([
+                f"- A precificar: {_inteiro(ap.get('produtos_sinalizados'))} produtos "
+                f"({_inteiro(ap.get('skus_sinalizados'))} SKUs), {_fmt_pct(ap.get('parcela_da_receita_pct'))} da receita",
+                f"- Lucro perdido por dia: {_rs(ap.get('lucro_perdido_por_dia'))}",
+                "",
+            ])
+            linhas.extend(_tabela(
+                [("produto", "Produto"), ("margem_recente_pct", ">Margem recente"), ("alvo_pct", ">Alvo"),
+                 ("reajuste_sugerido_pct", ">Reajuste"), ("lucro_perdido_por_dia", ">Perdido/dia")],
+                ap.get("maiores_perdas") or [],
+                {"margem_recente_pct": _fmt_pct, "alvo_pct": _fmt_pct, "reajuste_sugerido_pct": _fmt_pct,
+                 "lucro_perdido_por_dia": _rs},
+            ))
+        gps = pre.get("gps") or {}
+        if gps:
+            linhas.extend(["", f"- GPS: perfil {gps.get('perfil')} · taxa de retorno {_fmt_pct(gps.get('taxa_de_retorno_pct'))} "
+                               f"(margem {_fmt_pct(gps.get('margem_pct'))} − despesas {_fmt_pct(gps.get('despesas_pct'))})"])
+        pos = pre.get("pos_precificacao") or {}
+        if pos:
+            if linhas[-1].startswith("|"):
+                linhas.append("")  # sem a linha em branco, o item vira continuação da tabela
+            linhas.extend([
+                f"- Pós-precificação: {_inteiro(pos.get('rodadas_no_periodo'))} rodadas, "
+                f"{_inteiro(pos.get('skus_precificados'))} SKUs · margem {_fmt_pct(pos.get('margem_antes_pct'))} → "
+                f"{_fmt_pct(pos.get('margem_depois_pct'))} (alvo {_fmt_pct(pos.get('margem_alvo_pct'))}) · "
+                f"lucro/dia {_fmt_pct(pos.get('efeito_no_lucro_por_dia_pct'))}",
+            ])
+    return linhas
 
 
 def documento_sucesso(
@@ -856,24 +1133,50 @@ def gravar_atomico(destino: str | Path, conteudo: str) -> None:
         raise
 
 
+def localizar_crm(
+    pasta_dossie: str | Path, client_id: str, pasta_reserva: str | Path | None = None,
+) -> Path | None:
+    """CRM do cliente: `<id>-crm.md` do dossiê; senão, `<id>--*.md` da reserva.
+
+    A reserva é a pasta provisória da Carteira Web (``caminhos_padrao.
+    dossie_crm_provisorio``). Mais de um arquivo com o mesmo id lá é ambíguo e
+    conta como ausente, em vez de escolher um.
+    """
+    definitivo = Path(pasta_dossie) / f"{client_id}-crm.md"
+    if definitivo.is_file():
+        return definitivo
+    if pasta_reserva is None or not Path(pasta_reserva).is_dir():
+        return None
+    achados = [p for p in Path(pasta_reserva).glob(f"{client_id}--*.md") if p.is_file()]
+    return achados[0] if len(achados) == 1 else None
+
+
 def executar_lote(
     *,
     database: str | Path,
     dossie: str | Path,
     trabalho: str | Path,
     api_key: str | None,
-    modelo: str = MODELO_OLLAMA,
+    modelo: str = MODELO_CLAUDE,
     somente_ids: set[str] | None = None,
     fresh_since: datetime | None = None,
     dry_run: bool = False,
-    enviar: Callable[..., str] = chamar_ollama,
+    enviar: Callable[..., str] | None = None,
+    crm_reserva: str | Path | None = None,
+    blocos_telas: Callable[[str, dict], dict] | None = None,
 ) -> list[ResultadoCliente]:
     """Processa carteira; falha de um cliente nunca impede próximos."""
     pasta_dossie = Path(dossie)
     if not pasta_dossie.is_dir():
         raise ErroDossieIA("dossie_ausente", "Pasta de dossiês não encontrada.")
-    if not dry_run and not (api_key or "").strip():
-        raise ErroDossieIA("ollama_key_ausente", "OLLAMA_API_KEY não foi carregada.")
+    if enviar is None:
+        # Sem Claude Code e sem chave de reserva, cada cliente falharia igual:
+        # melhor parar antes de gravar um MD de erro por cliente.
+        if not dry_run and not claude_assinatura.localizar_claude() and not (api_key or "").strip():
+            raise ErroDossieIA(
+                "ia_indisponivel", "Claude Code não encontrado e sem OLLAMA_API_KEY de reserva.",
+            )
+        enviar = EnvioIA()
 
     clientes = carregar_clientes(database)
     indice_pastas = indexar_pastas_empresas(trabalho)
@@ -897,12 +1200,12 @@ def executar_lote(
                 raise ErroDossieIA(
                     "mapeamento_ambiguo", "Mais de uma pasta Prisma corresponde à empresa.",
                 )
-            caminho_crm = pasta_dossie / f"{cliente.client_id}-crm.md"
-            if not caminho_crm.is_file():
+            caminho_crm = localizar_crm(pasta_dossie, cliente.client_id, crm_reserva)
+            if caminho_crm is None:
                 raise ErroDossieIA("crm_md_ausente", "Dossiê CRM correspondente não encontrado.")
             dossie_crm = caminho_crm.read_text(encoding="utf-8")
             contexto = montar_contexto_prisma(
-                cliente.empresa, pastas[0], fresh_since=fresh_since,
+                cliente.empresa, pastas[0], fresh_since=fresh_since, blocos_telas=blocos_telas,
             )
             tamanho = len(dossie_crm) + len(json.dumps(contexto, ensure_ascii=False))
             if tamanho > MAX_ENTRADA_CARACTERES:
@@ -920,7 +1223,8 @@ def executar_lote(
                 modelo=modelo, enviar=enviar,
             )
             conteudo = documento_sucesso(
-                cliente, narrativa, contexto, modelo=modelo,
+                cliente, narrativa, contexto,
+                modelo=getattr(enviar, "ultimo_modelo", None) or modelo,
                 crm_mtime=caminho_crm.stat().st_mtime,
             )
             gravar_atomico(destino, conteudo)

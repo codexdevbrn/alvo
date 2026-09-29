@@ -123,13 +123,22 @@ export interface DocumentoContextoIA {
   status?: string | null;
 }
 
+/** Recorte da análise diária para o painel; `erro_codigo` quando ela falhou. */
+export interface ResumoAnaliseIA {
+  risco?: string | null;
+  alertas?: string[];
+  proxima_pauta?: string[];
+  modelo?: string | null;
+  erro_codigo?: string | null;
+}
+
 export interface ContextoChatIA {
   client_id: string;
   empresa: string;
   pronto: boolean;
   provisorio: boolean;
   crm: DocumentoContextoIA;
-  analise: DocumentoContextoIA;
+  analise: DocumentoContextoIA & { resumo?: ResumoAnaliseIA | null };
   /** Fatos numéricos da base da empresa; opcional, não bloqueia a conversa. */
   dados: DocumentoContextoIA & { motivo?: string | null };
 }
@@ -141,7 +150,7 @@ export interface RespostaChatIA {
   modelo: string;
 }
 
-/** Metadados dos MDs; o conteúdo integral nunca é enviado ao navegador. */
+/** Metadados dos MDs e o recorte da análise; o CRM nunca é enviado ao navegador. */
 export async function obterContextoChatIA(
   empresa: string,
   signal?: AbortSignal,
@@ -164,6 +173,82 @@ export async function conversarChatIA(
     headers: { 'Content-Type': 'application/json', ...authHeaders() },
     body: JSON.stringify({ empresa, mensagens }),
   });
+  return tratarResposta(res);
+}
+
+/** Passo do agente: uma ferramenta chamada (consulta à base, ficha, conta). */
+export interface PassoChatIA {
+  id: string;
+  estado: 'andamento' | 'ok' | 'erro';
+  /** Só no evento de início; o de fim traz id e estado. */
+  texto?: string;
+}
+
+export interface EventosChatIA {
+  /** Uma tentativa começou; na segunda (correção de formato) o rascunho é descartado. */
+  aoIniciar?: () => void;
+  aoReceber?: (texto: string) => void;
+  aoPasso?: (passo: PassoChatIA) => void;
+}
+
+type EventoChatIA =
+  | { tipo: 'inicio' }
+  | { tipo: 'delta'; texto: string }
+  | ({ tipo: 'passo' } & PassoChatIA)
+  | { tipo: 'fim'; resposta: string; modelo: string }
+  | { tipo: 'erro'; status: number; detalhe: string };
+
+/**
+ * Chat com a resposta chegando aos poucos (NDJSON de `/api/ia/chat/stream`).
+ * Resolve com a resposta já validada pelo backend, que substitui o rascunho.
+ */
+export async function conversarChatIAStream(
+  empresa: string,
+  mensagens: ChatIAMensagem[],
+  eventos: EventosChatIA,
+  signal?: AbortSignal,
+): Promise<{ resposta: string; modelo: string }> {
+  const res = await chamar('/api/ia/chat/stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...authHeaders() },
+    body: JSON.stringify({ empresa, mensagens }),
+    signal,
+  });
+  if (!res.ok || !res.body) return tratarResposta(res);
+
+  const leitor = res.body.getReader();
+  const decodificador = new TextDecoder();
+  let pendente = '';
+  for (;;) {
+    const { value, done } = await leitor.read();
+    pendente += decodificador.decode(value, { stream: !done });
+    const linhas = pendente.split('\n');
+    pendente = done ? '' : linhas.pop() ?? '';
+    for (const linha of linhas) {
+      if (!linha.trim()) continue;
+      const evento = JSON.parse(linha) as EventoChatIA;
+      if (evento.tipo === 'inicio') eventos.aoIniciar?.();
+      else if (evento.tipo === 'delta') eventos.aoReceber?.(evento.texto);
+      else if (evento.tipo === 'passo') eventos.aoPasso?.({ id: evento.id, estado: evento.estado, texto: evento.texto });
+      else if (evento.tipo === 'fim') return { resposta: evento.resposta, modelo: evento.modelo };
+      else throw new Error(evento.detalhe || 'A IA não conseguiu responder.');
+    }
+    if (done) break;
+  }
+  throw new Error('A conexão com a IA foi interrompida antes do fim da resposta.');
+}
+
+export interface AnaliseEmpresaIA {
+  empresa: string;
+  status: string | null;
+  atualizado_em: string | null;
+  markdown: string;
+}
+
+/** Análise diária completa (gerada pelo Prisma) para leitura na tela. */
+export async function obterAnaliseChatIA(empresa: string, signal?: AbortSignal): Promise<AnaliseEmpresaIA> {
+  const params = new URLSearchParams({ empresa });
+  const res = await chamar(`/api/ia/analise?${params}`, { headers: authHeaders(), signal });
   return tratarResposta(res);
 }
 

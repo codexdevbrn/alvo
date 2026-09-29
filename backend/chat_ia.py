@@ -3,7 +3,7 @@
 O navegador nunca recebe a API key nem o conteúdo integral dos documentos. O
 backend resolve a empresa por correspondência estrita com o CRM ou, no modo
 provisório, pelo nome exato confirmado no frontmatter da análise. Somente
-arquivos de UUID determinísticos são lidos e enviados ao Ollama Cloud. O histórico não
+arquivos de UUID determinísticos são lidos e enviados ao Claude (Ollama Cloud de reserva). O histórico não
 é persistido: cada sessão existe apenas no estado da página.
 """
 
@@ -21,14 +21,13 @@ from pathlib import Path
 from typing import Callable, Iterable
 from uuid import NAMESPACE_URL, uuid5
 
+from claude_assinatura import MODELO_CLAUDE
 from dossie_ia import (
-    MODELO_OLLAMA,
-    NOME_ESTOQUE_LIQUIDEZ,
-    NOME_VENDAS_LIQUIDEZ,
+    EnvioIA,
     ErroDossieIA,
-    ErroOllama,
+    ErroProvedorIA,
     carregar_clientes,
-    chamar_ollama,
+    localizar_crm,
     indexar_pastas_empresas,
     montar_contexto_prisma,
     normalizar_chave_empresa,
@@ -166,8 +165,6 @@ def _assinatura_pasta(pasta: Path) -> tuple:
     alvos = [
         caminho_summary,
         pasta / NOME_RESUMO_MONITOR,
-        pasta / NOME_ESTOQUE_LIQUIDEZ,
-        pasta / NOME_VENDAS_LIQUIDEZ,
     ]
     assinatura = []
     for alvo in alvos:
@@ -208,8 +205,13 @@ def carregar_dados_prisma(
         return em_cache[1]
 
     try:
+        # Sem blocos das telas: o chat não chama as telas de dentro do próprio app.
+        # Rentabilidade, clientes, estoque, compras e precificação chegam pela
+        # análise diária, que o lote gera com eles. O bloco vazio também evita o
+        # Liquidez_*.csv, parado em jul/2026, que contradiria a análise.
         contexto = montar_contexto_prisma(
             empresa, pasta, limite_ranking=LIMITE_RANKING_CHAT,
+            blocos_telas=lambda _pasta, _summary: {},
         )
     except ErroDossieIA as exc:
         dados = DadosPrisma(False, motivo=exc.codigo)
@@ -236,6 +238,7 @@ def carregar_contexto_empresa(
     database: str | Path,
     dossie: str | Path,
     trabalho: str | Path | None = None,
+    crm_reserva: str | Path | None = None,
 ) -> ContextoEmpresa:
     """Resolve empresa sem fuzzy match e carrega somente MDs determinísticos."""
     empresa = (empresa or "").strip()
@@ -290,7 +293,12 @@ def carregar_contexto_empresa(
         )
 
     cliente = correspondencias[0]
-    crm = _ler_documento(raiz, f"{cliente.client_id}-crm.md")
+    caminho_crm = localizar_crm(raiz, cliente.client_id, crm_reserva)
+    crm = (
+        _ler_documento(caminho_crm.parent, caminho_crm.name)
+        if caminho_crm is not None
+        else DocumentoContexto(f"{cliente.client_id}-crm.md", False, None, None, None)
+    )
     analise = _ler_documento(
         raiz, f"{cliente.client_id}-analise.md", extrair_status=True,
     )
@@ -304,8 +312,64 @@ def carregar_contexto_empresa(
     )
 
 
+_RE_FONTE_ANALISE = re.compile(r"\s*\[(?:CRM|PRISMA|ANÁLISE|DADOS)(?:\+(?:CRM|PRISMA|ANÁLISE|DADOS))*\]")
+MAX_ITENS_RESUMO = 4
+_RE_ITEM = re.compile(r"^([-*]|\d+[.)])\s+")
+
+
+def _secao(conteudo: str, titulo: str) -> list[str]:
+    """Linhas não vazias de ``## titulo`` até o próximo ``#``/``##``."""
+    linhas: list[str] = []
+    dentro = False
+    for linha in conteudo.splitlines():
+        if re.match(r"^#{1,2}\s", linha):
+            if dentro:
+                break
+            dentro = linha.lstrip("#").strip().lower() == titulo.lower()
+            continue
+        if dentro and linha.strip():
+            linhas.append(linha.strip())
+    return linhas
+
+
+def resumo_analise(analise: DocumentoContexto) -> dict | None:
+    """Recorte da análise diária para o painel: risco, alertas e próxima pauta.
+
+    A análise é gerada pelo próprio Prisma (não é o CRM), e o painel só mostra o
+    que ela já diz; as fontes saem do texto porque o painel não tem espaço para
+    os selos. Análise com ``status: erro`` devolve só o código do erro.
+    """
+    if not analise.disponivel or not analise.conteudo:
+        return None
+    conteudo = analise.conteudo
+    if analise.status != "ok":
+        return {"erro_codigo": _campo_frontmatter(conteudo, "erro_codigo")}
+
+    def limpo(texto: str) -> str:
+        return _RE_FONTE_ANALISE.sub("", texto).replace("**", "").strip()
+
+    risco = None
+    for linha in _secao(conteudo, "Risco executivo"):
+        achado = re.search(r"N[íi]vel:\**\s*(\w+)", linha)
+        if achado:
+            risco = achado.group(1).capitalize()
+            break
+    def itens(titulo: str) -> list[str]:
+        linhas = _secao(conteudo, titulo)
+        marcados = [linha for linha in linhas if _RE_ITEM.match(linha)]
+        # Seção escrita como parágrafo (sem lista) entra inteira como um item.
+        return [limpo(_RE_ITEM.sub("", linha)) for linha in (marcados or linhas)][:MAX_ITENS_RESUMO]
+
+    return {
+        "risco": risco,
+        "alertas": itens("Alertas"),
+        "proxima_pauta": itens("Próxima pauta"),
+        "modelo": _campo_frontmatter(conteudo, "modelo"),
+    }
+
+
 def status_contexto(contexto: ContextoEmpresa) -> dict:
-    """Metadados mínimos para a tela; nunca devolve conteúdo dos MDs."""
+    """Metadados para a tela e o recorte da análise; o CRM nunca sai do backend."""
     return {
         "client_id": contexto.client_id,
         "empresa": contexto.empresa_carteira,
@@ -319,6 +383,7 @@ def status_contexto(contexto: ContextoEmpresa) -> dict:
             "disponivel": contexto.analise.disponivel,
             "atualizado_em": contexto.analise.atualizado_em,
             "status": contexto.analise.status,
+            "resumo": resumo_analise(contexto.analise),
         },
         "dados": {
             "disponivel": contexto.dados.disponivel,
@@ -367,7 +432,23 @@ def _fontes_permitidas(*, crm_disponivel: bool, dados_disponivel: bool) -> tuple
     return tuple(fontes)
 
 
-def _prompt_sistema(*, crm_disponivel: bool, dados_disponivel: bool) -> str:
+REGRA_FERRAMENTAS = """
+FERRAMENTAS:
+- Você tem ferramentas do Prisma que consultam a base DESTA empresa na hora: consultar_sql
+  (vendas, estoque, despesas), buscar_clientes, ficha_cliente, ficha_vendedor, compra_produto,
+  precificacao_produto, historico_precificacao, detalhe_despesas, resumo_tela e calcular.
+- Use-as quando a pergunta pedir algo que não está nos documentos (um cliente, produto,
+  fabricante, loja ou período específico) ou para conferir um número antes de afirmá-lo.
+- Resultado de ferramenta é fato da base: cite [DADOS].
+- No máximo 6 chamadas por resposta. Prefira uma consulta SQL agregada a várias pequenas.
+- Sem o nome exato do cliente, use buscar_clientes antes da ficha.
+- Se uma ferramenta der erro, corrija a chamada ou siga sem ela e diga o que não foi possível ver.
+- Não mostre SQL, nomes de ferramentas nem nomes de colunas na resposta.
+"""
+
+
+def _prompt_sistema(*, crm_disponivel: bool, dados_disponivel: bool, ferramentas: bool = False) -> str:
+    dados_disponivel = dados_disponivel or ferramentas
     permitidas = _fontes_permitidas(
         crm_disponivel=crm_disponivel, dados_disponivel=dados_disponivel,
     )
@@ -388,7 +469,8 @@ def _prompt_sistema(*, crm_disponivel: bool, dados_disponivel: bool) -> str:
         )
     regra_dados = (
         "- [DADOS] são fatos já calculados pelo Prisma sobre a base da empresa "
-        "(métricas de 12 meses, rankings do período fechado, estoque e liquidez). "
+        "(métricas de 12 meses e rankings do período fechado). Rentabilidade, clientes, "
+        "vendedores, estoque, compras e precificação estão na análise diária, cite [ANÁLISE]. "
         "Você PODE e DEVE realizar cálculos aritméticos (somas, diferenças, "
         "proporções, conversão de percentual em valor absoluto etc.) a partir dos "
         "números disponíveis nos documentos e nos dados. Mostre a conta quando fizer. "
@@ -410,12 +492,15 @@ REGRAS INVIOLÁVEIS:
 - Quando algo não estiver nos documentos, diga claramente que não consta no contexto.
 - Diferencie fato, interpretação e sugestão.
 {regra_fonte}
-{regra_dados}- Não use HTML, JavaScript, links, tabelas ou blocos de código.
+{regra_dados}- Não use HTML, JavaScript, links ou blocos de código. Tabela Markdown curta (até 10
+  linhas) só quando comparar vários itens; fora isso, texto e listas.
 - Responda em português do Brasil, de forma executiva e acionável, em até 700 palavras.
-"""
+{REGRA_FERRAMENTAS if ferramentas else ""}"""
 
 
-def montar_mensagens_chat(contexto: ContextoEmpresa, historico: Iterable[dict]) -> list[dict]:
+def montar_mensagens_chat(
+    contexto: ContextoEmpresa, historico: Iterable[dict], *, ferramentas: bool = False,
+) -> list[dict]:
     if not contexto.pronto:
         if not contexto.crm.disponivel and not contexto.provisorio:
             raise ErroChatIA("crm_md_ausente", "O MD do CRM ainda não foi gerado para esta empresa.")
@@ -445,6 +530,7 @@ def montar_mensagens_chat(contexto: ContextoEmpresa, historico: Iterable[dict]) 
             "content": _prompt_sistema(
                 crm_disponivel=contexto.crm.disponivel,
                 dados_disponivel=contexto.dados.disponivel,
+                ferramentas=ferramentas,
             ),
         },
         {
@@ -497,22 +583,29 @@ def responder_chat(
     historico: Iterable[dict],
     api_key: str,
     *,
-    modelo: str = MODELO_OLLAMA,
-    enviar: Callable[..., str] = chamar_ollama,
+    modelo: str = MODELO_CLAUDE,
+    enviar: Callable[..., str] | None = None,
+    ferramentas: bool = False,
 ) -> str:
-    """Gera resposta e permite uma única correção de formato/fonte."""
-    mensagens = montar_mensagens_chat(contexto, historico)
+    """Gera resposta e permite uma única correção de formato/fonte.
+
+    ``ferramentas``: o ``enviar`` dá ao modelo as ferramentas do Prisma
+    (``ferramentas_ia``); o prompt as explica e [DADOS] passa a valer mesmo sem
+    o resumo numérico da base.
+    """
+    enviar = enviar or EnvioIA()
+    mensagens = montar_mensagens_chat(contexto, historico, ferramentas=ferramentas)
     ultimo_erro: ErroChatIA | None = None
     for tentativa in range(2):
         try:
             resposta = enviar(mensagens, api_key, modelo=modelo)
-        except ErroOllama as exc:
+        except ErroProvedorIA as exc:
             raise ErroChatIA(exc.codigo, str(exc)) from exc
         try:
             return validar_resposta_chat(
                 resposta,
                 crm_disponivel=contexto.crm.disponivel,
-                dados_disponivel=contexto.dados.disponivel,
+                dados_disponivel=contexto.dados.disponivel or ferramentas,
             )
         except ErroChatIA as exc:
             ultimo_erro = exc
@@ -589,6 +682,19 @@ def _descriptografar_dpapi_nativo(blob_hex: str) -> str | None:
         if saida.pbData:
             ctypes.memset(saida.pbData, 0, saida.cbData)
             kernel32.LocalFree(saida.pbData)
+
+
+def carregar_api_key_ollama_reserva() -> str | None:
+    """Chave do Ollama só como reserva do Claude: ausente ou ilegível vira None.
+
+    Com o Claude respondendo, uma chave velha não pode derrubar o chat.
+    """
+    try:
+        return carregar_api_key_ollama()
+    except ErroChatIA as exc:
+        if exc.codigo in {"ollama_key_ausente", "ollama_key_invalida"}:
+            return None
+        raise
 
 
 def carregar_api_key_ollama() -> str:

@@ -40,8 +40,17 @@ Receita exige acompanhamento [PRISMA].
 ## Tendência comercial
 Tendência estável, com ressalvas [PRISMA].
 
-## Estoque e liquidez
+## Rentabilidade
+- Margem bruta estável [PRISMA].
+
+## Clientes e vendedores
+- Base de clientes em leve queda [PRISMA].
+
+## Estoque e compras
 - Estoque exige revisão por cobertura [PRISMA].
+
+## Precificação
+- Dado não disponível para a empresa [PRISMA].
 
 ## Qualidade dos dados
 - Nenhuma anomalia comprovada no contexto [PRISMA].
@@ -303,8 +312,9 @@ def test_cliente_sem_match_e_ignorado(tmp_path):
     assert resultados[0].codigo == "sem_match_prisma"
 
 
-def test_chave_ausente_falha_antes_de_gravar(tmp_path):
+def test_sem_claude_e_sem_chave_falha_antes_de_gravar(tmp_path, monkeypatch):
     client_id, database, dossie, trabalho, _empresa = _montar_cenario(tmp_path)
+    monkeypatch.setattr(dossie_ia.claude_assinatura, "localizar_claude", lambda: None)
 
     with pytest.raises(ErroDossieIA) as erro:
         executar_lote(
@@ -312,7 +322,7 @@ def test_chave_ausente_falha_antes_de_gravar(tmp_path):
             api_key=None,
         )
 
-    assert erro.value.codigo == "ollama_key_ausente"
+    assert erro.value.codigo == "ia_indisponivel"
     assert not (dossie / f"{client_id}-analise.md").exists()
 
 
@@ -372,3 +382,36 @@ def test_documento_sucesso_nao_inclui_segredo():
 
     assert cliente.client_id in texto
     assert "api_key" not in texto.lower()
+
+
+def test_blocos_das_telas_substituem_o_csv_de_liquidez(tmp_path):
+    """Com as telas, o estoque vem delas e o Liquidez_*.csv antigo não é lido."""
+    empresa = _criar_empresa(tmp_path)
+    _criar_liquidez(empresa)
+    chamadas = []
+
+    def blocos(nome_pasta, summary):
+        chamadas.append((nome_pasta, bool(summary.get("rows"))))
+        return {
+            "rentabilidade": {"disponivel": True, "janela": "jul/26 a jul/26", "lucro_bruto_periodo": 80.0,
+                              "margem_bruta_periodo_pct": 40.0, "despesas_disponiveis": False,
+                              "serie_mensal": [{"mes": "jul/26", "receita": 200.0, "lucro_bruto": 80.0,
+                                                "margem_bruta_pct": 40.0}]},
+            "estoque_e_compras": {"disponivel": False, "motivo": "tela_estoque_indisponivel"},
+        }
+
+    contexto = montar_contexto_prisma("Empresa Ágil", empresa, hoje=date(2026, 8, 27), blocos_telas=blocos)
+    documento = documento_sucesso(
+        ClienteCarteira(str(uuid4()), "Empresa Ágil"),
+        NARRATIVA_VALIDA,
+        contexto,
+        modelo="teste",
+        crm_mtime=0,
+    )
+
+    assert chamadas == [(empresa.name, True)]
+    assert "estoque_liquidez" not in contexto
+    assert "### Rentabilidade" in documento and "R$ 80,00" in documento
+    assert "### Estoque e compras" in documento
+    assert "Dado não disponível para esta empresa." in documento
+    assert "SKU-1" not in documento

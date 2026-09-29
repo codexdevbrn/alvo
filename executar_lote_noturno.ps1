@@ -1,4 +1,6 @@
-# Orquestra normalizacao (corte D-1), base CNPJ, dump de precificacao, preparo das telas e analises IA. A chave so entra no ambiente do processo de analise.
+# Orquestra normalizacao (corte D-1), base CNPJ, dump de precificacao, preparo das telas e analises IA.
+# As analises usam o Claude pela assinatura (Claude Code logado neste usuario); a chave do
+# Ollama Cloud e so reserva e, quando existe, so entra no ambiente do processo de analise.
 [CmdletBinding()]
 param(
     [string]$Python = "",
@@ -148,16 +150,21 @@ try {
     if ($DryRunAnalises) {
         $argumentosAnalise += "--dry-run"
     } else {
-        if (-not (Test-Path -LiteralPath $arquivoSegredo)) {
-            # Ultima etapa e opcional: sem chave nesta maquina o lote nao falha,
+        # Mesma busca de claude_assinatura.localizar_claude: PATH, depois a
+        # instalacao padrao (o agendador nem sempre herda ~/.local/bin no PATH).
+        $temClaude = [bool](Get-Command claude -ErrorAction SilentlyContinue) -or
+            (Test-Path -LiteralPath (Join-Path $env:USERPROFILE ".local\bin\claude.exe"))
+        $temChave = Test-Path -LiteralPath $arquivoSegredo
+        if (-not $temClaude -and -not $temChave) {
+            # Ultima etapa e opcional: sem IA nesta maquina o lote nao falha,
             # senao os dados prontos das etapas anteriores aparecem como erro 0x2.
-            "[$(Get-Date -Format o)] Analises IA puladas: chave Ollama ausente (configurar_ollama.ps1)" | Add-Content -LiteralPath $logResumo -Encoding UTF8
+            "[$(Get-Date -Format o)] Analises IA puladas: sem Claude Code e sem chave Ollama de reserva" | Add-Content -LiteralPath $logResumo -Encoding UTF8
             $argumentosAnalise = $null
-        } else {
-        $blobProtegido = (Get-Content -Raw -LiteralPath $arquivoSegredo).Trim()
-        $segredo = ConvertTo-SecureString -String $blobProtegido
-        $ponte = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($segredo)
-        $env:OLLAMA_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ponte)
+        } elseif ($temChave) {
+            $blobProtegido = (Get-Content -Raw -LiteralPath $arquivoSegredo).Trim()
+            $segredo = ConvertTo-SecureString -String $blobProtegido
+            $ponte = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($segredo)
+            $env:OLLAMA_API_KEY = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ponte)
         }
     }
 

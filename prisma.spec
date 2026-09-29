@@ -53,6 +53,8 @@ hiddenimports = [
     # Modo Prisma.exe --pre-gerar: o lote é importado sob demanda, então a análise
     # estática não o alcança pelo entrypoint.
     "normalizar_todas_empresas",
+    # Modo Prisma.exe --mcp-prisma (ferramentas do chat), importado sob demanda.
+    "mcp_prisma",
     # uvicorn resolve estes por nome em tempo de execução.
     "uvicorn.logging",
     "uvicorn.loops.auto",

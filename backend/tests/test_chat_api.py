@@ -1,5 +1,7 @@
 """Integração fina entre rota FastAPI e serviço de chat."""
 
+import json
+
 from fastapi.testclient import TestClient
 from starlette.requests import Request
 
@@ -54,7 +56,7 @@ def test_rota_chat_nao_devolve_chave_ou_documentos(monkeypatch):
     monkeypatch.setattr(main, "_contexto_chat_empresa", lambda _empresa: _contexto())
     monkeypatch.setattr(chat_ia, "carregar_api_key_ollama", lambda: "chave-super-secreta")
 
-    def responder(_contexto, _mensagens, chave):
+    def responder(_contexto, _mensagens, chave, **_kwargs):
         assert chave == "chave-super-secreta"
         return "Resposta comprovada [CRM]."
 
@@ -81,7 +83,7 @@ def test_chat_http_aceita_requisicao_sem_login(monkeypatch):
     monkeypatch.setattr(
         chat_ia,
         "responder_chat",
-        lambda _contexto, _mensagens, _chave: "Resposta comprovada [CRM].",
+        lambda _contexto, _mensagens, _chave, **_kwargs: "Resposta comprovada [CRM].",
     )
 
     cliente = TestClient(main.app)
@@ -97,3 +99,66 @@ def test_chat_http_aceita_requisicao_sem_login(monkeypatch):
     assert resposta.json()["resposta"] == "Resposta comprovada [CRM]."
     assert "chave-super-secreta" not in resposta.text
     assert "ANÁLISE" not in resposta.text
+
+
+class _EnvioFalso:
+    """Faz o papel do EnvioIA: dispara os mesmos avisos que o streaming real."""
+
+    def __init__(self, *, ao_iniciar=None, ao_receber=None, **_kwargs):
+        self._ao_iniciar = ao_iniciar
+        self._ao_receber = ao_receber
+        self.ultimo_modelo = "claude-opus-5-5"
+
+    def __call__(self, _mensagens, _api_key, **_kwargs):
+        self._ao_iniciar()
+        for pedaco in ("Resposta ", "comprovada [CRM]."):
+            self._ao_receber(pedaco)
+        return "Resposta comprovada [CRM]."
+
+
+def test_chat_stream_entrega_pedacos_e_resposta_validada(monkeypatch):
+    main._chat_rate.clear()
+    monkeypatch.setattr(main, "_contexto_chat_empresa", lambda _empresa: _contexto())
+    monkeypatch.setattr(chat_ia, "carregar_api_key_ollama", lambda: "chave-super-secreta")
+    monkeypatch.setattr(chat_ia, "EnvioIA", _EnvioFalso)
+
+    cliente = TestClient(main.app)
+    resposta = cliente.post(
+        "/api/ia/chat/stream",
+        json={"empresa": "Empresa", "mensagens": [{"role": "user", "content": "Qual risco?"}]},
+    )
+
+    assert resposta.status_code == 200
+    eventos = [json.loads(linha) for linha in resposta.text.splitlines() if linha.strip()]
+    assert [e["tipo"] for e in eventos] == ["inicio", "delta", "delta", "fim"]
+    assert eventos[-1]["resposta"] == "Resposta comprovada [CRM]."
+    assert eventos[-1]["modelo"] == "claude-opus-5-5"
+    assert "chave-super-secreta" not in resposta.text
+
+
+def test_resumo_da_analise_para_o_painel():
+    conteudo = "\n".join([
+        "---", "status: ok", 'modelo: "claude-opus-5-5"', "---",
+        "# Análise IA — Empresa",
+        "## Risco executivo", "**Nível:** Alto", "",
+        "## Alertas", "- Ruptura no item A [PRISMA].", "- **Queda** de 20% [CRM+PRISMA].",
+        "## Próxima pauta", "Revisar o estoque parado [PRISMA].",
+        "## Dados Prisma usados", "- não entra",
+    ])
+    documento = chat_ia.DocumentoContexto("x-analise.md", True, None, "ok", conteudo)
+
+    resumo = chat_ia.resumo_analise(documento)
+
+    assert resumo == {
+        "risco": "Alto",
+        "alertas": ["Ruptura no item A.", "Queda de 20%."],
+        "proxima_pauta": ["Revisar o estoque parado."],
+        "modelo": "claude-opus-5-5",
+    }
+
+
+def test_resumo_de_analise_com_erro_so_traz_o_codigo():
+    conteudo = "---\nstatus: erro\nerro_codigo: \"crm_md_ausente\"\n---\n# Análise IA indisponível"
+    documento = chat_ia.DocumentoContexto("x-analise.md", True, None, "erro", conteudo)
+
+    assert chat_ia.resumo_analise(documento) == {"erro_codigo": "crm_md_ausente"}

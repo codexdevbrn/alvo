@@ -106,11 +106,62 @@ O contexto entregue ao modelo é factual e pré-calculado (`montar_contexto_pris
 períodos, rankings, cards de 12 meses e sinalizadores de qualidade, incluindo mês
 parcial e períodos com quantidade negativa. O LLM não faz conta.
 
-Modelo padrão `gpt-oss:120b`, via `https://ollama.com/api/chat`. A API key é
-gravada por `configurar_ollama.ps1` como blob DPAPI em
-`%LOCALAPPDATA%\Prisma\secrets\ollama_api_key.dpapi`, fora do repositório e
-legível só pelo mesmo usuário do Windows — por isso a tarefa agendada roda como o
-usuário atual, que precisa estar conectado.
+No lote, o contexto ganha os blocos das telas (`backend/contexto_telas.py`):
+rentabilidade mês a mês, clientes e risco de churn, diagnóstico da receita,
+vendedores, estoque com compra sugerida e precificação (A precificar, GPS e
+pós-precificação). Cada bloco é o resumo e os 3–5 primeiros itens da tela, lidos
+pela própria rota com os parâmetros de `preparar_telas.py` — o número é o da tela
+e a leitura cai no cache em disco (~2 s por empresa, ~16 mil caracteres). Tela que
+falha vira bloco `disponivel: false` e a análise segue. Duas coisas a saber:
+
+- **Margem após despesas exclui "Mercadoria Revenda".** A Controladoria lança a
+  compra de mercadoria como despesa, e ela já está no CMV; em 2026 é 50–85% do
+  lançado em Gomec, Comkit, Renocar, Gushcar, Widmen e outras. É a mesma regra do
+  GPS. O card "Margem" do Dashboard ainda subtrai tudo.
+- **O estoque vem da tela**, não mais do `Liquidez_*.csv`, que o lote deixou de
+  gerar em jul/2026. O chat não chama as telas (ele roda dentro do app): os números
+  delas chegam pelo anexo da análise diária, que ele já lê.
+
+**Ferramentas do chat** (`backend/ferramentas_ia.py`, `backend/mcp_prisma.py`). O chat
+(`/api/ia/chat/stream`) dá ao modelo ferramentas que consultam a base na hora:
+`consultar_sql` (vendas, estoque e despesas), `buscar_clientes`, `ficha_cliente`,
+`ficha_vendedor`, `compra_produto`, `precificacao_produto`, `historico_precificacao`,
+`detalhe_despesas`, `resumo_tela` e `calcular`. Como funciona:
+
+- O `claude -p` sobe um servidor MCP (`mcp_prisma.py`; no executável,
+  `Prisma.exe --mcp-prisma`), escrito à mão sobre stdio para não depender da biblioteca
+  `mcp`. Ele não calcula nada: repassa a `POST /api/ia/ferramentas/executar` do próprio
+  Prisma, onde a base já está na RAM.
+- A empresa não é argumento do modelo: vem de um token de sessão criado a cada pergunta
+  (`ferramentas_ia.criar_sessao`) e apagado no fim. A rota aceita só chamadas desta máquina.
+- O SQL roda num DuckDB descartável com os DataFrames da empresa registrados e, depois,
+  `enable_external_access=false` + `lock_configuration=true`: sem `read_parquet`, `COPY`,
+  `ATTACH` ou `INSTALL`. Só `SELECT`/`WITH`, uma consulta, 200 linhas, 20 s.
+- Consultas prontas chamam as rotas das telas com os parâmetros de tela, então o número é o
+  da tela. Resultados são enxutos (listas de 15, 24 mil caracteres) porque voltam ao contexto.
+- A tela mostra cada chamada como um passo (evento `passo` do stream), e a resposta guarda a
+  lista recolhível do que foi consultado. A reserva no Ollama responde sem ferramentas.
+
+Modelo padrão: `claude-sonnet-5-5` (chat e análises).
+
+Modelo padrão `claude-opus-5-5`, pela **assinatura** do Claude: não há API key,
+o backend chama o Claude Code logado na máquina (`claude -p`,
+`backend/claude_assinatura.py`). Cada chamada é um processo isolado, sem
+ferramentas, MCP, settings, CLAUDE.md nem sessão gravada; o prompt de sistema vai
+por arquivo temporário (a linha de comando do Windows para em 32 mil caracteres) e
+`ANTHROPIC_API_KEY` sai do ambiente do filho, senão a chamada iria para a API paga.
+Erro do CLI (login vencido, limite de uso, modelo inválido) chega com saída 0 e
+`is_error: true` no JSON — é isso que se confere, não o código de saída. Um
+dossiê leva ~1 min; uma resposta do chat, ~5 s.
+
+`dossie_ia.EnvioIA` junta os dois provedores: tenta o Claude e, se ele falhar e
+houver chave, cai no Ollama Cloud (`gpt-oss:120b`, `https://ollama.com/api/chat`).
+`ultimo_modelo` registra quem respondeu, e é ele que vai para o `modelo:` do MD e
+para a resposta do chat. A chave do Ollama é gravada por `configurar_ollama.ps1`
+como blob DPAPI em `%LOCALAPPDATA%\Prisma\secrets\ollama_api_key.dpapi`, fora do
+repositório e legível só pelo mesmo usuário do Windows. O login do Claude Code
+também é do usuário — por isso a tarefa agendada roda como o usuário atual, que
+precisa estar conectado. Sem Claude Code e sem chave, o lote pula as análises.
 
 ## Segurança operacional
 
@@ -119,7 +170,7 @@ usuário atual, que precisa estar conectado.
   proxy: `_exigir_origem_local` cobre `/api/atualizacoes/aplicar`,
   `dados-no-disco` e `inicio-automatico`.
 - Nenhum segredo no repositório. A chave do Ollama só existe como blob DPAPI na
-  máquina que roda o lote.
+  máquina que roda o lote; o Claude usa o login do Claude Code do usuário.
 
 ## Interface
 

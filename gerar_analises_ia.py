@@ -4,8 +4,10 @@ Uso manual seguro:
     python gerar_analises_ia.py --dry-run
     python gerar_analises_ia.py --so <clientId>
 
-A chave não é aceita por argumento. O orquestrador descriptografa DPAPI e a
-expõe somente no ambiente do processo como ``OLLAMA_API_KEY``.
+O texto sai do Claude pela assinatura (Claude Code logado nesta máquina). A
+chave do Ollama Cloud, reserva quando o Claude falha, não é aceita por
+argumento: o orquestrador descriptografa DPAPI e a expõe somente no ambiente do
+processo como ``OLLAMA_API_KEY``.
 """
 
 from __future__ import annotations
@@ -26,7 +28,7 @@ if str(BACKEND) not in sys.path:
 
 import caminhos_padrao  # noqa: E402
 from dossie_ia import (  # noqa: E402
-    MODELO_OLLAMA,
+    MODELO_CLAUDE,
     ErroDossieIA,
     executar_lote,
 )
@@ -68,7 +70,17 @@ def _argumentos() -> argparse.Namespace:
         default=Path(caminhos_padrao.trabalho()) if caminhos_padrao.trabalho() else None,
         help="Pasta de trabalho Prisma com subpastas por empresa.",
     )
-    parser.add_argument("--modelo", default=MODELO_OLLAMA, help="Modelo Ollama Cloud direto.")
+    parser.add_argument(
+        "--crm-reserva", type=Path,
+        default=Path(caminhos_padrao.dossie_crm_provisorio()) if caminhos_padrao.dossie_crm_provisorio() else None,
+        help="Pasta com <clientId>--<slug>.md, lida quando falta <clientId>-crm.md no dossiê "
+             "(padrão: Carteira Web do Erick, provisório).",
+    )
+    parser.add_argument("--modelo", default=MODELO_CLAUDE, help="Modelo do Claude (a reserva Ollama usa o dela).")
+    parser.add_argument(
+        "--sem-telas", action="store_true",
+        help="Não lê as telas (rentabilidade, clientes, estoque, compras, precificação); só o summary.",
+    )
     parser.add_argument("--so", nargs="+", type=_parse_uuid, metavar="CLIENT_ID")
     parser.add_argument("--fresh-since", type=_parse_data_iso, default=None)
     parser.add_argument(
@@ -76,6 +88,13 @@ def _argumentos() -> argparse.Namespace:
         help="Valida mapeamentos/fontes sem chamar API nem gravar MD.",
     )
     return parser.parse_args()
+
+
+def _blocos_telas():
+    """Import tardio: carrega o app inteiro (``main``), que só as telas precisam."""
+    import contexto_telas
+
+    return contexto_telas.montar_blocos_telas
 
 
 def main() -> int:
@@ -101,6 +120,8 @@ def main() -> int:
             somente_ids=set(args.so or []),
             fresh_since=args.fresh_since,
             dry_run=args.dry_run,
+            crm_reserva=args.crm_reserva.expanduser().resolve() if args.crm_reserva else None,
+            blocos_telas=None if args.sem_telas else _blocos_telas(),
         )
     except ErroDossieIA as exc:
         print(f"ERRO CONFIG [{exc.codigo}]: {exc}", file=sys.stderr)

@@ -23,16 +23,22 @@ npm run dev
 ```
 O Vite já tem proxy de `/api` para `http://localhost:8000` (`vite.config.ts`).
 
-## Análises diárias da carteira com Ollama Cloud
+## Análises diárias da carteira com Claude
 
 O lote lê, sem alterar, `Carteira/database_dev.xlsx`, os arquivos
 `Carteira/dossie/<clientId>-crm.md` e os summaries da pasta de trabalho do Prisma.
 Para cada empresa com correspondência exata, grava somente
 `Carteira/dossie/<clientId>-analise.md`. Empresas sem correspondência são ignoradas.
 
-O modelo padrão é `gpt-oss:120b`. A API key nunca deve ser colocada no código,
-na linha de comando ou no workbook. Configure uma vez no Windows; o script salva
-um blob DPAPI fora do repositório, legível somente pelo mesmo usuário:
+O texto sai do Claude (`claude-opus-5-5`) pela assinatura: o backend chama o
+Claude Code instalado e logado nesta máquina (`claude -p`), sem API key. Basta o
+usuário que roda o lote ter feito login uma vez (`claude`, depois `/login`).
+
+O Ollama Cloud (`gpt-oss:120b`) é reserva opcional, usada quando o Claude falha
+(sem Claude Code, login vencido, limite de uso da assinatura). A API key dele
+nunca deve ser colocada no código, na linha de comando ou no workbook. Configure
+uma vez no Windows; o script salva um blob DPAPI fora do repositório, legível
+somente pelo mesmo usuário:
 
 ```powershell
 .\configurar_ollama.ps1
@@ -57,7 +63,7 @@ deve estar conectado; se o computador estiver indisponível às 02:00, a opção
 
 ### Chat sobre a empresa
 
-A rota `/assistente` permite conversar com o Ollama Cloud usando exclusivamente
+A rota `/assistente` permite conversar com o Claude (Ollama Cloud de reserva) usando exclusivamente
 os arquivos `<clientId>-crm.md` e `<clientId>-analise.md` da empresa selecionada
 na barra lateral. Os documentos e a API key ficam no backend; o navegador recebe
 somente metadados de disponibilidade e a resposta final. O histórico permanece
