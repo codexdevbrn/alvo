@@ -4,6 +4,27 @@ Formato: uma seção por versão publicada, mais recente no topo. Histórico é
 incremental — entradas antigas nunca são apagadas. O estado atual das telas e
 funcionalidades vive em `DOC_TEC.md`, não aqui.
 
+## 1.8.1 — 2026-09-29
+
+### Alterado
+
+- **O Assistente IA agora se chama MonitorIA** (menu, título e respostas).
+- **Respostas mais curtas no MonitorIA**: a primeira frase já responde, com o número
+  principal, e o resto cabe em poucos tópicos (cerca de 150 palavras). Análise
+  completa só quando pedida.
+- **Recomendações pelo serviço contratado**: a análise diária usa o cadastro do CRM.
+  Cliente só de Monitoria não recebe recomendações de precificação; cliente só de
+  Precificação recebe só preço, margem, lucro bruto, quantidade, despesas e produtos.
+  O MonitorIA segue respondendo qualquer pergunta; o contrato só orienta o que ele
+  sugere por conta própria.
+- **Análise diária só quando algum dado da empresa muda** (fonte, CRM, precificação,
+  PRICE, cadastro de serviços). Antes era refeita em toda passada do lote.
+
+### Corrigido
+
+- Empresa cujo resumo não foi atualizado não tem mais a análise trocada por um
+  arquivo de erro.
+
 ## 1.8.0 — 2026-09-29
 
 ### Adicionado
