@@ -27,6 +27,7 @@ from dossie_ia import (
     ErroDossieIA,
     ErroProvedorIA,
     carregar_clientes,
+    escopo_por_servicos,
     localizar_crm,
     indexar_pastas_empresas,
     montar_contexto_prisma,
@@ -93,6 +94,7 @@ class ContextoEmpresa:
     analise: DocumentoContexto
     dados: DadosPrisma = DADOS_INDISPONIVEIS
     provisorio: bool = False
+    servicos: tuple[str, ...] = ()
 
     @property
     def pronto(self) -> bool:
@@ -309,6 +311,7 @@ def carregar_contexto_empresa(
         crm,
         analise,
         carregar_dados_prisma(cliente.empresa, trabalho),
+        servicos=cliente.servicos,
     )
 
 
@@ -447,7 +450,27 @@ FERRAMENTAS:
 """
 
 
-def _prompt_sistema(*, crm_disponivel: bool, dados_disponivel: bool, ferramentas: bool = False) -> str:
+def _regra_servicos(servicos: tuple[str, ...]) -> str:
+    """Serviços contratados orientam o que o MonitorIA sugere, nunca o que ele responde."""
+    if not servicos:
+        return ""
+    foco = escopo_por_servicos(servicos)["foco"]
+    detalhe = {
+        "precificacao": "ao sugerir por conta própria, fique em preço, margem, lucro bruto, quantidade, "
+                        "despesas e produtos (não sugira pauta de clientes, vendedores, estoque ou compras).",
+        "monitoria": "ao sugerir por conta própria, não proponha ações de precificação ou reajuste de preço.",
+    }.get(foco, "")
+    return (
+        f"\nSERVIÇOS CONTRATADOS: {', '.join(servicos)}.\n"
+        "- Responda qualquer pergunta, inclusive sobre temas fora desses serviços.\n"
+        "- Quando você sugerir pauta, ações, análises ou próximos passos sem ter sido pedido, "
+        "concentre-se nos serviços contratados" + (f"; {detalhe}" if detalhe else ".") + "\n"
+    )
+
+
+def _prompt_sistema(
+    *, crm_disponivel: bool, dados_disponivel: bool, ferramentas: bool = False, servicos: tuple[str, ...] = (),
+) -> str:
     dados_disponivel = dados_disponivel or ferramentas
     permitidas = _fontes_permitidas(
         crm_disponivel=crm_disponivel, dados_disponivel=dados_disponivel,
@@ -507,7 +530,7 @@ TAMANHO E FORMA (quem lê é um gerente, entre uma tarefa e outra):
 - Sugestão de ação só quando ajudar, em uma linha.
 - Se houver bem mais a dizer, termine oferecendo o detalhe em uma frase
   (ex.: "Quer que eu abra por loja?").
-{REGRA_FERRAMENTAS if ferramentas else ""}"""
+{REGRA_FERRAMENTAS if ferramentas else ""}{_regra_servicos(servicos)}"""
 
 
 def montar_mensagens_chat(
@@ -543,6 +566,7 @@ def montar_mensagens_chat(
                 crm_disponivel=contexto.crm.disponivel,
                 dados_disponivel=contexto.dados.disponivel,
                 ferramentas=ferramentas,
+                servicos=contexto.servicos,
             ),
         },
         {

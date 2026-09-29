@@ -95,6 +95,7 @@ class ErroOllama(ErroProvedorIA):
 class ClienteCarteira:
     client_id: str
     empresa: str
+    servicos: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -112,8 +113,67 @@ def normalizar_chave_empresa(valor: object) -> str:
     return re.sub(r"[^a-z0-9]+", "", texto)
 
 
+def _lista_servicos(valor: object) -> list[str]:
+    """Célula de serviços do CRM (lista JSON em texto) → nomes; ilegível vira vazio."""
+    if valor is None or valor == "":
+        return []
+    if isinstance(valor, str):
+        try:
+            valor = json.loads(valor)
+        except json.JSONDecodeError:
+            valor = [parte for parte in valor.split(",")]
+    if isinstance(valor, str):
+        valor = [valor]
+    if not isinstance(valor, list):
+        return []
+    return [str(item).strip() for item in valor if str(item or "").strip()]
+
+
+def _sem_acento(texto: str) -> str:
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", texto) if not unicodedata.combining(c)
+    ).lower().strip()
+
+
+# Blocos das telas (``contexto_telas.montar_blocos_telas``) por foco do contrato.
+_BLOCOS_MONITORIA = ("rentabilidade", "clientes", "diagnostico_receita", "vendedores", "estoque_e_compras")
+_BLOCOS_PRECIFICACAO = ("rentabilidade", "diagnostico_receita", "precificacao")
+
+
+def escopo_por_servicos(servicos: Iterable[str]) -> dict:
+    """O que o cliente contrata decide o foco das recomendações da análise.
+
+    - Só Monitoria: tudo, menos precificação.
+    - Só Precificação: precificação, pós-precificação, margens, lucro bruto,
+      quantidade, despesas e produtos — sem clientes, vendedores, estoque e compras.
+    - Os dois, nenhum ou só outros serviços (OptiMarco, Raptor…): tudo.
+
+    É foco, não bloqueio: o chat continua respondendo qualquer pergunta.
+    Controladoria não entra na regra (decisão de set/2026).
+    """
+    lista = [s for s in servicos if s]
+    nomes = {_sem_acento(s) for s in lista}
+    monitoria = "monitoria" in nomes
+    precificacao = "precificacao" in nomes
+    if monitoria and not precificacao:
+        return {
+            "servicos": lista, "foco": "monitoria", "blocos": list(_BLOCOS_MONITORIA),
+            "secoes_fora_do_escopo": ["## Precificação"],
+        }
+    if precificacao and not monitoria:
+        return {
+            "servicos": lista, "foco": "precificacao", "blocos": list(_BLOCOS_PRECIFICACAO),
+            "secoes_fora_do_escopo": ["## Clientes e vendedores", "## Estoque e compras"],
+        }
+    return {"servicos": lista, "foco": "completo", "blocos": None, "secoes_fora_do_escopo": []}
+
+
 def carregar_clientes(database: str | Path) -> list[ClienteCarteira]:
-    """Lê somente ``Clientes.id`` e ``Clientes.empresa`` do CRM."""
+    """Lê ``Clientes.id``, ``empresa`` e os serviços contratados do CRM (só leitura).
+
+    ``servicos`` e ``servicosIndependentes`` são opcionais: planilha sem elas
+    dá cliente sem serviço, que recebe a análise completa.
+    """
     caminho = Path(database)
     if not caminho.is_file():
         raise ErroDossieIA("database_ausente", "Workbook da carteira não encontrado.")
@@ -141,6 +201,7 @@ def carregar_clientes(database: str | Path) -> list[ClienteCarteira]:
             )
         indice_id = cabecalho.index("id")
         indice_empresa = cabecalho.index("empresa")
+        indices_servicos = [cabecalho.index(c) for c in ("servicos", "servicosIndependentes") if c in cabecalho]
 
         clientes: list[ClienteCarteira] = []
         ids: set[str] = set()
@@ -162,7 +223,12 @@ def carregar_clientes(database: str | Path) -> list[ClienteCarteira]:
                     "empresa_vazia", f"Cliente da linha {numero_linha} não possui empresa.",
                 )
             ids.add(id_canonico)
-            clientes.append(ClienteCarteira(id_canonico, empresa))
+            servicos: list[str] = []
+            for indice in indices_servicos:
+                for servico in _lista_servicos(linha[indice] if indice < len(linha) else None):
+                    if servico not in servicos:
+                        servicos.append(servico)
+            clientes.append(ClienteCarteira(id_canonico, empresa, tuple(servicos)))
         return clientes
     finally:
         workbook.close()
@@ -344,6 +410,7 @@ def montar_contexto_prisma(
     hoje: date | None = None,
     limite_ranking: int = 5,
     blocos_telas: Callable[[str, dict], dict] | None = None,
+    escopo: dict | None = None,
 ) -> dict:
     """Monta fatos compactos e auditáveis sem pedir cálculo numérico ao LLM.
 
@@ -420,6 +487,22 @@ def montar_contexto_prisma(
         contexto["telas"] = blocos_telas(pasta.name, summary)
     else:
         contexto["estoque_liquidez"] = _resumir_estoque_liquidez(pasta)
+    if escopo and escopo.get("foco") != "completo":
+        # Fora do escopo contratado o bloco nem entra: é o que impede a análise de
+        # recomendar pauta de clientes a quem só contrata precificação.
+        permitidos = set(escopo.get("blocos") or [])
+        if "telas" in contexto:
+            contexto["telas"] = {k: v for k, v in contexto["telas"].items() if k in permitidos}
+        if "estoque_e_compras" not in permitidos:
+            contexto.pop("estoque_liquidez", None)
+        if escopo.get("foco") == "precificacao":
+            contexto.pop("top_clientes_compradores", None)
+    if escopo:
+        contexto["escopo"] = {
+            "servicos_contratados": escopo.get("servicos") or [],
+            "foco": escopo.get("foco"),
+            "secoes_fora_do_escopo": escopo.get("secoes_fora_do_escopo") or [],
+        }
     return contexto
 
 
@@ -486,6 +569,15 @@ Em "Qualidade dos dados", destaque anomalias, períodos parciais e defasagem das
 Se nenhuma anomalia estiver comprovada, declare que nenhuma foi identificada no contexto.
 
 Metas e prazos propostos nas ações não são fatos. Identifique-os como "meta sugerida".
+
+ESCOPO CONTRATADO (metricas_prisma.escopo, quando existir):
+- servicos_contratados diz o que o cliente contrata da consultoria. Alertas, Oportunidades,
+  Ações recomendadas e Próxima pauta tratam só desses serviços.
+- Em cada seção listada em secoes_fora_do_escopo, escreva uma única linha:
+  "- Fora do escopo contratado (<serviços contratados>) [PRISMA]." e nada mais.
+- foco "precificacao": fale de preço, margem, lucro bruto, quantidade, despesas e produtos;
+  não recomende ações sobre clientes, vendedores, estoque ou compras.
+- foco "monitoria": não recomende ações de precificação nem de reajuste de preço.
 """
 
 
@@ -841,7 +933,8 @@ def apendice_prisma(contexto: dict) -> str:
         linhas.append(
             f"| {rotulo} | {prefixo}{_fmt_numero(valor, casas)} | {_fmt_pct(card.get('variacao_pct'))} |"
         )
-    linhas.extend([""] + _tabela_ranking("Maiores clientes compradores", contexto.get("top_clientes_compradores") or []))
+    if "top_clientes_compradores" in contexto:
+        linhas.extend([""] + _tabela_ranking("Maiores clientes compradores", contexto["top_clientes_compradores"]))
     linhas.extend([""] + _tabela_ranking("Maiores fabricantes", contexto.get("top_fabricantes") or []))
     linhas.extend([""] + _tabela_ranking("Maiores produtos", contexto.get("top_produtos") or []))
     if "telas" in contexto:
@@ -904,146 +997,157 @@ def _indisponivel_md(bloco: dict) -> list[str] | None:
 
 
 def apendice_telas(telas: dict) -> list[str]:
-    """Anexo dos blocos das telas: o chat lê daqui os mesmos números da análise."""
+    """Anexo dos blocos das telas: o chat lê daqui os mesmos números da análise.
+
+    Só os blocos presentes: fora do escopo contratado o bloco nem chega aqui.
+    """
     linhas: list[str] = []
 
-    rent = telas.get("rentabilidade") or {}
-    linhas.extend(["", "### Rentabilidade", ""])
-    falta = _indisponivel_md(rent)
-    if falta:
-        linhas.extend(falta)
-    else:
-        linhas.extend([
-            f"- Janela: {rent.get('janela')} (meses fechados)",
-            f"- Lucro bruto: {_rs(rent.get('lucro_bruto_periodo'))} · margem bruta {_fmt_pct(rent.get('margem_bruta_periodo_pct'))}",
-        ])
-        if rent.get("despesas_disponiveis"):
-            linhas.append(
-                f"- Resultado após despesas: {_rs(rent.get('resultado_apos_despesas_periodo'))} · "
-                f"margem {_fmt_pct(rent.get('margem_apos_despesas_periodo_pct'))} "
-                f"({rent.get('meses_com_despesa')} meses com despesa; sem Mercadoria Revenda)"
-            )
-        linhas.append("")
-        linhas.extend(_tabela(
-            [("mes", "Mês"), ("receita", ">Receita"), ("lucro_bruto", ">Lucro bruto"),
-             ("margem_bruta_pct", ">Margem bruta"), ("despesas", ">Despesas"),
-             ("margem_apos_despesas_pct", ">Margem após despesas")],
-            rent.get("serie_mensal") or [],
-            {"receita": _rs, "lucro_bruto": _rs, "despesas": _rs,
-             "margem_bruta_pct": _fmt_pct, "margem_apos_despesas_pct": _fmt_pct},
-        ))
+    def secao(chave: str) -> bool:
+        return chave in telas
 
-    cli = telas.get("clientes") or {}
-    linhas.extend(["", "### Clientes", ""])
-    falta = _indisponivel_md(cli)
-    if falta:
-        linhas.extend(falta)
-    else:
-        linhas.extend([
-            f"- {cli.get('periodo')}, {cli.get('comparacao')}",
-            f"- Clientes ativos: {_inteiro(cli.get('clientes_ativos'))} ({_fmt_pct(cli.get('variacao_clientes_pct'))})",
-            f"- Novos {_inteiro(cli.get('novos'))} · recuperados {_inteiro(cli.get('recuperados'))} · "
-            f"perdidos {_inteiro(cli.get('perdidos'))} · saldo {_inteiro(cli.get('saldo_clientes'))}",
-            f"- Ticket médio: {_rs(cli.get('ticket_medio'))} ({_fmt_pct(cli.get('variacao_ticket_pct'))})",
-            f"- {_inteiro(cli.get('clientes_que_fazem_80pct_receita'))} clientes fazem 80% da receita "
-            f"({_fmt_pct(cli.get('participacao_desses_clientes_na_base_pct'))} da base)",
-        ])
-        risco = cli.get("risco_de_churn") or {}
-        if risco:
-            linhas.extend([f"- Receita sob risco: {_rs(risco.get('receita_sob_risco'))}", "",
-                           "#### Clientes com maior perda", ""])
-            linhas.extend(_tabela(
-                [("cliente", "Cliente"), ("perda", ">Perda"), ("variacao_pct", ">Variação"), ("faixa", "Faixa")],
-                risco.get("clientes_com_maior_perda") or [], {"perda": _rs, "variacao_pct": _fmt_pct},
-            ))
-        if cli.get("maiores_perdidos"):
-            linhas.extend(["", "#### Maiores clientes perdidos", ""])
-            linhas.extend(_tabela(
-                [("cliente", "Cliente"), ("receita", ">Receita antes"), ("ultima_compra", "Última compra")],
-                cli["maiores_perdidos"], {"receita": _rs},
-            ))
-
-    ven = telas.get("vendedores") or {}
-    linhas.extend(["", "### Vendedores", ""])
-    falta = _indisponivel_md(ven)
-    if falta:
-        linhas.extend(falta)
-    else:
-        formatos = {"receita": _rs, "variacao_pct": _fmt_pct, "clientes": _inteiro}
-        colunas = [("vendedor", "Vendedor"), ("receita", ">Receita"), ("variacao_pct", ">Variação"), ("clientes", ">Clientes")]
-        linhas.extend(_tabela(colunas, ven.get("maiores_receitas") or [], formatos))
-        if ven.get("em_alerta_de_queda"):
-            linhas.extend(["", "#### Vendedores em alerta de queda", ""])
-            linhas.extend(_tabela(colunas, ven["em_alerta_de_queda"], formatos))
-
-    est = telas.get("estoque_e_compras") or {}
-    linhas.extend(["", "### Estoque e compras", ""])
-    falta = _indisponivel_md(est)
-    if falta:
-        linhas.extend(falta)
-    else:
-        linhas.extend([
-            f"- Janela de vendas: {est.get('janela_vendas')}",
-            f"- Estoque: {_rs(est.get('valor_estoque'))} em {_inteiro(est.get('produtos'))} produtos",
-            f"- Ruptura {_inteiro(est.get('em_ruptura'))} · excesso {_inteiro(est.get('em_excesso'))} · "
-            f"sem giro {_inteiro(est.get('sem_giro'))}",
-            f"- Capital parado: {_rs(est.get('valor_parado'))} ({_fmt_pct(est.get('parcela_parada_pct'))} do estoque)",
-            "", "#### Ruptura iminente", "",
-        ])
-        colunas = [("sku", "SKU"), ("produto", "Produto"), ("fabricante", "Fabricante"), ("estoque", ">Estoque"),
-                   ("venda_media_mes", ">Venda média/mês"), ("valor_estoque", ">Valor em estoque")]
-        formatos = {"estoque": _inteiro, "venda_media_mes": _inteiro, "valor_estoque": _rs}
-        linhas.extend(_tabela(colunas, est.get("ruptura_iminente") or [], formatos))
-        linhas.extend(["", "#### Maior capital parado", ""])
-        linhas.extend(_tabela(colunas, est.get("maior_capital_parado") or [], formatos))
-        compras = est.get("compras_sugeridas") or {}
-        if compras:
+    if secao("rentabilidade"):
+        rent = telas.get("rentabilidade") or {}
+        linhas.extend(["", "### Rentabilidade", ""])
+        falta = _indisponivel_md(rent)
+        if falta:
+            linhas.extend(falta)
+        else:
             linhas.extend([
-                "", "#### Compra sugerida", "",
-                f"- {_rs(compras.get('valor_total'))} em {_inteiro(compras.get('produtos'))} produtos "
-                f"({_inteiro(compras.get('skus'))} SKUs), cenário {compras.get('cenario')}",
-                "",
+                f"- Janela: {rent.get('janela')} (meses fechados)",
+                f"- Lucro bruto: {_rs(rent.get('lucro_bruto_periodo'))} · margem bruta {_fmt_pct(rent.get('margem_bruta_periodo_pct'))}",
             ])
+            if rent.get("despesas_disponiveis"):
+                linhas.append(
+                    f"- Resultado após despesas: {_rs(rent.get('resultado_apos_despesas_periodo'))} · "
+                    f"margem {_fmt_pct(rent.get('margem_apos_despesas_periodo_pct'))} "
+                    f"({rent.get('meses_com_despesa')} meses com despesa; sem Mercadoria Revenda)"
+                )
+            linhas.append("")
             linhas.extend(_tabela(
-                [("produto", "Produto"), ("fabricante", "Fabricante"), ("sugestao_unidades", ">Unidades"), ("valor", ">Valor")],
-                compras.get("maiores_itens") or [], {"sugestao_unidades": _inteiro, "valor": _rs},
+                [("mes", "Mês"), ("receita", ">Receita"), ("lucro_bruto", ">Lucro bruto"),
+                 ("margem_bruta_pct", ">Margem bruta"), ("despesas", ">Despesas"),
+                 ("margem_apos_despesas_pct", ">Margem após despesas")],
+                rent.get("serie_mensal") or [],
+                {"receita": _rs, "lucro_bruto": _rs, "despesas": _rs,
+                 "margem_bruta_pct": _fmt_pct, "margem_apos_despesas_pct": _fmt_pct},
             ))
 
-    pre = telas.get("precificacao") or {}
-    linhas.extend(["", "### Precificação", ""])
-    falta = _indisponivel_md(pre)
-    if falta:
-        linhas.extend(falta)
-    else:
-        ap = pre.get("a_precificar") or {}
-        if ap:
+    if secao("clientes"):
+        cli = telas.get("clientes") or {}
+        linhas.extend(["", "### Clientes", ""])
+        falta = _indisponivel_md(cli)
+        if falta:
+            linhas.extend(falta)
+        else:
             linhas.extend([
-                f"- A precificar: {_inteiro(ap.get('produtos_sinalizados'))} produtos "
-                f"({_inteiro(ap.get('skus_sinalizados'))} SKUs), {_fmt_pct(ap.get('parcela_da_receita_pct'))} da receita",
-                f"- Lucro perdido por dia: {_rs(ap.get('lucro_perdido_por_dia'))}",
-                "",
+                f"- {cli.get('periodo')}, {cli.get('comparacao')}",
+                f"- Clientes ativos: {_inteiro(cli.get('clientes_ativos'))} ({_fmt_pct(cli.get('variacao_clientes_pct'))})",
+                f"- Novos {_inteiro(cli.get('novos'))} · recuperados {_inteiro(cli.get('recuperados'))} · "
+                f"perdidos {_inteiro(cli.get('perdidos'))} · saldo {_inteiro(cli.get('saldo_clientes'))}",
+                f"- Ticket médio: {_rs(cli.get('ticket_medio'))} ({_fmt_pct(cli.get('variacao_ticket_pct'))})",
+                f"- {_inteiro(cli.get('clientes_que_fazem_80pct_receita'))} clientes fazem 80% da receita "
+                f"({_fmt_pct(cli.get('participacao_desses_clientes_na_base_pct'))} da base)",
             ])
-            linhas.extend(_tabela(
-                [("produto", "Produto"), ("margem_recente_pct", ">Margem recente"), ("alvo_pct", ">Alvo"),
-                 ("reajuste_sugerido_pct", ">Reajuste"), ("lucro_perdido_por_dia", ">Perdido/dia")],
-                ap.get("maiores_perdas") or [],
-                {"margem_recente_pct": _fmt_pct, "alvo_pct": _fmt_pct, "reajuste_sugerido_pct": _fmt_pct,
-                 "lucro_perdido_por_dia": _rs},
-            ))
-        gps = pre.get("gps") or {}
-        if gps:
-            linhas.extend(["", f"- GPS: perfil {gps.get('perfil')} · taxa de retorno {_fmt_pct(gps.get('taxa_de_retorno_pct'))} "
-                               f"(margem {_fmt_pct(gps.get('margem_pct'))} − despesas {_fmt_pct(gps.get('despesas_pct'))})"])
-        pos = pre.get("pos_precificacao") or {}
-        if pos:
-            if linhas[-1].startswith("|"):
-                linhas.append("")  # sem a linha em branco, o item vira continuação da tabela
+            risco = cli.get("risco_de_churn") or {}
+            if risco:
+                linhas.extend([f"- Receita sob risco: {_rs(risco.get('receita_sob_risco'))}", "",
+                               "#### Clientes com maior perda", ""])
+                linhas.extend(_tabela(
+                    [("cliente", "Cliente"), ("perda", ">Perda"), ("variacao_pct", ">Variação"), ("faixa", "Faixa")],
+                    risco.get("clientes_com_maior_perda") or [], {"perda": _rs, "variacao_pct": _fmt_pct},
+                ))
+            if cli.get("maiores_perdidos"):
+                linhas.extend(["", "#### Maiores clientes perdidos", ""])
+                linhas.extend(_tabela(
+                    [("cliente", "Cliente"), ("receita", ">Receita antes"), ("ultima_compra", "Última compra")],
+                    cli["maiores_perdidos"], {"receita": _rs},
+                ))
+
+    if secao("vendedores"):
+        ven = telas.get("vendedores") or {}
+        linhas.extend(["", "### Vendedores", ""])
+        falta = _indisponivel_md(ven)
+        if falta:
+            linhas.extend(falta)
+        else:
+            formatos = {"receita": _rs, "variacao_pct": _fmt_pct, "clientes": _inteiro}
+            colunas = [("vendedor", "Vendedor"), ("receita", ">Receita"), ("variacao_pct", ">Variação"), ("clientes", ">Clientes")]
+            linhas.extend(_tabela(colunas, ven.get("maiores_receitas") or [], formatos))
+            if ven.get("em_alerta_de_queda"):
+                linhas.extend(["", "#### Vendedores em alerta de queda", ""])
+                linhas.extend(_tabela(colunas, ven["em_alerta_de_queda"], formatos))
+
+    if secao("estoque_e_compras"):
+        est = telas.get("estoque_e_compras") or {}
+        linhas.extend(["", "### Estoque e compras", ""])
+        falta = _indisponivel_md(est)
+        if falta:
+            linhas.extend(falta)
+        else:
             linhas.extend([
-                f"- Pós-precificação: {_inteiro(pos.get('rodadas_no_periodo'))} rodadas, "
-                f"{_inteiro(pos.get('skus_precificados'))} SKUs · margem {_fmt_pct(pos.get('margem_antes_pct'))} → "
-                f"{_fmt_pct(pos.get('margem_depois_pct'))} (alvo {_fmt_pct(pos.get('margem_alvo_pct'))}) · "
-                f"lucro/dia {_fmt_pct(pos.get('efeito_no_lucro_por_dia_pct'))}",
+                f"- Janela de vendas: {est.get('janela_vendas')}",
+                f"- Estoque: {_rs(est.get('valor_estoque'))} em {_inteiro(est.get('produtos'))} produtos",
+                f"- Ruptura {_inteiro(est.get('em_ruptura'))} · excesso {_inteiro(est.get('em_excesso'))} · "
+                f"sem giro {_inteiro(est.get('sem_giro'))}",
+                f"- Capital parado: {_rs(est.get('valor_parado'))} ({_fmt_pct(est.get('parcela_parada_pct'))} do estoque)",
+                "", "#### Ruptura iminente", "",
             ])
+            colunas = [("sku", "SKU"), ("produto", "Produto"), ("fabricante", "Fabricante"), ("estoque", ">Estoque"),
+                       ("venda_media_mes", ">Venda média/mês"), ("valor_estoque", ">Valor em estoque")]
+            formatos = {"estoque": _inteiro, "venda_media_mes": _inteiro, "valor_estoque": _rs}
+            linhas.extend(_tabela(colunas, est.get("ruptura_iminente") or [], formatos))
+            linhas.extend(["", "#### Maior capital parado", ""])
+            linhas.extend(_tabela(colunas, est.get("maior_capital_parado") or [], formatos))
+            compras = est.get("compras_sugeridas") or {}
+            if compras:
+                linhas.extend([
+                    "", "#### Compra sugerida", "",
+                    f"- {_rs(compras.get('valor_total'))} em {_inteiro(compras.get('produtos'))} produtos "
+                    f"({_inteiro(compras.get('skus'))} SKUs), cenário {compras.get('cenario')}",
+                    "",
+                ])
+                linhas.extend(_tabela(
+                    [("produto", "Produto"), ("fabricante", "Fabricante"), ("sugestao_unidades", ">Unidades"), ("valor", ">Valor")],
+                    compras.get("maiores_itens") or [], {"sugestao_unidades": _inteiro, "valor": _rs},
+                ))
+
+    if secao("precificacao"):
+        pre = telas.get("precificacao") or {}
+        linhas.extend(["", "### Precificação", ""])
+        falta = _indisponivel_md(pre)
+        if falta:
+            linhas.extend(falta)
+        else:
+            ap = pre.get("a_precificar") or {}
+            if ap:
+                linhas.extend([
+                    f"- A precificar: {_inteiro(ap.get('produtos_sinalizados'))} produtos "
+                    f"({_inteiro(ap.get('skus_sinalizados'))} SKUs), {_fmt_pct(ap.get('parcela_da_receita_pct'))} da receita",
+                    f"- Lucro perdido por dia: {_rs(ap.get('lucro_perdido_por_dia'))}",
+                    "",
+                ])
+                linhas.extend(_tabela(
+                    [("produto", "Produto"), ("margem_recente_pct", ">Margem recente"), ("alvo_pct", ">Alvo"),
+                     ("reajuste_sugerido_pct", ">Reajuste"), ("lucro_perdido_por_dia", ">Perdido/dia")],
+                    ap.get("maiores_perdas") or [],
+                    {"margem_recente_pct": _fmt_pct, "alvo_pct": _fmt_pct, "reajuste_sugerido_pct": _fmt_pct,
+                     "lucro_perdido_por_dia": _rs},
+                ))
+            gps = pre.get("gps") or {}
+            if gps:
+                linhas.extend(["", f"- GPS: perfil {gps.get('perfil')} · taxa de retorno {_fmt_pct(gps.get('taxa_de_retorno_pct'))} "
+                                   f"(margem {_fmt_pct(gps.get('margem_pct'))} − despesas {_fmt_pct(gps.get('despesas_pct'))})"])
+            pos = pre.get("pos_precificacao") or {}
+            if pos:
+                if linhas[-1].startswith("|"):
+                    linhas.append("")  # sem a linha em branco, o item vira continuação da tabela
+                linhas.extend([
+                    f"- Pós-precificação: {_inteiro(pos.get('rodadas_no_periodo'))} rodadas, "
+                    f"{_inteiro(pos.get('skus_precificados'))} SKUs · margem {_fmt_pct(pos.get('margem_antes_pct'))} → "
+                    f"{_fmt_pct(pos.get('margem_depois_pct'))} (alvo {_fmt_pct(pos.get('margem_alvo_pct'))}) · "
+                    f"lucro/dia {_fmt_pct(pos.get('efeito_no_lucro_por_dia_pct'))}",
+                ])
     return linhas
 
 
@@ -1163,6 +1267,7 @@ def assinatura_fontes(
     fonte: str | Path | None,
     margem: str | Path | None,
     modelo: str,
+    servicos: Iterable[str] = (),
 ) -> str:
     """Impressão digital de tudo que alimenta a análise de uma empresa.
 
@@ -1180,6 +1285,8 @@ def assinatura_fontes(
         "versao": VERSAO_ANALISE,
         "modelo": modelo,
         "crm": _hash_arquivo(caminho_crm),
+        # Contrato mudou → o foco das recomendações muda → análise nova.
+        "servicos": sorted(servicos),
     }
     if fonte:
         pasta_fonte = Path(fonte) / nome
@@ -1312,7 +1419,11 @@ def executar_lote(
             caminho_crm = localizar_crm(pasta_dossie, cliente.client_id, crm_reserva)
             if caminho_crm is None:
                 raise ErroDossieIA("crm_md_ausente", "Dossiê CRM correspondente não encontrado.")
-            assinatura = assinatura_fontes(pastas[0], caminho_crm, fonte=fonte, margem=margem, modelo=modelo)
+            escopo = escopo_por_servicos(cliente.servicos)
+            assinatura = assinatura_fontes(
+                pastas[0], caminho_crm, fonte=fonte, margem=margem, modelo=modelo,
+                servicos=cliente.servicos,
+            )
             if not forcar and _assinatura_da_analise_ok(destino) == assinatura:
                 resultados.append(ResultadoCliente(
                     cliente.client_id, cliente.empresa, "ignorado", "sem_mudanca",
@@ -1326,6 +1437,7 @@ def executar_lote(
             dossie_crm = caminho_crm.read_text(encoding="utf-8")
             contexto = montar_contexto_prisma(
                 cliente.empresa, pastas[0], fresh_since=fresh_since, blocos_telas=blocos_telas,
+                escopo=escopo,
             )
             tamanho = len(dossie_crm) + len(json.dumps(contexto, ensure_ascii=False))
             if tamanho > MAX_ENTRADA_CARACTERES:

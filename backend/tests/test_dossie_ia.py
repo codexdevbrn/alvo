@@ -490,3 +490,73 @@ def test_summary_mais_velho_que_a_fonte_nao_troca_a_analise_por_erro(tmp_path):
     assert (resultado.status, resultado.codigo) == ("ignorado", "summary_desatualizado")
     assert (dossie / f"{client_id}-analise.md").read_text(encoding="utf-8") == antes
     assert len(chamadas) == 1
+
+
+def test_le_servicos_contratados_do_crm(tmp_path):
+    database = tmp_path / "database.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Clientes"
+    ws.append(["id", "empresa", "servicos", "servicosIndependentes"])
+    a, b, c = str(uuid4()), str(uuid4()), str(uuid4())
+    ws.append([a, "Só preço", '["Precificação"]', "[]"])
+    ws.append([b, "Tudo", '["Monitoria","Protocolo GPS"]', '["Precificação"]'])
+    ws.append([c, "Sem cadastro", None, None])
+    wb.save(database)
+    wb.close()
+
+    clientes = {cliente.empresa: cliente.servicos for cliente in carregar_clientes(database)}
+
+    assert clientes == {
+        "Só preço": ("Precificação",),
+        "Tudo": ("Monitoria", "Protocolo GPS", "Precificação"),
+        "Sem cadastro": (),
+    }
+
+
+def test_escopo_por_servicos():
+    assert dossie_ia.escopo_por_servicos(["Monitoria"])["foco"] == "monitoria"
+    assert "precificacao" not in dossie_ia.escopo_por_servicos(["Monitoria", "Protocolo GPS"])["blocos"]
+    so_preco = dossie_ia.escopo_por_servicos(["Precificação"])
+    assert so_preco["foco"] == "precificacao"
+    assert set(so_preco["blocos"]) == {"rentabilidade", "diagnostico_receita", "precificacao"}
+    assert dossie_ia.escopo_por_servicos(["Monitoria", "Precificação"])["foco"] == "completo"
+    assert dossie_ia.escopo_por_servicos([])["foco"] == "completo"
+    assert dossie_ia.escopo_por_servicos(["OptiMarco"])["foco"] == "completo"
+
+
+def _blocos_todos(_pasta, _summary):
+    return {chave: {"disponivel": False} for chave in (
+        "rentabilidade", "clientes", "diagnostico_receita", "vendedores", "estoque_e_compras", "precificacao",
+    )}
+
+
+def test_so_precificacao_tira_clientes_vendedores_e_estoque_do_contexto(tmp_path):
+    empresa = _criar_empresa(tmp_path)
+    escopo = dossie_ia.escopo_por_servicos(["Precificação"])
+
+    contexto = montar_contexto_prisma(
+        "Empresa Ágil", empresa, hoje=date(2026, 8, 27), blocos_telas=_blocos_todos, escopo=escopo,
+    )
+    documento = documento_sucesso(
+        ClienteCarteira(str(uuid4()), "Empresa Ágil"), NARRATIVA_VALIDA, contexto, modelo="teste", crm_mtime=0,
+    )
+
+    assert set(contexto["telas"]) == {"rentabilidade", "diagnostico_receita", "precificacao"}
+    assert "top_clientes_compradores" not in contexto
+    assert contexto["escopo"]["secoes_fora_do_escopo"] == ["## Clientes e vendedores", "## Estoque e compras"]
+    assert "### Clientes" not in documento and "Maiores clientes compradores" not in documento
+    assert "### Precificação" in documento
+
+
+def test_so_monitoria_tira_precificacao(tmp_path):
+    empresa = _criar_empresa(tmp_path)
+
+    contexto = montar_contexto_prisma(
+        "Empresa Ágil", empresa, hoje=date(2026, 8, 27), blocos_telas=_blocos_todos,
+        escopo=dossie_ia.escopo_por_servicos(["Monitoria"]),
+    )
+
+    assert "precificacao" not in contexto["telas"]
+    assert "clientes" in contexto["telas"]
+    assert "top_clientes_compradores" in contexto

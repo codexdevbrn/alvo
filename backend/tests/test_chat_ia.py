@@ -364,3 +364,15 @@ def test_resposta_nao_pode_citar_base_ausente():
             dados_disponivel=False,
         )
     assert erro.value.codigo == "resposta_fonte_indisponivel"
+
+
+def test_servicos_orientam_sugestoes_sem_bloquear_perguntas():
+    from chat_ia import _prompt_sistema
+
+    so_preco = _prompt_sistema(crm_disponivel=True, dados_disponivel=True, servicos=("Precificação",))
+    sem_cadastro = _prompt_sistema(crm_disponivel=True, dados_disponivel=True)
+
+    assert "SERVIÇOS CONTRATADOS: Precificação." in so_preco
+    assert "Responda qualquer pergunta" in so_preco
+    assert "não sugira pauta de clientes" in so_preco
+    assert "SERVIÇOS CONTRATADOS" not in sem_cadastro
